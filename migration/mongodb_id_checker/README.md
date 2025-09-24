@@ -1,4 +1,4 @@
-# mongodb_id_check
+# MongoDB _id checker
 
 # Helper tool to identify if the user collections have non objectId as _id
 
