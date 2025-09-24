@@ -1,7 +1,7 @@
 # Migration
 This section contains scripts to help before, during, and after migrations.
 
-## [MongoDB _id checker](mongodb_id_checkers)
+## [MongoDB _id checker](mongodb_id_checker)
 The goal of this tool is to report the collections having non objectId as _id and count the number of documents. System collections like local, admin or system are ignored. After identify those collections _id check will sample 10 documents in natural order to validate if they are written on disk in order or random.
 
 ## [Mongosync Insights](mongosync_insights)
