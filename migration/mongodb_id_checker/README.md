@@ -1,10 +1,11 @@
 # mongodb_id_check
 
-# Helper tool to identify the type used for _id on user collections
+# Helper tool to identify if the user collections have non objectId as _id
 
 ## What it does
 
-The goal of this tool is to report the number of documents for each possible type for _id present in each user collection. System collections like local, admin or system are ignored.
+The goal of this tool is to report the collections having non objectId as _id and count the number of documents. System collections like local, admin or system are ignored.
+After identify those collections _id check will sample 10 documents in natural order to validate if they are written on disk in order or random.
 
 ## How to Run
 
@@ -18,38 +19,76 @@ This is a simple javascript script that should be run against a mongosh shell li
 ## Output
 
 ```
------------------------------------------------------------
-Helper tool to identify type of _id on user collections
------------------------------------------------------------
+namespace,type,count
+foo.bar3,String,500
+foo.bar3,ObjectId,500
+foo.bar2,String,1000
+foo.bar1,ObjectId,1000
 
-...
-==============================================
-= Namespace: test.test1
-==============================================
-84 * ObjectId
-   Other types:
-==============================================
-= Namespace: test.test2
-==============================================
-637 * ObjectId
-   Other types:
-==============================================
-= Namespace: test.test3
-==============================================
-14784 * ObjectId
-   Other types:
-...
-Not inspecting admin DB
-...
-Not inspecting config DB
-...
-Not inspecting local DB
-...
-==============================================
-= Namespace: test.nonObjectIdColl
-==============================================
-   Other types:
-   1       Double
-   1       String
+Namespaces with at least one non-ObjectId _id:
+
+Namespace: foo.bar3
+{
+  _id: ObjectId('68d44737d49f994f913557a3')
+}
+{
+  _id: 'nC1lfJRZuRpqSxis'
+}
+{
+  _id: ObjectId('68d44737d49f994f913557a4')
+}
+{
+  _id: '9uTkpHLNAbyVFA6P'
+}
+{
+  _id: ObjectId('68d44737d49f994f913557a5')
+}
+{
+  _id: 'Hor4ajNbWdWog8lo'
+}
+{
+  _id: ObjectId('68d44737d49f994f913557a6')
+}
+{
+  _id: 'DYpLsQTj3P4QcKSh'
+}
+{
+  _id: ObjectId('68d44737d49f994f913557a7')
+}
+{
+  _id: 'g5RJLvecIS5Fj1Pm'
+}
+Namespace: foo.bar2
+{
+  _id: 'hUBcBEU3M3TTkdEl'
+}
+{
+  _id: 'mrKm3XDHbG0TgIwB'
+}
+{
+  _id: 'OjfZlSBBSHRZKmAG'
+}
+{
+  _id: 'YX7MU06dwsT3hWhS'
+}
+{
+  _id: 'O5dTqnhC2Qty9VWm'
+}
+{
+  _id: '0JRLLy8IB0gm4smA'
+}
+{
+  _id: 'gJoNGEHPCuUZrnZz'
+}
+{
+  _id: 'qn31QLJBDIQDJsK0'
+}
+{
+  _id: 'Dj0SXcKfTZWJ3DKN'
+}
+{
+  _id: 'ULd8TdARpeItAD2i'
+}
+
 
 ```

@@ -22,7 +22,6 @@ const typesMap = {
     "-1": "Min key",  
     "127": "Max key"  
 };  
-// Note: type "7" (ObjectId) is intentionally omitted from typesMap  
   
 let nonObjectIdNamespaces = [];  
   
