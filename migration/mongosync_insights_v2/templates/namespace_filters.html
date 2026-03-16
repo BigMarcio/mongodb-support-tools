@@ -1,0 +1,419 @@
+{% extends "base.html" %}
+
+{% block title %}Namespace Filters - Mongosync Insights{% endblock %}
+
+{% block header_title %}Namespace Filters - Source Cluster (cluster0){% endblock %}
+
+{% block styles %}
+    .nf-container {
+        max-width: 640px;
+        margin: 0 auto;
+    }
+    .nf-loading {
+        padding: 24px;
+        text-align: center;
+        color: #666;
+    }
+    .nf-error-msg {
+        padding: 16px;
+        background: #ffebee;
+        border-radius: 6px;
+        color: #c62828;
+        margin-bottom: 16px;
+    }
+    .nf-section {
+        margin-bottom: 24px;
+    }
+    .nf-section-title {
+        font-weight: 600;
+        font-size: 14px;
+        margin-bottom: 10px;
+        color: #333;
+    }
+    .nf-tree {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        max-height: 280px;
+        overflow-y: auto;
+    }
+    .nf-db-row {
+        border-bottom: 1px solid #eee;
+    }
+    .nf-db-row:last-child {
+        border-bottom: none;
+    }
+    .nf-db-header {
+        display: flex;
+        align-items: center;
+        padding: 10px 12px;
+        cursor: pointer;
+        background: #fafafa;
+    }
+    .nf-db-header:hover {
+        background: #f5f5f5;
+    }
+    .nf-db-toggle {
+        width: 20px;
+        font-size: 12px;
+        color: #666;
+    }
+    .nf-db-name {
+        flex: 1;
+        font-weight: 500;
+        font-size: 13px;
+    }
+    .nf-db-actions {
+        display: flex;
+        gap: 12px;
+    }
+    .nf-radio-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 12px;
+        cursor: pointer;
+        color: #555;
+    }
+    .nf-radio-label input {
+        margin: 0;
+    }
+    .nf-coll-list {
+        padding: 8px 12px 8px 36px;
+        background: #fff;
+    }
+    .nf-coll-row {
+        display: flex;
+        align-items: center;
+        padding: 6px 0;
+        font-size: 13px;
+    }
+    .nf-coll-name {
+        flex: 1;
+    }
+    .nf-coll-actions {
+        display: flex;
+        gap: 12px;
+    }
+    .nf-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid #e0e0e0;
+    }
+    .nf-save-btn {
+        padding: 10px 24px;
+        font-size: 14px;
+        background: #00684A;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+    .nf-save-btn:hover {
+        background: #00593F;
+    }
+    .nf-cancel-btn {
+        padding: 10px 24px;
+        font-size: 14px;
+        background: #6c757d;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+    .nf-cancel-btn:hover {
+        background: #5a6268;
+    }
+{% endblock %}
+
+{% block content %}
+<div class="nf-container">
+    <div id="nfLoading" class="nf-loading">Loading databases and collections from source cluster...</div>
+    <div id="nfError" class="nf-error-msg" style="display: none;"></div>
+    <div id="nfContent" style="display: none;">
+        <p style="font-size: 13px; color: #666; margin-bottom: 16px;">
+            Select databases and collections to include or exclude from migration. Choose "Include" or "Exclude" for each database (all collections) or for specific collections.
+        </p>
+        <div class="nf-section">
+            <div class="nf-section-title">Source cluster namespaces</div>
+            <div id="nfTree" class="nf-tree"></div>
+        </div>
+        <div class="nf-actions">
+            <button type="button" class="nf-save-btn" onclick="saveFilters()">Save</button>
+            <button type="button" class="nf-cancel-btn" onclick="window.close()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'mi_namespace_filters';
+
+let databases = [];
+let selections = {}; // { 'db': 'include'|'exclude', 'db.coll': 'include'|'exclude' }
+
+function showError(msg) {
+    const el = document.getElementById('nfError');
+    el.textContent = msg || '';
+    el.style.display = msg ? 'block' : 'none';
+}
+
+function escapeHtml(s) {
+    if (!s) return '';
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+}
+
+function safeId(s) {
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function getCluster0() {
+    if (window.opener) {
+        try {
+            return window.opener.localStorage.getItem('mi_config_cluster0') || '';
+        } catch (e) {}
+    }
+    return '';
+}
+
+async function fetchCluster0FromSession() {
+    try {
+        const r = await fetch('/get_mongosync_config', { credentials: 'same-origin' });
+        const d = await r.json().catch(() => ({}));
+        return d.cluster0 || '';
+    } catch (e) {
+        return '';
+    }
+}
+
+async function loadNamespaces() {
+    let cluster0 = getCluster0();
+    if (!cluster0) {
+        cluster0 = await fetchCluster0FromSession();
+    }
+    if (!cluster0) {
+        document.getElementById('nfLoading').style.display = 'none';
+        showError('Configure cluster0 (Source) in Mongosync Settings first.');
+        return;
+    }
+
+    try {
+        const response = await fetch('/list_source_namespaces', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cluster0 }),
+            credentials: 'same-origin'
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            document.getElementById('nfLoading').style.display = 'none';
+            showError(data.error || 'Failed to load namespaces');
+            return;
+        }
+
+        databases = data.databases || [];
+        document.getElementById('nfLoading').style.display = 'none';
+        document.getElementById('nfContent').style.display = 'block';
+
+        loadSavedSelections();
+        renderTree();
+    } catch (e) {
+        document.getElementById('nfLoading').style.display = 'none';
+        showError('Network error: ' + (e.message || 'Failed to load'));
+    }
+}
+
+function loadSavedSelections() {
+    selections = {};
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            const inc = parsed.inclusionFilter || [];
+            const exc = parsed.exclusionFilter || [];
+            inc.forEach(r => {
+                const db = r.database;
+                if (r.collections && r.collections.length > 0) {
+                    r.collections.forEach(c => { selections[db + '.' + c] = 'include'; });
+                } else {
+                    selections[db] = 'include';
+                }
+            });
+            exc.forEach(r => {
+                const db = r.database;
+                if (r.collections && r.collections.length > 0) {
+                    r.collections.forEach(c => { selections[db + '.' + c] = 'exclude'; });
+                } else {
+                    selections[db] = 'exclude';
+                }
+            });
+        }
+    } catch (e) {}
+}
+
+function setSelection(key, value) {
+    if (value === '') {
+        delete selections[key];
+    } else {
+        selections[key] = value;
+    }
+}
+
+function renderTree() {
+    const container = document.getElementById('nfTree');
+    let html = '';
+    databases.forEach(db => {
+        const dbKey = db.name;
+        const dbId = safeId(dbKey);
+        const dbSel = selections[dbKey] || '';
+        const colls = db.collections || [];
+        html += `
+            <div class="nf-db-row">
+                <div class="nf-db-header" data-db="${escapeHtml(dbKey)}" data-db-id="${dbId}">
+                    <span class="nf-db-toggle" id="toggle-${dbId}">${colls.length ? '▶' : ''}</span>
+                    <span class="nf-db-name">${escapeHtml(dbKey)}</span>
+                    <div class="nf-db-actions" onclick="event.stopPropagation()">
+                        <label class="nf-radio-label"><input type="radio" name="db-${dbId}" value="include" ${dbSel === 'include' ? 'checked' : ''} data-key="${escapeHtml(dbKey)}" data-action="include"> Include</label>
+                        <label class="nf-radio-label"><input type="radio" name="db-${dbId}" value="exclude" ${dbSel === 'exclude' ? 'checked' : ''} data-key="${escapeHtml(dbKey)}" data-action="exclude"> Exclude</label>
+                        <label class="nf-radio-label"><input type="radio" name="db-${dbId}" value="" ${!dbSel ? 'checked' : ''} data-key="${escapeHtml(dbKey)}" data-action=""> —</label>
+                    </div>
+                </div>
+                <div class="nf-coll-list" id="coll-${dbId}" style="display: none;">
+                    ${colls.map(c => {
+                        const cKey = dbKey + '.' + c;
+                        const cId = safeId(cKey);
+                        const cSel = selections[cKey] || '';
+                        return `
+                        <div class="nf-coll-row">
+                            <span class="nf-coll-name">${escapeHtml(c)}</span>
+                            <div class="nf-coll-actions">
+                                <label class="nf-radio-label"><input type="radio" name="coll-${cId}" value="include" ${cSel === 'include' ? 'checked' : ''} data-key="${escapeHtml(cKey)}" data-action="include"> Include</label>
+                                <label class="nf-radio-label"><input type="radio" name="coll-${cId}" value="exclude" ${cSel === 'exclude' ? 'checked' : ''} data-key="${escapeHtml(cKey)}" data-action="exclude"> Exclude</label>
+                                <label class="nf-radio-label"><input type="radio" name="coll-${cId}" value="" ${!cSel ? 'checked' : ''} data-key="${escapeHtml(cKey)}" data-action=""> —</label>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
+    });
+    container.innerHTML = html || '<div style="padding: 16px; color: #666;">No databases found.</div>';
+
+    container.querySelectorAll('.nf-db-header').forEach(h => {
+        h.addEventListener('click', function(e) {
+            if (e.target.closest('.nf-db-actions')) return;
+            const dbKey = this.dataset.db;
+            const dbId = this.dataset.dbId;
+            const el = document.getElementById('coll-' + dbId);
+            const toggle = document.getElementById('toggle-' + dbId);
+            if (el && toggle) {
+                const isHidden = el.style.display === 'none';
+                el.style.display = isHidden ? 'block' : 'none';
+                toggle.textContent = isHidden ? '▼' : '▶';
+            }
+        });
+    });
+
+    container.querySelectorAll('.nf-db-actions input[type="radio"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const key = this.dataset.key;
+            const action = this.value || '';
+            setSelection(key, action);
+            if (key && !key.includes('.')) clearCollSelections(key);
+        });
+    });
+
+    container.querySelectorAll('.nf-coll-actions input[type="radio"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            setSelection(this.dataset.key, this.value || '');
+        });
+    });
+}
+
+function clearCollSelections(dbKey) {
+    const db = databases.find(d => d.name === dbKey);
+    if (db && db.collections) {
+        db.collections.forEach(c => {
+            const cKey = dbKey + '.' + c;
+            delete selections[cKey];
+            const cId = safeId(cKey);
+            const radios = document.querySelectorAll(`input[name="coll-${cId}"]`);
+            radios.forEach(r => { r.checked = (r.value === ''); });
+        });
+    }
+}
+
+function buildFiltersFromSelections() {
+    const inclusionFilter = [];
+    const exclusionFilter = [];
+    const dbIncluded = {};
+    const dbExcluded = {};
+    const collInclude = {};
+    const collExclude = {};
+
+    Object.entries(selections).forEach(([key, val]) => {
+        if (!val) return;
+        if (key.includes('.')) {
+            const [db, coll] = key.split('.', 2);
+            if (val === 'include') {
+                if (!collInclude[db]) collInclude[db] = [];
+                collInclude[db].push(coll);
+            } else {
+                if (!collExclude[db]) collExclude[db] = [];
+                collExclude[db].push(coll);
+            }
+        } else {
+            if (val === 'include') dbIncluded[key] = true;
+            else dbExcluded[key] = true;
+        }
+    });
+
+    Object.keys(dbIncluded).forEach(db => {
+        inclusionFilter.push({ database: db });
+    });
+    Object.keys(dbExcluded).forEach(db => {
+        exclusionFilter.push({ database: db });
+    });
+    Object.entries(collInclude).forEach(([db, colls]) => {
+        if (!dbIncluded[db]) inclusionFilter.push({ database: db, collections: colls });
+    });
+    Object.entries(collExclude).forEach(([db, colls]) => {
+        if (!dbExcluded[db]) exclusionFilter.push({ database: db, collections: colls });
+    });
+
+    return { inclusionFilter, exclusionFilter };
+}
+
+async function saveFilters() {
+    const { inclusionFilter, exclusionFilter } = buildFiltersFromSelections();
+    showError('');
+
+    try {
+        const response = await fetch('/save_namespace_filters', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ inclusionFilter, exclusionFilter }),
+            credentials: 'same-origin'
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            showError(data.error || 'Save failed');
+            return;
+        }
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ inclusionFilter, exclusionFilter }));
+        if (window.opener) {
+            try { window.opener.postMessage({ type: 'namespaceFiltersSaved' }, '*'); } catch (e) {}
+        }
+        window.close();
+    } catch (e) {
+        showError('Network error: ' + (e.message || 'Failed to save'));
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadNamespaces);
+</script>
+{% endblock %}

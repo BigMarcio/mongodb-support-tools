@@ -1,0 +1,653 @@
+{% extends "base.html" %}
+
+{% block title %}Mongosync Insights - Streaming Logs{% endblock %}
+
+{% block header_title %}Mongosync Insights - Streaming Logs{% endblock %}
+
+{% block styles %}
+    #plot {
+        margin: 0 auto;
+        max-width: 1450px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        background-color: #fff;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+
+    .status-indicator {
+        position: fixed;
+        top: 70px;
+        right: 20px;
+        padding: 10px 15px;
+        border-radius: 5px;
+        font-weight: bold;
+        z-index: 1000;
+    }
+
+    .status-connected {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    .status-disconnected {
+        background-color: #f44336;
+        color: white;
+    }
+
+    .status-connecting {
+        background-color: #ff9800;
+        color: white;
+    }
+
+    @media (max-width: 768px) {
+        #plot {
+            width: 95%;
+        }
+        .status-indicator {
+            position: relative;
+            top: 0;
+            right: 0;
+            margin: 10px;
+        }
+    }
+{% endblock %}
+
+{% block content %}
+<div class="status-indicator" id="statusIndicator">
+    <span id="statusText">Connecting...</span>
+</div>
+<div id="plot"></div>
+<script>
+// Global state
+let plotInitialized = false;
+let eventSource = null;
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 10;
+const reconnectDelay = 3000; // 3 seconds
+
+// Data storage
+const dataStore = {
+    replication_progress: [],
+    operation_stats: [],
+    sent_response: [],
+    phase_transitions: [],
+    version_info: []
+};
+
+// Chart trace indices (matching the order from mongosync_plot_logs.py)
+const TRACE_INDICES = {
+    PHASE: 0,
+    ESTIMATED_TOTAL: 1,
+    ESTIMATED_COPIED: 2,
+    LAG_TIME: 3,
+    EVENTS_APPLIED: 4,
+    CC_READ_AVG: 5,
+    CC_READ_MAX: 6,
+    CC_READ_NUM: 7,
+    CC_WRITE_AVG: 8,
+    CC_WRITE_MAX: 9,
+    CC_WRITE_NUM: 10,
+    CEA_READ_AVG: 11,
+    CEA_READ_MAX: 12,
+    CEA_READ_NUM: 13,
+    CEA_WRITE_AVG: 14,
+    CEA_WRITE_MAX: 15,
+    CEA_WRITE_NUM: 16
+};
+
+// Initialize empty Plotly chart
+// Note: Using a simplified approach - Plotly.js will handle subplot layout automatically
+// We'll use trace indices that match the Python implementation
+function initializeChart() {
+    // Create a simple layout - Plotly will auto-arrange
+    const layout = {
+        height: 1550,
+        width: 1450,
+        title: "Mongosync Replication Progress - Streaming Mode",
+        showlegend: false,
+        legend: { y: 1 }
+    };
+
+    // Data array matching the trace order from Python code
+    // The subplot structure will be handled by Plotly's automatic layout
+    const data = [
+        // Row 1, Col 1: Mongosync Phases
+        { x: [], y: [], mode: 'markers+text', type: 'scatter', marker: { color: 'green' }, name: 'Phases' },
+        // Row 1, Col 2: Estimated Total and Copied (two bar traces)
+        { x: [], y: [], type: 'bar', name: 'Estimated Total', legendgroup: 'groupTotalCopied' },
+        { x: [], y: [], type: 'bar', name: 'Estimated Copied', legendgroup: 'groupTotalCopied' },
+        // Row 2, Col 1: Lag Time
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Seconds', legendgroup: 'groupEventsAndLags' },
+        // Row 2, Col 2: Events Applied
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Events', legendgroup: 'groupEventsAndLags' },
+        // Row 3, Col 1: CC Read Avg
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Average time (ms)', legendgroup: 'groupCCSourceRead' },
+        // Row 3, Col 1: CC Read Max
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Maximum time (ms)', legendgroup: 'groupCCSourceRead' },
+        // Row 3, Col 2: CC Read Num
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Reads', legendgroup: 'groupCCSourceRead' },
+        // Row 4, Col 1: CC Write Avg
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Average time (ms)', legendgroup: 'groupCCDestinationWrite' },
+        // Row 4, Col 1: CC Write Max
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Maximum time (ms)', legendgroup: 'groupCCDestinationWrite' },
+        // Row 4, Col 2: CC Write Num
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Writes', legendgroup: 'groupCCDestinationWrite' },
+        // Row 5, Col 1: CEA Read Avg
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Average time (ms)', legendgroup: 'groupCEASourceRead' },
+        // Row 5, Col 1: CEA Read Max
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Maximum time (ms)', legendgroup: 'groupCEASourceRead' },
+        // Row 5, Col 2: CEA Read Num
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Reads', legendgroup: 'groupCEASourceRead' },
+        // Row 6, Col 1: CEA Write Avg
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Average time (ms)', legendgroup: 'groupCEADestinationWrite' },
+        // Row 6, Col 1: CEA Write Max
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Maximum time (ms)', legendgroup: 'groupCEADestinationWrite' },
+        // Row 6, Col 2: CEA Write Num
+        { x: [], y: [], mode: 'lines', type: 'scatter', name: 'Writes during CEA', legendgroup: 'groupCEADestinationWrite' }
+    ];
+
+    const config = {
+        displayModeBar: true,
+        responsive: true
+    };
+
+    Plotly.newPlot('plot', data, layout, config).then(function() {
+        console.log('Chart initialized successfully');
+        plotInitialized = true;
+    }).catch(function(err) {
+        console.error('Error initializing chart:', err);
+        updateStatus('disconnected', 'Chart initialization failed');
+    });
+}
+
+// Update status indicator
+function updateStatus(status, text) {
+    const indicator = document.getElementById('statusIndicator');
+    const statusText = document.getElementById('statusText');
+    
+    indicator.className = 'status-indicator status-' + status;
+    statusText.textContent = text;
+}
+
+// Process and update charts with new metrics
+function processMetrics(newMetrics) {
+    if (!plotInitialized) {
+        console.warn('Chart not initialized yet, skipping metrics');
+        return;
+    }
+
+    console.log('Processing metrics, current dataStore sizes:', {
+        replication_progress: dataStore.replication_progress.length,
+        operation_stats: dataStore.operation_stats.length,
+        sent_response: dataStore.sent_response.length
+    });
+
+    // Process replication_progress
+    if (newMetrics.replication_progress && newMetrics.replication_progress.length > 0) {
+        console.log('Adding', newMetrics.replication_progress.length, 'replication_progress entries');
+        dataStore.replication_progress.push(...newMetrics.replication_progress);
+        updateReplicationProgress();
+    }
+
+    // Process operation_stats
+    if (newMetrics.operation_stats && newMetrics.operation_stats.length > 0) {
+        console.log('Adding', newMetrics.operation_stats.length, 'operation_stats entries');
+        dataStore.operation_stats.push(...newMetrics.operation_stats);
+        updateOperationStats();
+    }
+
+    // Process sent_response (for estimated bytes and phase transitions)
+    if (newMetrics.sent_response && newMetrics.sent_response.length > 0) {
+        console.log('Adding', newMetrics.sent_response.length, 'sent_response entries');
+        dataStore.sent_response.push(...newMetrics.sent_response);
+        updateSentResponse();
+    }
+
+    // Process phase_transitions
+    if (newMetrics.phase_transitions && newMetrics.phase_transitions.length > 0) {
+        console.log('Adding', newMetrics.phase_transitions.length, 'phase_transitions entries');
+        dataStore.phase_transitions.push(...newMetrics.phase_transitions);
+        updatePhaseTransitions();
+    }
+
+    // Process version_info
+    if (newMetrics.version_info && newMetrics.version_info.length > 0) {
+        console.log('Adding', newMetrics.version_info.length, 'version_info entries');
+        dataStore.version_info.push(...newMetrics.version_info);
+        updateVersionInfo();
+    }
+}
+
+function updateReplicationProgress() {
+    const data = dataStore.replication_progress;
+    
+    // Extract times, lag time, and events
+    const times = [];
+    const lagTimeSeconds = [];
+    const totalEventsApplied = [];
+    
+    for (const item of data) {
+        if (item.time) {
+            try {
+                const timeStr = item.time.substring(0, 26);
+                const dt = new Date(timeStr);
+                times.push(dt);
+            } catch (e) {
+                continue;
+            }
+        }
+        if (item.lagTimeSeconds !== undefined) {
+            lagTimeSeconds.push(item.lagTimeSeconds);
+        }
+        if (item.totalEventsApplied !== undefined) {
+            totalEventsApplied.push(item.totalEventsApplied);
+        }
+    }
+    
+    // Update lag time trace
+    if (times.length > 0 && lagTimeSeconds.length > 0) {
+        Plotly.extendTraces('plot', {
+            x: [[...times]],
+            y: [[...lagTimeSeconds]]
+        }, [TRACE_INDICES.LAG_TIME]);
+    }
+    
+    // Update events applied trace
+    if (times.length > 0 && totalEventsApplied.length > 0) {
+        Plotly.extendTraces('plot', {
+            x: [[...times]],
+            y: [[...totalEventsApplied]]
+        }, [TRACE_INDICES.EVENTS_APPLIED]);
+    }
+}
+
+function updateOperationStats() {
+    const stats = dataStore.operation_stats;
+    const replicationData = dataStore.replication_progress;
+    
+    // Get times from replication_progress (they should align)
+    const times = [];
+    for (const item of replicationData) {
+        if (item.time) {
+            try {
+                const timeStr = item.time.substring(0, 26);
+                const dt = new Date(timeStr);
+                times.push(dt);
+            } catch (e) {
+                continue;
+            }
+        }
+    }
+    
+    // Extract operation stats data
+    const ccReadAvg = [];
+    const ccReadMax = [];
+    const ccReadNum = [];
+    const ccWriteAvg = [];
+    const ccWriteMax = [];
+    const ccWriteNum = [];
+    const ceaReadAvg = [];
+    const ceaReadMax = [];
+    const ceaReadNum = [];
+    const ceaWriteAvg = [];
+    const ceaWriteMax = [];
+    const ceaWriteNum = [];
+    
+    const groupAliases = {
+        CollectionCopySourceRead: ['CollectionCopySourceRead', 'CollectionCopySourceReads', 'CollectionCopySource', 'CollectionCopySrcRead'],
+        CollectionCopyDestinationWrite: ['CollectionCopyDestinationWrite', 'CollectionCopyDestinationWrites', 'CollectionCopyDestination', 'CollectionCopyDstWrite', 'CollectionCopyDestWrite'],
+        CEASourceRead: ['CEASourceRead', 'CEASourceReads', 'CEASource', 'ChangeEventApplicationSourceRead'],
+        CEADestinationWrite: ['CEADestinationWrite', 'CEADestinationWrites', 'CEADestination', 'ChangeEventApplicationDestinationWrite', 'CEADestWrite']
+    };
+    const fieldAliases = {
+        averageDurationMs: ['averageDurationMs', 'avgDurationMs', 'avgDuration', 'avgMs'],
+        maximumDurationMs: ['maximumDurationMs', 'maxDurationMs', 'maxDuration', 'maxMs'],
+        numOperations: ['numOperations', 'operations', 'operationCount', 'numOps', 'opCount', 'count', 'writeCount']
+    };
+
+    function normalizeKey(value) {
+        return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function lookupAnyKey(obj, keys) {
+        if (!obj || typeof obj !== 'object') return undefined;
+        for (const key of keys) {
+            if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
+        }
+        const normalizedLookup = {};
+        for (const [k, v] of Object.entries(obj)) normalizedLookup[normalizeKey(k)] = v;
+        for (const key of keys) {
+            const matched = normalizedLookup[normalizeKey(key)];
+            if (matched !== undefined) return matched;
+        }
+        return undefined;
+    }
+
+    function semanticGroupMatch(targetGroup, candidateKey) {
+        const k = normalizeKey(candidateKey);
+        if (targetGroup === 'CollectionCopyDestinationWrite') return k.includes('collectioncopy') && k.includes('destination') && k.includes('write');
+        if (targetGroup === 'CEADestinationWrite') return (k.includes('cea') || k.includes('changeeventapplication')) && k.includes('destination') && k.includes('write');
+        if (targetGroup === 'CollectionCopySourceRead') return k.includes('collectioncopy') && k.includes('source') && k.includes('read');
+        if (targetGroup === 'CEASourceRead') return (k.includes('cea') || k.includes('changeeventapplication')) && k.includes('source') && k.includes('read');
+        return false;
+    }
+
+    function extractOperationStat(item, groupName, fieldName) {
+        if (!item || typeof item !== 'object') return null;
+        const containers = [item];
+        const attr = item.attr;
+        const attributes = item.attributes;
+        if (attr && typeof attr === 'object') containers.push(attr);
+        if (attributes && typeof attributes === 'object') containers.push(attributes);
+        if (item.operationDurationStats && typeof item.operationDurationStats === 'object') containers.push(item.operationDurationStats);
+        if (attr && attr.operationDurationStats && typeof attr.operationDurationStats === 'object') containers.push(attr.operationDurationStats);
+        if (attributes && attributes.operationDurationStats && typeof attributes.operationDurationStats === 'object') containers.push(attributes.operationDurationStats);
+
+        for (const base of [item, attr, attributes]) {
+            if (!base || typeof base !== 'object') continue;
+            for (const wrapperKey of ['payload', 'data', 'metrics', 'stats', 'details', 'detail', 'context', 'progress']) {
+                const wrapper = base[wrapperKey];
+                if (wrapper && typeof wrapper === 'object') {
+                    containers.push(wrapper);
+                    if (wrapper.operationDurationStats && typeof wrapper.operationDurationStats === 'object') {
+                        containers.push(wrapper.operationDurationStats);
+                    }
+                }
+            }
+        }
+
+        const aliases = groupAliases[groupName] || [groupName];
+        const metricFields = fieldAliases[fieldName] || [fieldName];
+        for (const container of containers) {
+            if (!container || typeof container !== 'object') continue;
+            const group = lookupAnyKey(container, aliases);
+            if (group && typeof group === 'object') {
+                const value = lookupAnyKey(group, metricFields);
+                if (value !== undefined && value !== null) return value;
+            }
+            for (const [key, value] of Object.entries(container)) {
+                if (value && typeof value === 'object' && semanticGroupMatch(groupName, key)) {
+                    const matched = lookupAnyKey(value, metricFields);
+                    if (matched !== undefined && matched !== null) return matched;
+                }
+            }
+        }
+        return null;
+    }
+
+    function toFiniteNumber(value) {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+    }
+
+    for (const item of stats) {
+        const ccReadAvgVal = toFiniteNumber(extractOperationStat(item, 'CollectionCopySourceRead', 'averageDurationMs'));
+        if (ccReadAvgVal !== null) ccReadAvg.push(ccReadAvgVal);
+        const ccReadMaxVal = toFiniteNumber(extractOperationStat(item, 'CollectionCopySourceRead', 'maximumDurationMs'));
+        if (ccReadMaxVal !== null) ccReadMax.push(ccReadMaxVal);
+        const ccReadNumVal = toFiniteNumber(extractOperationStat(item, 'CollectionCopySourceRead', 'numOperations'));
+        if (ccReadNumVal !== null) ccReadNum.push(ccReadNumVal);
+
+        const ccWriteAvgVal = toFiniteNumber(extractOperationStat(item, 'CollectionCopyDestinationWrite', 'averageDurationMs'));
+        if (ccWriteAvgVal !== null) ccWriteAvg.push(ccWriteAvgVal);
+        const ccWriteMaxVal = toFiniteNumber(extractOperationStat(item, 'CollectionCopyDestinationWrite', 'maximumDurationMs'));
+        if (ccWriteMaxVal !== null) ccWriteMax.push(ccWriteMaxVal);
+        const ccWriteNumVal = toFiniteNumber(extractOperationStat(item, 'CollectionCopyDestinationWrite', 'numOperations'));
+        if (ccWriteNumVal !== null) ccWriteNum.push(ccWriteNumVal);
+
+        const ceaReadAvgVal = toFiniteNumber(extractOperationStat(item, 'CEASourceRead', 'averageDurationMs'));
+        if (ceaReadAvgVal !== null) ceaReadAvg.push(ceaReadAvgVal);
+        const ceaReadMaxVal = toFiniteNumber(extractOperationStat(item, 'CEASourceRead', 'maximumDurationMs'));
+        if (ceaReadMaxVal !== null) ceaReadMax.push(ceaReadMaxVal);
+        const ceaReadNumVal = toFiniteNumber(extractOperationStat(item, 'CEASourceRead', 'numOperations'));
+        if (ceaReadNumVal !== null) ceaReadNum.push(ceaReadNumVal);
+
+        const ceaWriteAvgVal = toFiniteNumber(extractOperationStat(item, 'CEADestinationWrite', 'averageDurationMs'));
+        if (ceaWriteAvgVal !== null) ceaWriteAvg.push(ceaWriteAvgVal);
+        const ceaWriteMaxVal = toFiniteNumber(extractOperationStat(item, 'CEADestinationWrite', 'maximumDurationMs'));
+        if (ceaWriteMaxVal !== null) ceaWriteMax.push(ceaWriteMaxVal);
+        const ceaWriteNumVal = toFiniteNumber(extractOperationStat(item, 'CEADestinationWrite', 'numOperations'));
+        if (ceaWriteNumVal !== null) ceaWriteNum.push(ceaWriteNumVal);
+    }
+    
+    // Build x-axis values per series length so one missing metric does not block others.
+    function getTimesForSeries(seriesLength) {
+        if (seriesLength <= 0) return [];
+        if (times.length > 0) {
+            return times.slice(0, Math.min(times.length, seriesLength));
+        }
+        return Array.from({ length: seriesLength }, (_, i) => new Date(Date.now() - (seriesLength - i) * 1000));
+    }
+    
+    // Update traces
+    if (stats.length > 0) {
+        if (ccReadAvg.length > 0) {
+            const x = getTimesForSeries(ccReadAvg.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ccReadAvg]] }, [TRACE_INDICES.CC_READ_AVG]);
+        }
+        if (ccReadMax.length > 0) {
+            const x = getTimesForSeries(ccReadMax.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ccReadMax]] }, [TRACE_INDICES.CC_READ_MAX]);
+        }
+        if (ccReadNum.length > 0) {
+            const x = getTimesForSeries(ccReadNum.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ccReadNum]] }, [TRACE_INDICES.CC_READ_NUM]);
+        }
+        if (ccWriteAvg.length > 0) {
+            const x = getTimesForSeries(ccWriteAvg.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ccWriteAvg]] }, [TRACE_INDICES.CC_WRITE_AVG]);
+        }
+        if (ccWriteMax.length > 0) {
+            const x = getTimesForSeries(ccWriteMax.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ccWriteMax]] }, [TRACE_INDICES.CC_WRITE_MAX]);
+        }
+        if (ccWriteNum.length > 0) {
+            const x = getTimesForSeries(ccWriteNum.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ccWriteNum]] }, [TRACE_INDICES.CC_WRITE_NUM]);
+        }
+        if (ceaReadAvg.length > 0) {
+            const x = getTimesForSeries(ceaReadAvg.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ceaReadAvg]] }, [TRACE_INDICES.CEA_READ_AVG]);
+        }
+        if (ceaReadMax.length > 0) {
+            const x = getTimesForSeries(ceaReadMax.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ceaReadMax]] }, [TRACE_INDICES.CEA_READ_MAX]);
+        }
+        if (ceaReadNum.length > 0) {
+            const x = getTimesForSeries(ceaReadNum.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ceaReadNum]] }, [TRACE_INDICES.CEA_READ_NUM]);
+        }
+        if (ceaWriteAvg.length > 0) {
+            const x = getTimesForSeries(ceaWriteAvg.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ceaWriteAvg]] }, [TRACE_INDICES.CEA_WRITE_AVG]);
+        }
+        if (ceaWriteMax.length > 0) {
+            const x = getTimesForSeries(ceaWriteMax.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ceaWriteMax]] }, [TRACE_INDICES.CEA_WRITE_MAX]);
+        }
+        if (ceaWriteNum.length > 0) {
+            const x = getTimesForSeries(ceaWriteNum.length);
+            Plotly.extendTraces('plot', { x: [[...x]], y: [[...ceaWriteNum]] }, [TRACE_INDICES.CEA_WRITE_NUM]);
+        }
+    }
+}
+
+function updateSentResponse() {
+    // Find the latest sent_response with progress data
+    let latestProgress = null;
+    for (let i = dataStore.sent_response.length - 1; i >= 0; i--) {
+        try {
+            const body = JSON.parse(dataStore.sent_response[i].body);
+            if (body && body.progress) {
+                latestProgress = body.progress;
+                break;
+            }
+        } catch (e) {
+            continue;
+        }
+    }
+    
+    if (latestProgress && latestProgress.collectionCopy) {
+        const estimatedTotal = latestProgress.collectionCopy.estimatedTotalBytes || 0;
+        const estimatedCopied = latestProgress.collectionCopy.estimatedCopiedBytes || 0;
+        
+        // Format bytes (simplified - you may want to match the server-side logic)
+        const formatBytes = (bytes) => {
+            if (bytes >= 1e12) return [bytes / 1e12, 'TB'];
+            if (bytes >= 1e9) return [bytes / 1e9, 'GB'];
+            if (bytes >= 1e6) return [bytes / 1e6, 'MB'];
+            if (bytes >= 1e3) return [bytes / 1e3, 'KB'];
+            return [bytes, 'B'];
+        };
+        
+        const [total, unit] = formatBytes(estimatedTotal);
+        const [copied, _] = formatBytes(estimatedCopied);
+        
+        // Update bar chart
+        Plotly.restyle('plot', {
+            x: [[unit], [unit]],
+            y: [[total], [copied]]
+        }, [TRACE_INDICES.ESTIMATED_TOTAL, TRACE_INDICES.ESTIMATED_COPIED]);
+    }
+}
+
+function updatePhaseTransitions() {
+    // Get phase transitions from sent_response first (Live Migrate)
+    let phaseList = [];
+    let tsList = [];
+    
+    // Try to get from latest sent_response
+    for (let i = dataStore.sent_response.length - 1; i >= 0; i--) {
+        try {
+            const body = JSON.parse(dataStore.sent_response[i].body);
+            if (body && body.progress && body.progress.atlasLiveMigrateMetrics) {
+                const transitions = body.progress.atlasLiveMigrateMetrics.PhaseTransitions;
+                if (transitions && transitions.length > 0) {
+                    phaseList = transitions.map(t => t.Phase);
+                    tsList = transitions.map(t => {
+                        const dt = new Date(t.Ts.T * 1000);
+                        return dt.toISOString().substring(0, 23) + 'Z';
+                    });
+                    break;
+                }
+            }
+        } catch (e) {
+            continue;
+        }
+    }
+    
+    // Fall back to phase_transitions_json (standalone)
+    if (phaseList.length === 0 && dataStore.phase_transitions.length > 0) {
+        phaseList = dataStore.phase_transitions.map(item => item.message || '');
+        tsList = dataStore.phase_transitions.map(item => {
+            try {
+                const timeStr = item.time.replace('Z', '+00:00');
+                const dt = new Date(timeStr);
+                return dt.toISOString().substring(0, 23) + 'Z';
+            } catch (e) {
+                return '';
+            }
+        }).filter(t => t);
+    }
+    
+    if (phaseList.length > 0 && tsList.length > 0) {
+        Plotly.restyle('plot', {
+            x: [tsList],
+            y: [phaseList]
+        }, [TRACE_INDICES.PHASE]);
+    }
+}
+
+function updateVersionInfo() {
+    if (dataStore.version_info.length > 0) {
+        const version = dataStore.version_info[dataStore.version_info.length - 1];
+        const versionText = `MongoSync Version: ${version.version || 'Unknown'}, OS: ${version.os || 'Unknown'}, Arch: ${version.arch || 'Unknown'}`;
+        Plotly.relayout('plot', { title: `Mongosync Replication Progress - ${versionText} - Streaming Mode` });
+    }
+}
+
+// Connect to SSE stream
+function connectStream() {
+    if (eventSource) {
+        eventSource.close();
+    }
+    
+    updateStatus('connecting', 'Connecting...');
+    reconnectAttempts = 0;
+    
+    eventSource = new EventSource('/stream_log');
+    
+    eventSource.onopen = function() {
+        updateStatus('connected', 'Connected');
+        reconnectAttempts = 0;
+    };
+    
+    eventSource.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            console.log('SSE message received:', data.type, data.metrics ? Object.keys(data.metrics) : 'no metrics');
+            
+            if (data.type === 'data' && data.metrics) {
+                const metricCounts = {};
+                for (const [key, value] of Object.entries(data.metrics)) {
+                    if (Array.isArray(value) && value.length > 0) {
+                        metricCounts[key] = value.length;
+                    }
+                }
+                console.log('Processing metrics:', metricCounts);
+                processMetrics(data.metrics);
+            } else if (data.type === 'error') {
+                console.error('Stream error:', data.message);
+                updateStatus('disconnected', 'Error: ' + data.message);
+            } else if (data.type === 'heartbeat') {
+                // Keep connection alive
+                console.debug('Heartbeat received');
+            }
+        } catch (e) {
+            console.error('Error parsing SSE data:', e, event.data);
+        }
+    };
+    
+    eventSource.onerror = function(event) {
+        console.error('SSE connection error');
+        updateStatus('disconnected', 'Disconnected');
+        eventSource.close();
+        
+        // Attempt to reconnect
+        if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            setTimeout(connectStream, reconnectDelay);
+            updateStatus('connecting', `Reconnecting... (${reconnectAttempts}/${maxReconnectAttempts})`);
+        } else {
+            updateStatus('disconnected', 'Connection failed. Please refresh the page.');
+        }
+    };
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Page loaded, initializing chart and stream');
+    initializeChart();
+    // Wait a bit for chart to initialize before connecting stream
+    setTimeout(function() {
+        if (plotInitialized) {
+            connectStream();
+        } else {
+            console.warn('Chart not initialized, retrying stream connection in 1 second');
+            setTimeout(connectStream, 1000);
+        }
+    }, 500);
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (eventSource) {
+        eventSource.close();
+    }
+});
+</script>
+{% endblock %}
+
+{% block footer %}
+<p>Version {{ app_version }} - Streaming Mode</p>
+{% endblock %}
