@@ -11,10 +11,10 @@ import logging
 import os
 import magic
 from werkzeug.utils import secure_filename
-from mongosync_plot_utils import format_byte_size, convert_bytes
-from app_config import MAX_FILE_SIZE, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES, load_error_patterns, classify_file_type
-from file_decompressor import decompress_file_classified, is_compressed_mime_type
-from mongosync_plot_prometheus_metrics import MetricsCollector, create_metrics_plots
+from .utils import format_byte_size, convert_bytes
+from .app_config import MAX_FILE_SIZE, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES, load_error_patterns, classify_file_type
+from .file_decompressor import decompress_file_classified, is_compressed_mime_type
+from .otel_metrics import MetricsCollector, create_metrics_plots
 
 def upload_file():
     # Use the centralized logging configuration

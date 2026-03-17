@@ -1,16 +1,16 @@
 import logging
 from flask import Flask, render_template, request, make_response
-from mongosync_plot_logs import upload_file
-from mongosync_plot_metadata import plotMetrics, gatherMetrics, gatherPartitionsMetrics, gatherEndpointMetrics
-from migration_verifier import plotVerifierMetrics, gatherVerifierMetrics
+from lib.logs_metrics import upload_file
+from lib.live_migration_metrics import plotMetrics, gatherMetrics, gatherPartitionsMetrics, gatherEndpointMetrics
+from lib.migration_verifier import plotVerifierMetrics, gatherVerifierMetrics
 from pymongo.errors import InvalidURI, PyMongoError
-from app_config import (
+from lib.app_config import (
     setup_logging, validate_config, get_app_info, HOST, PORT, MAX_FILE_SIZE, 
     REFRESH_TIME, APP_VERSION, validate_connection, clear_connection_cache, 
     SECURE_COOKIES, CONNECTION_STRING, VERIFIER_CONNECTION_STRING,
     PROGRESS_ENDPOINT_URL, validate_progress_endpoint_url, session_store, SESSION_TIMEOUT
 )
-from connection_validator import sanitize_for_display
+from lib.connection_validator import sanitize_for_display
 
 # Cookie name for session ID
 SESSION_COOKIE_NAME = 'mi_session_id'
@@ -122,12 +122,12 @@ def home_page():
                            max_file_size_gb=max_file_size_gb)
 
 
-@app.route('/upload', methods=['POST'])
+@app.route('/uploadLogs', methods=['POST'])
 def uploadLogs():
     return upload_file()
 
-@app.route('/renderMetrics', methods=['POST'])
-def renderMetrics():
+@app.route('/liveMonitoring', methods=['POST'])
+def liveMonitoring():
     # Get connection string from env var or form (no caching)
     if CONNECTION_STRING:
         TARGET_MONGO_URI = CONNECTION_STRING
@@ -213,8 +213,8 @@ def renderMetrics():
     
     return response
 
-@app.route('/get_metrics_data', methods=['POST'])
-def getMetrics():
+@app.route('/getLiveMonitoring', methods=['POST'])
+def getLiveMonitoring():
     # Get connection string from env var or in-memory session store
     if CONNECTION_STRING:
         connection_string = CONNECTION_STRING
@@ -229,7 +229,7 @@ def getMetrics():
     
     return gatherMetrics(connection_string)
 
-@app.route('/get_partitions_data', methods=['POST'])
+@app.route('/getPartitionsData', methods=['POST'])
 def getPartitionsData():
     # Get connection string from env var or in-memory session store
     if CONNECTION_STRING:
@@ -245,7 +245,7 @@ def getPartitionsData():
     
     return gatherPartitionsMetrics(connection_string)
 
-@app.route('/get_endpoint_data', methods=['POST'])
+@app.route('/getEndpointData', methods=['POST'])
 def getEndpointData():
     # Get endpoint URL from env var or in-memory session store
     if PROGRESS_ENDPOINT_URL:
@@ -261,8 +261,8 @@ def getEndpointData():
     
     return gatherEndpointMetrics(endpoint_url)
 
-@app.route('/renderVerifier', methods=['POST'])
-def renderVerifier():
+@app.route('/Verifier', methods=['POST'])
+def Verifier():
     """Render the migration verifier monitoring page."""
     # Get connection string from env var or form
     if VERIFIER_CONNECTION_STRING:
@@ -327,7 +327,7 @@ def renderVerifier():
     
     return response
 
-@app.route('/get_verifier_data', methods=['POST'])
+@app.route('/getVerifierData', methods=['POST'])
 def getVerifierData():
     """Get migration verifier metrics data for AJAX refresh."""
     session_id = request.cookies.get(SESSION_COOKIE_NAME)
@@ -354,7 +354,7 @@ if __name__ == '__main__':
     logger.info(f"Server: {app_info['host']}:{app_info['port']}")
     
     # Import SSL config
-    from app_config import SSL_ENABLED, SSL_CERT_PATH, SSL_KEY_PATH
+    from lib.app_config import SSL_ENABLED, SSL_CERT_PATH, SSL_KEY_PATH
     
     # Run the Flask app with or without SSL
     if SSL_ENABLED:

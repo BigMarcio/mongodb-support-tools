@@ -43,7 +43,7 @@
 </div>
 <div class="form-container">
     <!-- First form: File upload -->
-    <form method="post" action="/upload" enctype="multipart/form-data" autocomplete="off">
+    <form method="post" action="/uploadLogs" enctype="multipart/form-data" autocomplete="off">
         <h2>Parse Mongosync Log File</h2>
         <input type="file" name="file" accept=".log,.json,.out,.gz,.zip,.bz2,.tar.gz,.tgz,.tar.bz2"><br><br>
         <input type="submit" value="Upload">
@@ -53,7 +53,7 @@
     </form>
 
     <!-- Second form: Metrics rendering -->
-    <form id="metadataForm" method="post" action="/renderMetrics" enctype="multipart/form-data" autocomplete="off">
+    <form id="metadataForm" method="post" action="/liveMonitoring" enctype="multipart/form-data" autocomplete="off">
         <h2>Live Migration Monitoring</h2>
         {{ connection_string_form | safe }}
         {{ progress_endpoint_form | safe }}
@@ -62,7 +62,7 @@
     </form>
 
     <!-- Third form: Migration Verifier -->
-    <form id="verifierForm" method="post" action="/renderVerifier" enctype="multipart/form-data" autocomplete="off">
+    <form id="verifierForm" method="post" action="/Verifier" enctype="multipart/form-data" autocomplete="off">
         <h2>Migration Verifier</h2>
         {{ verifier_connection_string_form | safe }}
         <label for="verifierDbName">Verifier Database Name:</label>
