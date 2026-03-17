@@ -157,7 +157,7 @@ function switchTab(tabName) {
 async function fetchOverviewData() {
     try {
         // No credentials sent - server reads from secure session
-        const response = await fetch("/get_metrics_data", { 
+        const response = await fetch("/getLiveMonitoring", { 
             method: 'POST',
             credentials: 'same-origin'  // Include session cookie
         });
@@ -179,7 +179,7 @@ async function fetchOverviewData() {
 async function fetchPartitionsData() {
     try {
         // No credentials sent - server reads from secure session
-        const response = await fetch("/get_partitions_data", { 
+        const response = await fetch("/getPartitionsData", { 
             method: 'POST',
             credentials: 'same-origin'  // Include session cookie
         });
@@ -201,7 +201,7 @@ async function fetchPartitionsData() {
 async function fetchEndpointData() {
     try {
         // No credentials sent - server reads from secure session
-        const response = await fetch("/get_endpoint_data", { 
+        const response = await fetch("/getEndpointData", { 
             method: 'POST',
             credentials: 'same-origin'  // Include session cookie
         });

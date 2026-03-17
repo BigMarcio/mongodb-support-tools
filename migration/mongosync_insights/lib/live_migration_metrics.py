@@ -9,7 +9,7 @@ import requests
 from datetime import datetime, timezone
 from bson import Timestamp
 from pymongo.errors import PyMongoError
-from mongosync_plot_utils import format_byte_size, convert_bytes
+from .utils import format_byte_size, convert_bytes
 
 
 def get_phase_timestamp(phase_transitions, phase_name):
@@ -30,7 +30,7 @@ def gatherMetrics(connection_string):
     logger = logging.getLogger(__name__)
     
     # Import and use the centralized configuration
-    from app_config import INTERNAL_DB_NAME, get_database
+    from .app_config import INTERNAL_DB_NAME, get_database
     
     TARGET_MONGO_URI = connection_string
     internalDb = INTERNAL_DB_NAME
@@ -353,7 +353,7 @@ def gatherPartitionsMetrics(connection_string):
     """Generate progress view with partitions, data copy, phases, and collection progress."""
     logger = logging.getLogger(__name__)
     
-    from app_config import INTERNAL_DB_NAME, MAX_PARTITIONS_DISPLAY, get_database
+    from .app_config import INTERNAL_DB_NAME, MAX_PARTITIONS_DISPLAY, get_database
     
     TARGET_MONGO_URI = connection_string
     internalDb = INTERNAL_DB_NAME
@@ -863,7 +863,7 @@ def plotMetrics(has_connection_string=True, has_endpoint_url=False):
     they are never passed to the client-side JavaScript.
     """
     # Use the centralized configuration
-    from app_config import REFRESH_TIME
+    from .app_config import REFRESH_TIME
 
     refreshTime = REFRESH_TIME
     refreshTimeMs = str(int(refreshTime) * 1000)
