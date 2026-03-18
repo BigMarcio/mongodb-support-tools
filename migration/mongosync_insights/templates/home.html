@@ -43,7 +43,7 @@
 </div>
 <div class="form-container">
     <!-- First form: File upload -->
-    <form method="post" action="/uploadLogs" enctype="multipart/form-data" autocomplete="off">
+    <form id="uploadLogsForm" method="post" action="/uploadLogs" enctype="multipart/form-data" autocomplete="off">
         <h2>Parse Mongosync Log File</h2>
         <input type="file" name="file" accept=".log,.json,.out,.gz,.zip,.bz2,.tar.gz,.tgz,.tar.bz2"><br><br>
         <input type="submit" value="Upload">
@@ -119,6 +119,19 @@ function validateVerifierForm() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    var uploadLogsForm = document.getElementById('uploadLogsForm');
+    if (uploadLogsForm) {
+        uploadLogsForm.addEventListener('submit', function(e) {
+            var fileInput = this.querySelector('input[type="file"]');
+            if (!fileInput || !fileInput.files.length) {
+                e.preventDefault();
+                alert('Please select a file to upload.');
+                return;
+            }
+            document.getElementById('uploadLoadingOverlay').classList.add('active');
+        });
+    }
+
     var metadataForm = document.getElementById('metadataForm');
     if (metadataForm) {
         metadataForm.addEventListener('submit', function(e) {
