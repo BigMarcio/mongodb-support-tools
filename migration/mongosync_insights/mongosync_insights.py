@@ -6,7 +6,7 @@ from lib.migration_verifier import plotVerifierMetrics, gatherVerifierMetrics
 from pymongo.errors import InvalidURI, PyMongoError
 from lib.app_config import (
     setup_logging, validate_config, get_app_info, HOST, PORT, MAX_FILE_SIZE, 
-    REFRESH_TIME, APP_VERSION, validate_connection, clear_connection_cache, 
+    REFRESH_TIME, APP_VERSION, DEVELOPER_CREDITS, validate_connection, clear_connection_cache, 
     SECURE_COOKIES, CONNECTION_STRING, VERIFIER_CONNECTION_STRING,
     PROGRESS_ENDPOINT_URL, validate_progress_endpoint_url, session_store, SESSION_TIMEOUT
 )
@@ -75,7 +75,7 @@ def add_security_headers(response):
 # Make app version available to all templates
 @app.context_processor
 def inject_app_version():
-    return dict(app_version=APP_VERSION)
+    return dict(app_version=APP_VERSION, developer_credits=DEVELOPER_CREDITS)
 
 # Handle file too large error
 @app.errorhandler(413)
@@ -121,6 +121,15 @@ def home_page():
                            verifier_connection_string_form=verifier_connection_string_form,
                            max_file_size_gb=max_file_size_gb)
 
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    if session_id:
+        session_store.delete_session(session_id)
+    response = make_response('', 200)
+    response.delete_cookie(SESSION_COOKIE_NAME)
+    return response
 
 @app.route('/uploadLogs', methods=['POST'])
 def uploadLogs():

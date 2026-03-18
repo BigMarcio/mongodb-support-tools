@@ -237,8 +237,10 @@ if (hasConnectionString) {
     fetchEndpointData();
 }
 
-// Refresh current tab periodically
-setInterval(refreshCurrentTab, {{ refresh_time_ms }});
+// Refresh current tab periodically (allow sessionStorage override)
+var _refreshMs = parseInt(sessionStorage.getItem('mi_refresh_time'), 10);
+_refreshMs = (_refreshMs > 0 ? _refreshMs * 1000 : {{ refresh_time_ms }});
+setInterval(refreshCurrentTab, _refreshMs);
 </script>
 {% endblock %}
 

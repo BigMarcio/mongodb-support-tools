@@ -161,7 +161,9 @@ async function fetchVerifierData() {
 }
 
 fetchVerifierData(); // initial load
-setInterval(fetchVerifierData, {{ refresh_time_ms }}); // update every {{ refresh_time }} seconds
+var _refreshMs = parseInt(sessionStorage.getItem('mi_refresh_time'), 10);
+_refreshMs = (_refreshMs > 0 ? _refreshMs * 1000 : {{ refresh_time_ms }});
+setInterval(fetchVerifierData, _refreshMs);
 </script>
 {% endblock %}
 
