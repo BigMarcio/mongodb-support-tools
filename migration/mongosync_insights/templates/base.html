@@ -665,6 +665,7 @@
         sessionStorage.setItem('mi_color_scheme', scheme);
         applyAppearance(theme, scheme);
         closeSettingsDialog();
+        window.dispatchEvent(new CustomEvent('mi-refresh-changed', { detail: { refreshSec: parseInt(refresh, 10) } }));
     }
 
     /* Live-apply theme/scheme as user changes selects */
