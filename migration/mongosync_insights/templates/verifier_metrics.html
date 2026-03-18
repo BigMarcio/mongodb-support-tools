@@ -163,7 +163,23 @@ async function fetchVerifierData() {
 fetchVerifierData(); // initial load
 var _refreshMs = parseInt(sessionStorage.getItem('mi_refresh_time'), 10);
 _refreshMs = (_refreshMs > 0 ? _refreshMs * 1000 : {{ refresh_time_ms }});
-setInterval(fetchVerifierData, _refreshMs);
+var _refreshIntervalId = setInterval(fetchVerifierData, _refreshMs);
+
+function _updateFooterRefresh(ms) {
+    var footerP = document.querySelector('footer p');
+    if (footerP) footerP.innerHTML = footerP.innerHTML.replace(/Refreshing every \d+ seconds/, 'Refreshing every ' + (ms / 1000) + ' seconds');
+}
+_updateFooterRefresh(_refreshMs);
+
+window.addEventListener('mi-refresh-changed', function(e) {
+    var newMs = e.detail.refreshSec * 1000;
+    if (newMs > 0 && newMs !== _refreshMs) {
+        clearInterval(_refreshIntervalId);
+        _refreshMs = newMs;
+        _refreshIntervalId = setInterval(fetchVerifierData, _refreshMs);
+        _updateFooterRefresh(_refreshMs);
+    }
+});
 </script>
 {% endblock %}
 
