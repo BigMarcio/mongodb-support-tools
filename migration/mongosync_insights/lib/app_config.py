@@ -24,6 +24,16 @@ PORT = int(os.getenv('MI_PORT', '3030'))
 APP_NAME = "Mongosync Insights"
 APP_VERSION = "0.9.0.0"
 
+DEVELOPER_CREDITS = {
+    "copyright": "\u00a9 MongoDB Inc.",
+    "year": "2025 - 2026",
+    "team_name": "Migration Factory TS Team",
+    "contributors": [
+        {"name": "Marcio Ribeiro", "role": "Development"},
+        {"name": "Krishna Kattumadam", "role": "Development"},
+    ],
+}
+
 # File upload settings
 MAX_FILE_SIZE = int(os.getenv('MI_MAX_FILE_SIZE', str(10 * 1024 * 1024 * 1024)))  # 10GB default
 ALLOWED_EXTENSIONS = {'.log', '.json', '.out', '.gz', '.zip', '.bz2', '.tar.gz', '.tgz', '.tar.bz2'}
