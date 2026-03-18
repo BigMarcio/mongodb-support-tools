@@ -64,9 +64,81 @@
         min-height: 400px;
     }
 
-    #plot {
+    #plot,
+    #metrics-plot {
         margin: 0 auto;
         max-width: 1450px;
+        position: relative;
+    }
+
+    .chart-info-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 20;
+    }
+
+    .chart-info-badge {
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        border: 1px solid #ccc;
+        background: #fff;
+        color: #666;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 16px;
+        text-align: center;
+        cursor: pointer;
+        pointer-events: auto;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+        padding: 0;
+    }
+
+    .chart-info-badge:hover {
+        border-color: #00684A;
+        color: #00684A;
+    }
+
+    .chart-info-tooltip {
+        position: absolute;
+        min-width: 180px;
+        max-width: 280px;
+        background: #fff;
+        border: 1px solid #ccc;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        padding: 8px 10px;
+        font-size: 12px;
+        color: #555;
+        pointer-events: auto;
+        z-index: 21;
+    }
+
+    .chart-info-tooltip-title {
+        margin: 0 0 6px 0;
+        font-weight: 700;
+        font-size: 12px;
+        color: #00684A;
+    }
+
+    .chart-info-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 2px 0;
+    }
+
+    .chart-info-swatch {
+        width: 11px;
+        height: 11px;
+        border-radius: 2px;
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        flex-shrink: 0;
     }
 
     .options-container {
@@ -540,11 +612,148 @@
 
 {% block scripts %}
 <script>
+// ===== Chart Info Badge Overlay =====
+
+function getAxisTraceColor(trace) {
+    if (trace && trace.line && trace.line.color) return trace.line.color;
+    if (trace && trace.marker && trace.marker.color && typeof trace.marker.color === 'string') return trace.marker.color;
+    if (trace && trace.fillcolor) return trace.fillcolor;
+    return '#6b7280';
+}
+
+function closeInfoTooltips(plotEl) {
+    if (!plotEl) return;
+    var overlay = plotEl.querySelector('.chart-info-overlay');
+    if (!overlay) return;
+    overlay.querySelectorAll('.chart-info-tooltip').forEach(function(t) { t.remove(); });
+}
+
+function buildInfoOverlay(plotElId) {
+    var plotEl = document.getElementById(plotElId);
+    if (!plotEl || !plotEl._fullLayout || !plotEl._fullData) return;
+    var fullLayout = plotEl._fullLayout;
+    var fullData = plotEl._fullData;
+    var size = fullLayout._size;
+    if (!size) return;
+
+    var oldOverlay = plotEl.querySelector('.chart-info-overlay');
+    if (oldOverlay) oldOverlay.remove();
+
+    var overlay = document.createElement('div');
+    overlay.className = 'chart-info-overlay';
+
+    var pairs = [];
+    Object.keys(fullLayout).forEach(function(key) {
+        if (!/^xaxis\d*$/.test(key)) return;
+        var suffix = key.replace('xaxis', '');
+        var xaxis = fullLayout[key];
+        var yaxis = fullLayout['yaxis' + suffix];
+        if (!xaxis || !yaxis || !Array.isArray(xaxis.domain) || !Array.isArray(yaxis.domain)) return;
+        pairs.push({ suffix: suffix, xaxis: xaxis, yaxis: yaxis });
+    });
+
+    pairs.sort(function(a, b) {
+        var yA = a.yaxis.domain[1];
+        var yB = b.yaxis.domain[1];
+        if (Math.abs(yB - yA) > 1e-6) return yB - yA;
+        return a.xaxis.domain[0] - b.xaxis.domain[0];
+    });
+
+    pairs.forEach(function(pair) {
+        var suffix = pair.suffix;
+        var xRef = 'x' + (suffix || '');
+        var yRef = 'y' + (suffix || '');
+        var traces = fullData.filter(function(trace) {
+            var tx = trace.xaxis || 'x';
+            var ty = trace.yaxis || 'y';
+            return tx === xRef && ty === yRef;
+        });
+        if (traces.length === 0) return;
+
+        // Skip subplots with only "NO DATA" placeholders
+        var hasRealData = traces.some(function(t) {
+            if (t.type === 'table') return false;
+            if (t.mode === 'text' && t.text && (t.text === 'NO DATA' || (Array.isArray(t.text) && t.text[0] === 'NO DATA'))) return false;
+            return true;
+        });
+        if (!hasRealData) return;
+
+        var leftPx = size.l + pair.xaxis.domain[1] * size.w - 20;
+        var topPx = size.t + (1 - pair.yaxis.domain[1]) * size.h + 4;
+
+        var badge = document.createElement('button');
+        badge.type = 'button';
+        badge.className = 'chart-info-badge';
+        badge.textContent = 'i';
+        badge.style.left = Math.max(0, leftPx) + 'px';
+        badge.style.top = Math.max(0, topPx) + 'px';
+
+        badge.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var existing = overlay.querySelector('.chart-info-tooltip[data-suffix="' + (suffix || 'base') + '"]');
+            closeInfoTooltips(plotEl);
+            if (existing) return;
+
+            var tooltip = document.createElement('div');
+            tooltip.className = 'chart-info-tooltip';
+            tooltip.dataset.suffix = suffix || 'base';
+            var tooltipLeft = Math.max(8, Math.min(leftPx - 170, size.l + size.w - 210));
+            var tooltipTop = Math.max(8, topPx + 22);
+            tooltip.style.left = tooltipLeft + 'px';
+            tooltip.style.top = tooltipTop + 'px';
+
+            var title = document.createElement('div');
+            title.className = 'chart-info-tooltip-title';
+            title.textContent = 'Series labels';
+            tooltip.appendChild(title);
+
+            traces.forEach(function(trace) {
+                if (trace.type === 'table') return;
+                if (trace.mode === 'text' && trace.text && (trace.text === 'NO DATA' || (Array.isArray(trace.text) && trace.text[0] === 'NO DATA'))) return;
+                var item = document.createElement('div');
+                item.className = 'chart-info-item';
+                var swatch = document.createElement('span');
+                swatch.className = 'chart-info-swatch';
+                swatch.style.background = getAxisTraceColor(trace);
+                var label = document.createElement('span');
+                label.textContent = trace.name || 'Series';
+                item.appendChild(swatch);
+                item.appendChild(label);
+                tooltip.appendChild(item);
+            });
+
+            overlay.appendChild(tooltip);
+        });
+
+        overlay.appendChild(badge);
+    });
+
+    plotEl.appendChild(overlay);
+}
+
+function bindInfoOverlayEvents(plotElId) {
+    var plotEl = document.getElementById(plotElId);
+    if (!plotEl || plotEl.dataset.infoOverlayBound === 'true') return;
+    plotEl.dataset.infoOverlayBound = 'true';
+    plotEl.on('plotly_relayout', function() {
+        buildInfoOverlay(plotElId);
+    });
+    document.addEventListener('click', function(event) {
+        var overlay = plotEl.querySelector('.chart-info-overlay');
+        if (!overlay) return;
+        if (!overlay.contains(event.target)) {
+            closeInfoTooltips(plotEl);
+        }
+    });
+}
+
 // Render mongosync logs plot if data exists
 {% if plot_json %}
 var plot = {{ plot_json | safe }};
 if (plot && plot.data) {
     Plotly.newPlot('plot', plot.data, plot.layout);
+    buildInfoOverlay('plot');
+    bindInfoOverlayEvents('plot');
 }
 {% endif %}
 
@@ -553,6 +762,8 @@ if (plot && plot.data) {
 var metricsPlot = {{ metrics_plot_json | safe }};
 if (metricsPlot && metricsPlot.data) {
     Plotly.newPlot('metrics-plot', metricsPlot.data, metricsPlot.layout);
+    buildInfoOverlay('metrics-plot');
+    bindInfoOverlayEvents('metrics-plot');
 }
 {% endif %}
 

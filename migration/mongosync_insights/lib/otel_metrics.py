@@ -465,12 +465,17 @@ def create_metrics_plots(collector: MetricsCollector, config_path: Path = None) 
     # Build flat list with None placeholders for sections with odd counts
     # This keeps each section visually separated in the 2-column grid
     flat_items = []  # List of metric dicts or None (for empty cells)
+    section_boundaries = []  # [(section_name, start_row), ...]
+    current_cell = 0
     for section_name, metrics in sections.items():
+        start_row = (current_cell // 2) + 1
+        section_boundaries.append((section_name, start_row))
         for m in metrics:
             flat_items.append(m)
         # Add placeholder if section has odd count (fills remaining cell in row)
         if len(metrics) % 2 == 1:
             flat_items.append(None)
+        current_cell += len(metrics) + (1 if len(metrics) % 2 == 1 else 0)
     
     total_cells = len(flat_items)
     
@@ -526,6 +531,30 @@ def create_metrics_plots(collector: MetricsCollector, config_path: Path = None) 
     
     # Force all y-axes to start at 0
     fig.update_yaxes(rangemode='tozero')
+    
+    # Add section label annotations above each section group
+    for i, (section_name, start_row) in enumerate(section_boundaries):
+        axis_idx = (start_row - 1) * 2 + 1
+        yaxis_key = 'yaxis' if axis_idx == 1 else f'yaxis{axis_idx}'
+        domain = fig.layout[yaxis_key].domain
+        if domain:
+            y_pos = domain[1] + 0.012
+            fig.add_annotation(
+                x=0.5, y=y_pos, xref='paper', yref='paper',
+                text=f'<b>{section_name}</b>',
+                showarrow=False,
+                font=dict(size=11, color='#1A3C4A'),
+                bgcolor='rgba(1, 107, 248, 0.12)',
+                bordercolor='#016BF8',
+                borderwidth=1,
+                borderpad=4
+            )
+        # Hide x-axis tick labels on the last row before each section boundary
+        if i > 0:
+            prev_last_row = start_row - 1
+            if prev_last_row >= 1:
+                fig.update_xaxes(showticklabels=False, row=prev_last_row, col=1)
+                fig.update_xaxes(showticklabels=False, row=prev_last_row, col=2)
     
     # Get global date range for X-axis synchronization
     all_times = []
