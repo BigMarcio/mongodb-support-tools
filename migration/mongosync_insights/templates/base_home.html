@@ -16,6 +16,47 @@
         main {
             padding: 20px;
         }
+
+        .upload-loading-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.55);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+        .upload-loading-overlay.active { display: flex; }
+
+        .upload-loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.25);
+            border-top: 4px solid #00ED64;
+            border-radius: 50%;
+            animation: mi-spin 0.9s linear infinite;
+            margin-bottom: 16px;
+        }
+
+        @keyframes mi-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .upload-loading-overlay h3 {
+            margin: 0 0 6px 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: #FFFFFF;
+        }
+
+        .upload-loading-overlay p {
+            margin: 0;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.75);
+        }
+
         {% block styles %}{% endblock %}
     </style>
 </head>
@@ -27,6 +68,13 @@
     <footer>
         {% block footer %}{% endblock %}
     </footer>
+
+    <!-- Upload loading overlay -->
+    <div id="uploadLoadingOverlay" class="upload-loading-overlay">
+        <div class="upload-loading-spinner"></div>
+        <h3>Processing Files...</h3>
+        <p>Parsing and analyzing data.</p>
+    </div>
 
     {% block scripts %}{% endblock %}
 </body>
