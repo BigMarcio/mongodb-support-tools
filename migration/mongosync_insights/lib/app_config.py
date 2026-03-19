@@ -39,6 +39,7 @@ MAX_FILE_SIZE = int(os.getenv('MI_MAX_FILE_SIZE', str(10 * 1024 * 1024 * 1024)))
 ALLOWED_EXTENSIONS = {'.log', '.json', '.out', '.gz', '.zip', '.bz2', '.tar.gz', '.tgz', '.tar.bz2'}
 ALLOWED_MIME_TYPES = [
     'application/x-ndjson',
+    'text/plain',  # Prometheus/OTel metrics files (mongosync_metrics.log)
     'application/gzip', 'application/x-gzip',
     'application/zip', 'application/x-zip-compressed',
     'application/x-bzip2',
