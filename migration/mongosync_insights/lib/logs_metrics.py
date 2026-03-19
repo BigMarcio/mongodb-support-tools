@@ -4,6 +4,8 @@ from plotly.subplots import make_subplots
 from tqdm import tqdm
 from flask import request, render_template
 import json
+import uuid as uuid_mod
+from collections import deque
 from datetime import datetime, timezone
 from dateutil import parser
 import re
@@ -12,9 +14,15 @@ import os
 import mimetypes
 from werkzeug.utils import secure_filename
 from .utils import format_byte_size, convert_bytes
-from .app_config import MAX_FILE_SIZE, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES, load_error_patterns, classify_file_type
+from .app_config import (
+    MAX_FILE_SIZE, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES,
+    load_error_patterns, classify_file_type,
+    LOG_VIEWER_MAX_LINES, LOG_STORE_DIR, LOG_STORE_MAX_AGE_HOURS,
+)
 from .file_decompressor import decompress_file_classified, is_compressed_mime_type
 from .otel_metrics import MetricsCollector, create_metrics_plots
+from .log_store import LogStore
+from .log_store_registry import log_store_registry
 
 
 def detect_mime_type(file_sample: bytes, filename: str) -> str:
@@ -164,6 +172,12 @@ def upload_file():
         # Initialize metrics collector for prometheus metrics
         metrics_collector = MetricsCollector()
         
+        # Initialize log viewer: tail buffer + SQLite store for full-text search
+        raw_log_tail = deque(maxlen=LOG_VIEWER_MAX_LINES)
+        store_id = str(uuid_mod.uuid4())
+        db_path = os.path.join(LOG_STORE_DIR, f'mi_logstore_{store_id}.db')
+        log_store = LogStore(db_path)
+        
         # Single pass through the file with streaming
         line_count = 0
         logs_line_count = 0
@@ -225,6 +239,10 @@ def upload_file():
                 # Parse JSON only once per line (for logs)
                 json_obj = json.loads(line)
                 message = json_obj.get('message', '')
+                
+                # Collect for log viewer: tail buffer + SQLite store
+                raw_log_tail.append(line)
+                log_store.insert_line(line, parsed=json_obj)
                 
                 # Apply all filters to the same parsed object
                 if patterns['replication_progress'].search(message):
@@ -306,6 +324,16 @@ def upload_file():
                     return render_template('error.html',
                                          error_title="Invalid File Format",
                                          error_message=f"The uploaded file does not contain valid JSON format. Error on line {line_count}: {str(e)}. Please ensure you're uploading a valid mongosync log file in NDJSON format.")
+        
+        # Finalize log store: flush remaining buffered rows and build FTS index
+        log_store.flush()
+        if log_store.total_documents > 0:
+            log_store.build_fts_index()
+            log_store_registry.register(store_id, db_path)
+            logging.info(f"Log store ready: {log_store.total_documents} documents, store_id={store_id[:8]}...")
+        else:
+            log_store.delete()
+            store_id = ''
         
         logging.info(f"Processed {line_count} total lines ({logs_line_count} logs, {metrics_line_count} metrics), found {invalid_json_count} invalid JSON lines")
         logging.info(f"Found: {len(data)} replication progress, {len(version_info_list)} version info, "
@@ -1069,4 +1097,6 @@ def upload_file():
                              errors_data=matched_errors,
                              partition_init_data=partition_init_data,
                              has_logs_data=has_logs_data,
-                             has_metrics_data=has_metrics_data)
+                             has_metrics_data=has_metrics_data,
+                             log_viewer_lines=list(raw_log_tail),
+                             log_store_id=store_id)

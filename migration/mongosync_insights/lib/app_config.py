@@ -7,6 +7,7 @@ import re
 import logging
 import uuid
 import time
+import tempfile
 import threading
 from pathlib import Path
 from functools import lru_cache
@@ -48,6 +49,11 @@ ALLOWED_MIME_TYPES = [
     'application/x-tar',  # Tar archives
     'application/octet-stream'  # Generic binary (often used for compressed files)
 ]
+
+# Log Viewer settings
+LOG_VIEWER_MAX_LINES = int(os.getenv('MI_LOG_VIEWER_MAX_LINES', '2000'))
+LOG_STORE_DIR = os.getenv('MI_LOG_STORE_DIR', tempfile.gettempdir())
+LOG_STORE_MAX_AGE_HOURS = int(os.getenv('MI_LOG_STORE_MAX_AGE_HOURS', '24'))
 
 # Compressed file MIME types (subset of ALLOWED_MIME_TYPES)
 COMPRESSED_MIME_TYPES = {
