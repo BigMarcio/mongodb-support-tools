@@ -23,6 +23,7 @@ from .file_decompressor import decompress_file_classified, is_compressed_mime_ty
 from .otel_metrics import MetricsCollector, create_metrics_plots
 from .log_store import LogStore
 from .log_store_registry import log_store_registry
+from .snapshot_store import save_snapshot
 
 def upload_file():
     # Use the centralized logging configuration
@@ -1065,17 +1066,25 @@ def upload_file():
         has_logs_data = logs_line_count > 0 and len(data) > 0
         has_metrics_data = metrics_collector.metrics_count > 0
 
-        # Render the plot in the browser
-        return render_template('upload_results.html', 
-                             plot_json=plot_json,
-                             metrics_plot_json=metrics_plot_json,
-                             options_data=options_data,
-                             hidden_options_data=hidden_options_data,
-                             start_options_data=start_options_data,
-                             natural_order_data=natural_order_data,
-                             errors_data=matched_errors,
-                             partition_init_data=partition_init_data,
-                             has_logs_data=has_logs_data,
-                             has_metrics_data=has_metrics_data,
-                             log_viewer_lines=list(raw_log_tail),
-                             log_store_id=store_id)
+        template_data = {
+            'plot_json': plot_json,
+            'metrics_plot_json': metrics_plot_json,
+            'options_data': options_data,
+            'hidden_options_data': hidden_options_data,
+            'start_options_data': start_options_data,
+            'natural_order_data': natural_order_data,
+            'errors_data': matched_errors,
+            'partition_init_data': partition_init_data,
+            'has_logs_data': has_logs_data,
+            'has_metrics_data': has_metrics_data,
+            'log_viewer_lines': list(raw_log_tail),
+            'log_store_id': store_id,
+        }
+
+        snapshot_id = str(uuid_mod.uuid4())
+        try:
+            save_snapshot(snapshot_id, filename, file_size, line_count, store_id, template_data)
+        except Exception as e:
+            logging.warning(f"Failed to save snapshot: {e}")
+
+        return render_template('upload_results.html', **template_data)

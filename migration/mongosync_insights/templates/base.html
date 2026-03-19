@@ -489,6 +489,129 @@
             margin-bottom: 6px;
         }
 
+        /* Upload dialog */
+        .upload-dialog {
+            background: var(--mi-dialog-bg);
+            border: 1px solid var(--mi-frame-border);
+            border-radius: var(--mi-radius-md);
+            box-shadow: var(--mi-shadow-md);
+            width: 400px;
+            max-width: 90vw;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .upload-dialog-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--mi-frame-border);
+        }
+        .upload-dialog-header h2 {
+            margin: 0;
+            font-size: 16px;
+            color: var(--mi-text-primary);
+        }
+        .upload-dialog-body {
+            padding: 14px 18px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .upload-dialog-section-title {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: var(--mi-text-secondary);
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .upload-dialog-list {
+            min-height: 32px;
+        }
+        .upload-dialog-empty {
+            font-size: 0.85em;
+            color: var(--mi-text-secondary);
+            font-style: italic;
+        }
+        .upload-dialog-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--mi-frame-border);
+        }
+        .upload-dialog-item:last-child { border-bottom: none; }
+        .upload-dialog-item-info {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+        }
+        .upload-dialog-item-name {
+            font-size: 0.88em;
+            font-weight: 600;
+            color: var(--mi-text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .upload-dialog-item-meta {
+            font-size: 0.78em;
+            color: var(--mi-text-secondary);
+            margin-top: 2px;
+        }
+        .upload-dialog-item-actions {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-shrink: 0;
+            margin-left: 8px;
+        }
+        .upload-dialog-load-btn {
+            font-size: 0.8em;
+            padding: 3px 10px;
+            border: 1px solid var(--mi-accent);
+            border-radius: 4px;
+            background: var(--mi-accent);
+            color: #fff;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .upload-dialog-load-btn:hover { opacity: 0.85; }
+        .upload-dialog-del-btn {
+            font-size: 0.85em;
+            padding: 2px 6px;
+            border: none;
+            background: transparent;
+            color: #c44;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .upload-dialog-del-btn:hover { background: rgba(204,68,68,0.1); color: #a00; }
+        .upload-dialog-divider {
+            border: none;
+            border-top: 1px solid var(--mi-frame-border);
+            margin: 14px 0;
+        }
+        .upload-dialog-new-btn {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            font-size: 0.9em;
+            font-weight: 600;
+            border: 1px solid var(--mi-accent);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--mi-accent);
+            cursor: pointer;
+            text-align: center;
+        }
+        .upload-dialog-new-btn:hover {
+            background: var(--mi-accent);
+            color: #fff;
+        }
+
         /* Upload loading overlay */
         .upload-loading-overlay {
             position: fixed;
@@ -544,7 +667,7 @@
 <body>
     <!-- Left sidebar -->
     <nav class="sidebar">
-        <button class="sidebar-btn" id="uploadBtn" onclick="document.getElementById('sidebarFileInput').click()" title="Upload Log File">
+        <button class="sidebar-btn" id="uploadBtn" onclick="openUploadDialog()" title="Upload Log File">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
             </svg>
@@ -666,6 +789,24 @@
         </div>
     </div>
 
+    <!-- Upload dialog overlay -->
+    <div id="uploadDialogOverlay" class="mi-overlay" onclick="if(event.target===this)closeUploadDialog()">
+        <div class="upload-dialog">
+            <div class="upload-dialog-header">
+                <h2>Upload Log File</h2>
+                <button class="settings-close-btn" onclick="closeUploadDialog()" title="Close">&times;</button>
+            </div>
+            <div class="upload-dialog-body">
+                <div class="upload-dialog-section-title">Saved Analyses</div>
+                <div id="uploadDialogSnapshots" class="upload-dialog-list">
+                    <span class="upload-dialog-empty">Loading...</span>
+                </div>
+                <hr class="upload-dialog-divider">
+                <button class="upload-dialog-new-btn" onclick="triggerNewUpload()">Upload New File</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Upload loading overlay -->
     <div id="uploadLoadingOverlay" class="upload-loading-overlay">
         <div class="upload-loading-spinner"></div>
@@ -748,6 +889,70 @@
 
     function closeCreditsOverlay() {
         document.getElementById('creditsOverlay').classList.remove('active');
+    }
+
+    /* Upload dialog */
+    function _udFormatSize(bytes) {
+        if (!bytes || bytes === 0) return '';
+        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+        if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return bytes + ' B';
+    }
+    function _udFormatAge(hours) {
+        if (hours < 1) return 'Just now';
+        if (hours < 24) return Math.round(hours) + 'h ago';
+        return Math.round(hours / 24) + 'd ago';
+    }
+
+    function openUploadDialog() {
+        document.getElementById('uploadDialogOverlay').classList.add('active');
+        var container = document.getElementById('uploadDialogSnapshots');
+        container.innerHTML = '<span class="upload-dialog-empty">Loading...</span>';
+        fetch('/list_snapshots')
+            .then(function(r) { return r.json(); })
+            .then(function(snapshots) {
+                if (!snapshots || snapshots.length === 0) {
+                    container.innerHTML = '<span class="upload-dialog-empty">No saved analyses</span>';
+                    return;
+                }
+                var html = '';
+                snapshots.forEach(function(s) {
+                    var size = _udFormatSize(s.source_size_bytes);
+                    var age = _udFormatAge(s.age_hours);
+                    var meta = [size, age].filter(Boolean).join(' \u00b7 ');
+                    html += '<div class="upload-dialog-item">' +
+                        '<div class="upload-dialog-item-info">' +
+                            '<div class="upload-dialog-item-name" title="' + (s.source_filename || '') + '">' + (s.source_filename || 'Unknown') + '</div>' +
+                            '<div class="upload-dialog-item-meta">' + meta + '</div>' +
+                        '</div>' +
+                        '<div class="upload-dialog-item-actions">' +
+                            '<a class="upload-dialog-load-btn" href="/load_snapshot/' + s.snapshot_id + '">Load</a>' +
+                            '<button class="upload-dialog-del-btn" title="Delete" onclick="udDeleteSnapshot(\'' + s.snapshot_id + '\')">\u2716</button>' +
+                        '</div>' +
+                    '</div>';
+                });
+                container.innerHTML = html;
+            })
+            .catch(function() {
+                container.innerHTML = '<span class="upload-dialog-empty">Failed to load</span>';
+            });
+    }
+
+    function closeUploadDialog() {
+        document.getElementById('uploadDialogOverlay').classList.remove('active');
+    }
+
+    function triggerNewUpload() {
+        closeUploadDialog();
+        document.getElementById('sidebarFileInput').click();
+    }
+
+    function udDeleteSnapshot(id) {
+        if (!confirm('Delete this saved analysis?')) return;
+        fetch('/delete_snapshot/' + id, {method: 'DELETE'})
+            .then(function() { openUploadDialog(); })
+            .catch(function() { openUploadDialog(); });
     }
 
     /* Upload file trigger */

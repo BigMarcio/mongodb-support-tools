@@ -1,4 +1,5 @@
 import logging
+import os
 from flask import Flask, render_template, request, make_response, jsonify
 from lib.logs_metrics import upload_file
 from lib.live_migration_metrics import plotMetrics, gatherMetrics, gatherPartitionsMetrics, gatherEndpointMetrics
@@ -14,6 +15,10 @@ from lib.app_config import (
 from lib.connection_validator import sanitize_for_display
 from lib.log_store import LogStore
 from lib.log_store_registry import log_store_registry
+from lib.snapshot_store import (
+    load_snapshot, list_snapshots as get_snapshot_list,
+    delete_snapshot as remove_snapshot, cleanup_old_snapshots,
+)
 
 # Cookie name for session ID
 SESSION_COOKIE_NAME = 'mi_session_id'
@@ -131,6 +136,7 @@ def logout():
     if session_id:
         session_store.delete_session(session_id)
     log_store_registry.cleanup_expired()
+    cleanup_old_snapshots(LOG_STORE_DIR, LOG_STORE_MAX_AGE_HOURS)
     response = make_response('', 200)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
@@ -177,6 +183,46 @@ def search_logs():
         return jsonify({'error': 'Search failed', 'detail': str(e)}), 500
     finally:
         store.close()
+
+@app.route('/list_snapshots')
+def list_snapshots_route():
+    """Return JSON list of saved analysis snapshots."""
+    try:
+        snapshots = get_snapshot_list()
+        return jsonify(snapshots)
+    except Exception as e:
+        logger.error(f"Error listing snapshots: {e}")
+        return jsonify([])
+
+@app.route('/load_snapshot/<snapshot_id>')
+def load_snapshot_route(snapshot_id):
+    """Load a saved analysis snapshot and render the results page."""
+    data = load_snapshot(snapshot_id)
+    if data is None:
+        return render_template('error.html',
+                             error_title="Snapshot Not Found",
+                             error_message="The requested analysis snapshot was not found or has expired. "
+                                           "Please upload and parse the log file again.")
+
+    store_id = data.get('log_store_id', '')
+    if store_id:
+        from lib.snapshot_store import _logstore_path
+        db_path = _logstore_path(store_id)
+        if os.path.exists(db_path):
+            log_store_registry.register(store_id, db_path)
+
+    template_data = data.get('template_data', {})
+    return render_template('upload_results.html', **template_data)
+
+@app.route('/delete_snapshot/<snapshot_id>', methods=['DELETE'])
+def delete_snapshot_route(snapshot_id):
+    """Delete a saved analysis snapshot."""
+    deleted, store_id = remove_snapshot(snapshot_id)
+    if store_id:
+        log_store_registry.remove(store_id)
+    if deleted:
+        return jsonify({'status': 'ok'})
+    return jsonify({'error': 'Snapshot not found'}), 404
 
 @app.route('/liveMonitoring', methods=['POST'])
 def liveMonitoring():
@@ -405,8 +451,9 @@ if __name__ == '__main__':
     logger.info(f"Log file: {app_info['log_file']}")
     logger.info(f"Server: {app_info['host']}:{app_info['port']}")
     
-    # Clean up expired log store DB files from previous runs
+    # Clean up expired log store DB files and snapshots from previous runs
     LogStore.cleanup_old_stores(LOG_STORE_DIR, LOG_STORE_MAX_AGE_HOURS)
+    cleanup_old_snapshots(LOG_STORE_DIR, LOG_STORE_MAX_AGE_HOURS)
     
     # Import SSL config
     from lib.app_config import SSL_ENABLED, SSL_CERT_PATH, SSL_KEY_PATH
