@@ -35,6 +35,82 @@
         text-align: center;
         padding-top: 20px;
     }
+
+    .prev-analyses-divider {
+        border: none;
+        border-top: 1px solid #ccc;
+        margin: 16px 0 12px;
+    }
+    .prev-analyses-title {
+        font-size: 0.95em;
+        font-weight: 600;
+        color: #555;
+        margin: 0 0 10px;
+    }
+    .prev-analyses-empty {
+        font-size: 0.85em;
+        color: #999;
+        font-style: italic;
+    }
+    .prev-analyses-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    .prev-analysis-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #eee;
+    }
+    .prev-analysis-item:last-child { border-bottom: none; }
+    .prev-analysis-info {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+    }
+    .prev-analysis-name {
+        font-size: 0.88em;
+        font-weight: 600;
+        color: #333;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .prev-analysis-meta {
+        font-size: 0.78em;
+        color: #888;
+        margin-top: 2px;
+    }
+    .prev-analysis-actions {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-shrink: 0;
+        margin-left: 8px;
+    }
+    .prev-analysis-load {
+        font-size: 0.8em;
+        padding: 3px 10px;
+        border: 1px solid #4a90d9;
+        border-radius: 4px;
+        background: #4a90d9;
+        color: #fff;
+        cursor: pointer;
+        text-decoration: none;
+    }
+    .prev-analysis-load:hover { background: #357abd; }
+    .prev-analysis-delete {
+        font-size: 0.85em;
+        padding: 2px 6px;
+        border: none;
+        background: transparent;
+        color: #c44;
+        cursor: pointer;
+        border-radius: 3px;
+    }
+    .prev-analysis-delete:hover { background: #fee; color: #a00; }
 {% endblock %}
 
 {% block content %}
@@ -50,6 +126,14 @@
         <p>Click the "Upload" button after selecting your Mongosync log file to generate migration progress plots.</p>
         <p><small><strong>Supported formats:</strong> .log, .json, .out (uncompressed) or .gz, .zip, .bz2, .tgz, .tar.gz, .tar.bz2 (compressed)<br>
         <strong>Maximum size:</strong> {{ max_file_size_gb | round(1) }} GB</small></p>
+
+        <div id="previousAnalyses">
+            <hr class="prev-analyses-divider">
+            <p class="prev-analyses-title">Previous Analyses</p>
+            <div id="prevAnalysesContent">
+                <span class="prev-analyses-empty">Loading...</span>
+            </div>
+        </div>
     </form>
 
     <!-- Second form: Metrics rendering -->
@@ -118,7 +202,76 @@ function validateVerifierForm() {
     return true;
 }
 
+function formatFileSize(bytes) {
+    if (!bytes || bytes === 0) return '';
+    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+    if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return bytes + ' B';
+}
+
+function formatAge(hours) {
+    if (hours < 1) return 'Just now';
+    if (hours < 24) return Math.round(hours) + 'h ago';
+    return Math.round(hours / 24) + 'd ago';
+}
+
+function formatDate(isoStr) {
+    if (!isoStr) return '';
+    try {
+        var d = new Date(isoStr);
+        return d.toLocaleDateString(undefined, {month:'short', day:'numeric'}) + ', ' +
+               d.toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
+    } catch(e) { return ''; }
+}
+
+function loadPreviousAnalyses() {
+    var container = document.getElementById('prevAnalysesContent');
+    if (!container) return;
+
+    fetch('/list_snapshots')
+        .then(function(r) { return r.json(); })
+        .then(function(snapshots) {
+            if (!snapshots || snapshots.length === 0) {
+                container.innerHTML = '<span class="prev-analyses-empty">No saved analyses</span>';
+                return;
+            }
+            var html = '<ul class="prev-analyses-list">';
+            snapshots.forEach(function(s) {
+                var size = formatFileSize(s.source_size_bytes);
+                var date = formatDate(s.created_at);
+                var age = formatAge(s.age_hours);
+                var meta = [date, size, age].filter(Boolean).join(' \u00b7 ');
+                html += '<li class="prev-analysis-item">' +
+                    '<div class="prev-analysis-info">' +
+                        '<div class="prev-analysis-name" title="' + (s.source_filename || '') + '">' + (s.source_filename || 'Unknown') + '</div>' +
+                        '<div class="prev-analysis-meta">' + meta + '</div>' +
+                    '</div>' +
+                    '<div class="prev-analysis-actions">' +
+                        '<a class="prev-analysis-load" href="/load_snapshot/' + s.snapshot_id + '">Load</a>' +
+                        '<button class="prev-analysis-delete" title="Delete" onclick="deleteSnapshot(\'' + s.snapshot_id + '\')">\u2716</button>' +
+                    '</div>' +
+                '</li>';
+            });
+            html += '</ul>';
+            container.innerHTML = html;
+        })
+        .catch(function() {
+            container.innerHTML = '<span class="prev-analyses-empty">Failed to load saved analyses</span>';
+        });
+}
+
+function deleteSnapshot(id) {
+    if (!confirm('Delete this saved analysis?')) return;
+    fetch('/delete_snapshot/' + id, {method: 'DELETE'})
+        .then(function(r) { return r.json(); })
+        .then(function() { loadPreviousAnalyses(); })
+        .catch(function() { loadPreviousAnalyses(); });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    loadPreviousAnalyses();
+
     var uploadLogsForm = document.getElementById('uploadLogsForm');
     if (uploadLogsForm) {
         uploadLogsForm.addEventListener('submit', function(e) {

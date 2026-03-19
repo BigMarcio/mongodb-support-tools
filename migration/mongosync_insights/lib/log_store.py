@@ -262,24 +262,29 @@ class LogStore:
     @staticmethod
     def cleanup_old_stores(store_dir: str, max_age_hours: int = 24):
         """
-        Delete log store DB files older than max_age_hours.
+        Delete log store DB files and snapshot JSON files older than max_age_hours.
 
-        Scans the given directory for files matching the naming pattern
-        mi_logstore_*.db and removes those that exceed the age threshold.
+        Scans the given directory for files matching mi_logstore_*.db and
+        mi_snapshot_*.json, removing those that exceed the age threshold.
         """
         cutoff = time.time() - (max_age_hours * 3600)
-        pattern = os.path.join(store_dir, 'mi_logstore_*.db')
         removed = 0
-        for db_file in glob.glob(pattern):
-            try:
-                if os.path.getmtime(db_file) < cutoff:
-                    os.remove(db_file)
-                    for suffix in ('-wal', '-shm'):
-                        extra = db_file + suffix
-                        if os.path.exists(extra):
-                            os.remove(extra)
-                    removed += 1
-            except OSError as e:
-                logger.warning(f"Failed to clean up {db_file}: {e}")
+
+        for pattern in (
+            os.path.join(store_dir, 'mi_logstore_*.db'),
+            os.path.join(store_dir, 'mi_snapshot_*.json'),
+        ):
+            for filepath in glob.glob(pattern):
+                try:
+                    if os.path.getmtime(filepath) < cutoff:
+                        os.remove(filepath)
+                        for suffix in ('-wal', '-shm'):
+                            extra = filepath + suffix
+                            if os.path.exists(extra):
+                                os.remove(extra)
+                        removed += 1
+                except OSError as e:
+                    logger.warning(f"Failed to clean up {filepath}: {e}")
+
         if removed:
-            logger.info(f"Cleaned up {removed} expired log store(s) from {store_dir}")
+            logger.info(f"Cleaned up {removed} expired store/snapshot file(s) from {store_dir}")
