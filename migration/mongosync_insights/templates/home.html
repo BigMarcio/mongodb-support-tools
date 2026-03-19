@@ -157,6 +157,19 @@
         <p><small><strong>Note:</strong> Connect to the MongoDB cluster where the migration-verifier writes its metadata (typically the destination cluster).</small></p>
     </form>
 </div>
+
+<!-- Duplicate check dialog (home page) -->
+<div id="duplicateCheckOverlay" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:none;align-items:center;justify-content:center;z-index:9000;" onclick="if(event.target===this)duplicateCancel()">
+    <div style="background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.2);width:420px;max-width:90vw;padding:24px;text-align:center;">
+        <h3 style="margin:0 0 10px 0;font-size:16px;color:#333;">Previous Analysis Found</h3>
+        <p id="duplicateCheckMsg" style="margin:0 0 20px 0;font-size:13px;color:#555;text-align:left;line-height:1.5;"></p>
+        <div style="display:flex;justify-content:center;gap:10px;">
+            <button onclick="duplicateLoadPrevious()" style="padding:7px 16px;border:1px solid #4a90d9;border-radius:4px;background:#4a90d9;color:#fff;cursor:pointer;font-size:13px;">Load Previous</button>
+            <button onclick="duplicateReplace()" style="padding:7px 16px;border:1px solid #c44;border-radius:4px;background:transparent;color:#c44;cursor:pointer;font-size:13px;">Replace</button>
+            <button onclick="duplicateCancel()" style="padding:7px 16px;border:1px solid #ccc;border-radius:4px;background:transparent;color:#555;cursor:pointer;font-size:13px;">Cancel</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -269,6 +282,85 @@ function deleteSnapshot(id) {
         .catch(function() { loadPreviousAnalyses(); });
 }
 
+/* Duplicate check on upload */
+var _dupState = { matches: [], form: null, fileInput: null };
+
+function _dupFormatAge(hours) {
+    if (hours < 1) return 'Just now';
+    if (hours < 24) return Math.round(hours) + 'h ago';
+    return Math.round(hours / 24) + 'd ago';
+}
+
+function checkDuplicateAndUpload(form, fileInput) {
+    if (!fileInput || !fileInput.files || !fileInput.files.length) return;
+    var selectedName = fileInput.files[0].name;
+    _dupState.form = form;
+    _dupState.fileInput = fileInput;
+    _dupState.matches = [];
+
+    fetch('/list_snapshots')
+        .then(function(r) { return r.json(); })
+        .then(function(snapshots) {
+            var matches = (snapshots || []).filter(function(s) {
+                return s.source_filename === selectedName;
+            });
+            if (matches.length === 0) {
+                _dupProceedUpload();
+                return;
+            }
+            _dupState.matches = matches;
+            var age = _dupFormatAge(matches[0].age_hours);
+            var msg = 'A saved analysis for <strong>"' + selectedName + '"</strong> already exists (' + age + ').'
+                + '<br><br><strong>Load Previous</strong> opens the saved session.'
+                + '<br><strong>Replace</strong> deletes the saved session and uploads the file again.';
+            document.getElementById('duplicateCheckMsg').innerHTML = msg;
+            var overlay = document.getElementById('duplicateCheckOverlay');
+            overlay.style.display = 'flex';
+        })
+        .catch(function() {
+            _dupProceedUpload();
+        });
+}
+
+function _dupProceedUpload() {
+    var overlay = document.getElementById('duplicateCheckOverlay');
+    if (overlay) overlay.style.display = 'none';
+    document.getElementById('uploadLoadingOverlay').classList.add('active');
+    _dupState.form.submit();
+}
+
+function duplicateLoadPrevious() {
+    var overlay = document.getElementById('duplicateCheckOverlay');
+    if (overlay) overlay.style.display = 'none';
+    if (_dupState.matches.length > 0) {
+        document.getElementById('uploadLoadingOverlay').classList.add('active');
+        window.location.href = '/load_snapshot/' + _dupState.matches[0].snapshot_id;
+    }
+}
+
+function duplicateReplace() {
+    var overlay = document.getElementById('duplicateCheckOverlay');
+    if (overlay) overlay.style.display = 'none';
+    document.getElementById('uploadLoadingOverlay').classList.add('active');
+    var delPromises = _dupState.matches.map(function(s) {
+        return fetch('/delete_snapshot/' + s.snapshot_id, { method: 'DELETE' }).catch(function() {});
+    });
+    Promise.all(delPromises).then(function() {
+        _dupState.form.submit();
+    });
+}
+
+function duplicateCancel() {
+    var overlay = document.getElementById('duplicateCheckOverlay');
+    if (overlay) overlay.style.display = 'none';
+    if (_dupState.fileInput) {
+        _dupState.fileInput.value = '';
+    }
+    _dupState.matches = [];
+    _dupState.form = null;
+    _dupState.fileInput = null;
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     loadPreviousAnalyses();
 
@@ -281,7 +373,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('Please select a file to upload.');
                 return;
             }
-            document.getElementById('uploadLoadingOverlay').classList.add('active');
+            e.preventDefault();
+            checkDuplicateAndUpload(this, fileInput);
         });
     }
 

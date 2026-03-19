@@ -428,6 +428,11 @@
             gap: 10px;
         }
 
+        .dup-check-dialog { width: 420px; }
+        .dup-check-dialog p { text-align: left; line-height: 1.5; }
+        .dup-replace-btn { border-color: #c44; color: #c44; }
+        .dup-replace-btn:hover { background: #c44; color: #fff; }
+
         /* Credits overlay */
         .credits-panel {
             background: var(--mi-dialog-bg);
@@ -807,6 +812,19 @@
         </div>
     </div>
 
+    <!-- Duplicate check dialog -->
+    <div id="duplicateCheckOverlay" class="mi-overlay" onclick="if(event.target===this)duplicateCancel()">
+        <div class="confirm-dialog dup-check-dialog">
+            <h3>Previous Analysis Found</h3>
+            <p id="duplicateCheckMsg"></p>
+            <div class="confirm-dialog-actions">
+                <button class="btn-apply" onclick="duplicateLoadPrevious()">Load Previous</button>
+                <button class="btn-cancel dup-replace-btn" onclick="duplicateReplace()">Replace</button>
+                <button class="btn-cancel" onclick="duplicateCancel()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Upload loading overlay -->
     <div id="uploadLoadingOverlay" class="upload-loading-overlay">
         <div class="upload-loading-spinner"></div>
@@ -955,11 +973,81 @@
             .catch(function() { openUploadDialog(); });
     }
 
-    /* Upload file trigger */
+    /* Duplicate check on upload */
+    var _dupState = { matches: [], form: null, fileInput: null };
+
+    function checkDuplicateAndUpload(form, fileInput) {
+        if (!fileInput || !fileInput.files || !fileInput.files.length) return;
+        var selectedName = fileInput.files[0].name;
+        _dupState.form = form;
+        _dupState.fileInput = fileInput;
+        _dupState.matches = [];
+
+        fetch('/list_snapshots')
+            .then(function(r) { return r.json(); })
+            .then(function(snapshots) {
+                var matches = (snapshots || []).filter(function(s) {
+                    return s.source_filename === selectedName;
+                });
+                if (matches.length === 0) {
+                    _dupProceedUpload();
+                    return;
+                }
+                _dupState.matches = matches;
+                var age = _udFormatAge(matches[0].age_hours);
+                var msg = 'A saved analysis for <strong>"' + selectedName + '"</strong> already exists (' + age + ').'
+                    + '<br><br><strong>Load Previous</strong> opens the saved session.'
+                    + '<br><strong>Replace</strong> deletes the saved session and uploads the file again.';
+                document.getElementById('duplicateCheckMsg').innerHTML = msg;
+                document.getElementById('duplicateCheckOverlay').classList.add('active');
+            })
+            .catch(function() {
+                _dupProceedUpload();
+            });
+    }
+
+    function _dupProceedUpload() {
+        document.getElementById('duplicateCheckOverlay').classList.remove('active');
+        document.getElementById('uploadLoadingOverlay').classList.add('active');
+        _dupState.form.submit();
+    }
+
+    function duplicateLoadPrevious() {
+        document.getElementById('duplicateCheckOverlay').classList.remove('active');
+        if (_dupState.matches.length > 0) {
+            document.getElementById('uploadLoadingOverlay').classList.add('active');
+            window.location.href = '/load_snapshot/' + _dupState.matches[0].snapshot_id;
+        }
+    }
+
+    function duplicateReplace() {
+        document.getElementById('duplicateCheckOverlay').classList.remove('active');
+        document.getElementById('uploadLoadingOverlay').classList.add('active');
+        var delPromises = _dupState.matches.map(function(s) {
+            return fetch('/delete_snapshot/' + s.snapshot_id, { method: 'DELETE' }).catch(function() {});
+        });
+        Promise.all(delPromises).then(function() {
+            _dupState.form.submit();
+        });
+    }
+
+    function duplicateCancel() {
+        document.getElementById('duplicateCheckOverlay').classList.remove('active');
+        if (_dupState.fileInput) {
+            _dupState.fileInput.value = '';
+        }
+        _dupState.matches = [];
+        _dupState.form = null;
+        _dupState.fileInput = null;
+    }
+
+    /* Upload file trigger (sidebar) */
     document.getElementById('sidebarFileInput').addEventListener('change', function() {
         if (this.files.length > 0) {
-            document.getElementById('uploadLoadingOverlay').classList.add('active');
-            document.getElementById('sidebarUploadForm').submit();
+            checkDuplicateAndUpload(
+                document.getElementById('sidebarUploadForm'),
+                this
+            );
         }
     });
 
