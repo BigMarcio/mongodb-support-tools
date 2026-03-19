@@ -79,12 +79,23 @@ http://localhost:3030
 
 ## Using Mongosync Insights
 
+### Sidebar Navigation
+
+Results pages include a left sidebar with quick-access buttons:
+
+- **Upload** — opens a dialog listing saved analyses with **Load** and **Delete** actions, plus an **"Upload New File"** button to parse a new log file
+- **Settings** — configure the live monitoring refresh interval, theme (Light, Dark, or System), and color scheme (MongoDB Green, Blue, Slate, Ocean)
+- **Logout** — clears the current session and returns to the home page
+- **Credits** — displays developer credits
+
 ### Option 1: Parsing Mongosync Log Files
 
 1. Click the **"Browse"** or **"Choose File"** button
 2. Select your mongosync log file from your file system
 3. Click **"Open"** or **"Upload"**
 4. The application will process the file and display results across multiple tabs
+
+**Duplicate Upload Detection:** If you upload a file with the same name as an existing saved analysis, a dialog will appear offering three options: **Load Previous** (open the saved session without re-parsing), **Replace** (delete the saved session and parse the file again), or **Cancel**.
 
 **Supported File Formats:**
 - Plain text: `.log`, `.json`, `.out`
@@ -111,12 +122,24 @@ After upload, the results are organized into tabs:
 | **Options** | Mongosync configuration options extracted from the logs (with **Copy as Markdown** for easy sharing) |
 | **Collections** | Collection-level progress details (with **Copy as Markdown** for easy sharing) |
 | **Errors** | Detected error patterns such as oplog rollover, timeouts, verifier mismatches, and write conflicts during cutover |
+| **Log Viewer** | Browse recent log lines with severity filtering, semantic focus, multiple view modes (Highlighted, Raw, Pretty JSON, Summary), and full-text search across the entire log file |
 
 ![Mongosync Logs Tab](images/mongosync_logs_logs.png)
 ![Mongosync Metrics Tab](images/mongosync_logs_metrics.png)
 ![Mongosync Options Tab](images/mongosync_logs_options.png)
 ![Mongosync Collections and Partitions Tab](images/mongosync_logs_collections_partitions.png)
 ![Mongosync Errors and Warnings Tab](images/mongosync_logs_errors.png)
+![Mongosync Log Viewer Tab](images/mongosync_logs_logviewer.png)
+
+#### Analysis Snapshot Persistence
+
+After parsing a log file, the analysis is automatically saved as a **snapshot** to disk. This allows you to reload a previous analysis instantly without re-parsing the original file.
+
+- The home page displays a **"Previous Analyses"** section below the upload form, listing all saved snapshots with their filename, date, file size, and age
+- Click **"Load"** to reopen a saved analysis — all tabs (plots, tables, log viewer) are restored immediately
+- Click the **delete** button to remove a snapshot you no longer need
+- Snapshots expire automatically after **24 hours** of inactivity; each time you load a snapshot, the TTL resets for another 24 hours
+- By default, snapshots are stored in the system's temp directory. Use the `MI_LOG_STORE_DIR` environment variable to set a persistent storage location. See [CONFIGURATION.md](CONFIGURATION.md) for details
 
 ### Option 2: Live Monitoring (Metadata)
 
