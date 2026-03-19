@@ -182,6 +182,8 @@ def upload_file():
         else:
             # For non-compressed files, classify by filename
             file_type = classify_file_type(filename)
+            if file_type is None:
+                file_type = 'logs'
             logger.info(f"Non-compressed file classified as: {file_type}")
             file_iterator = file
             use_classified = False
@@ -315,6 +317,18 @@ def upload_file():
                     f"{len(matched_errors)} common errors")
         logging.info(f"Metrics collector: {metrics_collector.metrics_count} metric points from {metrics_collector.line_count} lines")  
         
+        has_any_log_data = (len(data) > 0 or len(version_info_list) > 0 or len(mongosync_ops_stats) > 0 or
+                            len(mongosync_sent_response) > 0 or len(phase_transitions_json) > 0 or
+                            len(mongosync_partition_progress) > 0 or len(mongosync_crud_rate) > 0)
+        has_any_metrics_data = metrics_collector.metrics_count > 0
+        if not has_any_log_data and not has_any_metrics_data:
+            logger.warning(f"No recognizable mongosync data found in {filename} ({line_count} lines processed)")
+            return render_template('error.html',
+                                 error_title="No Mongosync Data Found",
+                                 error_message=f"The file '{filename}' was processed ({line_count:,} lines) but no recognizable "
+                                               f"mongosync log entries or metrics were found. Please ensure you are uploading a "
+                                               f"valid mongosync log file (NDJSON format with standard mongosync log messages).")
+
         # Sort log data by timestamp to ensure correct chronological plot ordering
         # (archives may contain rotated log files in non-chronological order)
         data.sort(key=lambda x: x.get('time', ''))

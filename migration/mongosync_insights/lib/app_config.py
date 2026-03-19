@@ -41,6 +41,7 @@ ALLOWED_MIME_TYPES = [
     'text/plain',
     'application/json',
     'application/x-ndjson',
+    'text/plain',  # Prometheus/OTel metrics files (mongosync_metrics.log)
     'application/gzip', 'application/x-gzip',
     'application/zip', 'application/x-zip-compressed',
     'application/x-bzip2',
