@@ -1,5 +1,5 @@
 import logging
-from flask import Flask, render_template, request, make_response
+from flask import Flask, render_template, request, make_response, jsonify
 from lib.logs_metrics import upload_file
 from lib.live_migration_metrics import plotMetrics, gatherMetrics, gatherPartitionsMetrics, gatherEndpointMetrics
 from lib.migration_verifier import plotVerifierMetrics, gatherVerifierMetrics
@@ -8,9 +8,12 @@ from lib.app_config import (
     setup_logging, validate_config, get_app_info, HOST, PORT, MAX_FILE_SIZE, 
     REFRESH_TIME, APP_VERSION, DEVELOPER_CREDITS, validate_connection, clear_connection_cache, 
     SECURE_COOKIES, CONNECTION_STRING, VERIFIER_CONNECTION_STRING,
-    PROGRESS_ENDPOINT_URL, validate_progress_endpoint_url, session_store, SESSION_TIMEOUT
+    PROGRESS_ENDPOINT_URL, validate_progress_endpoint_url, session_store, SESSION_TIMEOUT,
+    LOG_STORE_DIR, LOG_STORE_MAX_AGE_HOURS,
 )
 from lib.connection_validator import sanitize_for_display
+from lib.log_store import LogStore
+from lib.log_store_registry import log_store_registry
 
 # Cookie name for session ID
 SESSION_COOKIE_NAME = 'mi_session_id'
@@ -127,6 +130,7 @@ def logout():
     session_id = request.cookies.get(SESSION_COOKIE_NAME)
     if session_id:
         session_store.delete_session(session_id)
+    log_store_registry.cleanup_expired()
     response = make_response('', 200)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
@@ -134,6 +138,45 @@ def logout():
 @app.route('/uploadLogs', methods=['POST'])
 def uploadLogs():
     return upload_file()
+
+@app.route('/search_logs')
+def search_logs():
+    """Full-text search across the uploaded log file via SQLite FTS5."""
+    store_id = request.args.get('store_id', '').strip()
+    if not store_id:
+        return jsonify({'error': 'Missing store_id parameter'}), 400
+
+    q = request.args.get('q', '').strip()
+    level = request.args.get('level', '').strip()
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        per_page = min(max(1, int(request.args.get('per_page', 50))), 200)
+    except (ValueError, TypeError):
+        per_page = 50
+
+    store = log_store_registry.open_store(store_id)
+    if store is None:
+        return jsonify({'error': 'Log store not found or expired'}), 404
+
+    try:
+        query = {}
+        if level:
+            query['level'] = level
+        if q:
+            query['$text'] = q
+
+        result = store.find(query, skip=(page - 1) * per_page, limit=per_page)
+        result['page'] = page
+        result['per_page'] = per_page
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Log search error: {e}")
+        return jsonify({'error': 'Search failed', 'detail': str(e)}), 500
+    finally:
+        store.close()
 
 @app.route('/liveMonitoring', methods=['POST'])
 def liveMonitoring():
@@ -361,6 +404,9 @@ if __name__ == '__main__':
     logger.info(f"Starting {app_info['name']} v{app_info['version']}")
     logger.info(f"Log file: {app_info['log_file']}")
     logger.info(f"Server: {app_info['host']}:{app_info['port']}")
+    
+    # Clean up expired log store DB files from previous runs
+    LogStore.cleanup_old_stores(LOG_STORE_DIR, LOG_STORE_MAX_AGE_HOURS)
     
     # Import SSL config
     from lib.app_config import SSL_ENABLED, SSL_CERT_PATH, SSL_KEY_PATH

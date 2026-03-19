@@ -335,6 +335,196 @@
             min-width: 100%;
         }
     }
+
+    /* ===== Log Viewer Panel ===== */
+    .lv-panel {
+        display: flex;
+        flex-direction: column;
+        height: 75vh;
+        min-height: 400px;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        overflow: hidden;
+        background: #1e1e1e;
+    }
+
+    .lv-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 12px;
+        background: #2a2a2a;
+        border-bottom: 1px solid #3a3a3a;
+    }
+
+    .lv-header-left {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .lv-header-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .lv-title {
+        font-weight: 600;
+        font-size: 14px;
+        color: #e0e0e0;
+        white-space: nowrap;
+    }
+
+    .lv-label {
+        font-size: 11px;
+        color: #888;
+        white-space: nowrap;
+    }
+
+    .lv-severity-filter, .lv-tools { display: flex; align-items: center; gap: 6px; }
+    .lv-severity-buttons, .lv-view-mode, .lv-semantic-filter { display: flex; gap: 3px; align-items: center; }
+
+    .lv-sev-btn, .lv-mode-btn, .lv-focus-btn {
+        padding: 2px 8px;
+        font-size: 11px;
+        border: 1px solid #555;
+        border-radius: 4px;
+        background: transparent;
+        color: #aaa;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .lv-sev-btn:hover, .lv-mode-btn:hover, .lv-focus-btn:hover { background: #3a3a3a; color: #ddd; }
+    .lv-sev-btn.active { background: #444; color: #fff; border-color: #888; }
+    .lv-mode-btn.active { background: #00684A; color: #fff; border-color: #00684A; }
+    .lv-focus-btn.active { background: #c9820a; color: #fff; border-color: #c9820a; }
+
+    .lv-sev-btn.info.active { border-color: #4a9; }
+    .lv-sev-btn.debug.active { border-color: #6a8; }
+    .lv-sev-btn.trace.active { border-color: #888; }
+    .lv-sev-btn.warn.active { border-color: #e8a735; }
+    .lv-sev-btn.error.active { border-color: #e84040; }
+    .lv-sev-btn.fatal.active { border-color: #d42; background: #5a1a1a; }
+    .lv-sev-btn.panic.active { border-color: #f0f; background: #5a1a3a; }
+
+    .lv-search {
+        padding: 4px 8px;
+        font-size: 12px;
+        border: 1px solid #555;
+        border-radius: 4px;
+        background: #1e1e1e;
+        color: #e0e0e0;
+        width: 180px;
+    }
+
+    .lv-line-count {
+        font-size: 11px;
+        color: #888;
+        white-space: nowrap;
+    }
+
+    .lv-action-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        background: transparent;
+        border: 1px solid #555;
+        border-radius: 4px;
+        color: #aaa;
+        cursor: pointer;
+    }
+    .lv-action-btn:hover { background: #3a3a3a; color: #ddd; }
+
+    .lv-viewer {
+        flex: 1;
+        overflow-y: auto;
+        font-family: 'Source Code Pro', Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        padding: 10px;
+        background: #1e1e1e;
+        color: #e0e0e0;
+    }
+
+    .lv-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: #888;
+        gap: 12px;
+    }
+
+    .lv-log-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin: 0;
+        padding: 2px 0;
+    }
+    .lv-log-line.pretty { white-space: pre; word-break: normal; }
+    .lv-log-line.summary { white-space: normal; word-break: break-word; font-family: inherit; font-size: 12px; }
+
+    .lv-log-line.error-line { background: rgba(232,64,64,0.12); }
+    .lv-log-line.warn-line { background: rgba(232,167,53,0.10); }
+    .lv-log-line.phase-line { background: rgba(0,104,74,0.12); }
+
+    /* Syntax highlighting */
+    .lv-log-line .timestamp { color: #7ec8e3; }
+    .lv-log-line .phase { color: #4ade80; font-weight: 600; }
+    .lv-log-line .level-error { color: #ef4444; font-weight: 600; }
+    .lv-log-line .level-warn { color: #eab308; font-weight: 600; }
+    .lv-log-line .level-info { color: #38bdf8; }
+    .lv-log-line .level-debug { color: #a78bfa; }
+    .lv-log-line .level-trace { color: #888; }
+    .lv-log-line .json-bracket { color: #888; }
+    .lv-log-line .json-comma { color: #888; }
+    .lv-log-line .json-colon { color: #888; }
+    .lv-log-line .json-key { color: #7dd3fc; }
+    .lv-log-line .json-string { color: #86efac; }
+    .lv-log-line .json-number { color: #93c5fd; }
+    .lv-log-line .boolean-true { color: #4ade80; }
+    .lv-log-line .boolean-false { color: #fb923c; }
+    .lv-log-line .db-name { color: #67e8f9; }
+    .lv-log-line .metric-value { color: #c084fc; }
+    .lv-log-line .duration-avg { color: #38bdf8; }
+    .lv-log-line .duration-max { color: #fb923c; }
+    .lv-log-line .operation-count { color: #4ade80; }
+    .lv-log-line .field-state { color: #f472b6; }
+    .lv-log-line .field-cancommit { color: #2dd4bf; }
+    .lv-log-line .field-lagtime { color: #facc15; }
+    .lv-log-line .field-estimated-total { color: #86efac; }
+    .lv-log-line .field-estimated-copied { color: #6ee7b7; }
+    .lv-log-line .invalid-json-badge { display: inline-block; background: #7f1d1d; color: #fca5a5; padding: 0 4px; border-radius: 3px; font-size: 10px; margin-right: 4px; }
+
+    /* Pagination */
+    .lv-pagination {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        background: #2a2a2a;
+        border-top: 1px solid #3a3a3a;
+    }
+    .lv-page-btn {
+        padding: 4px 12px;
+        font-size: 12px;
+        border: 1px solid #555;
+        border-radius: 4px;
+        background: transparent;
+        color: #ccc;
+        cursor: pointer;
+    }
+    .lv-page-btn:hover:not(:disabled) { background: #3a3a3a; }
+    .lv-page-btn:disabled { opacity: 0.4; cursor: default; }
+    .lv-page-btn.lv-back-to-tail { border-color: #00684A; color: #4ade80; }
+    .lv-page-info, .lv-page-total { font-size: 12px; color: #888; }
 {% endblock %}
 
 {% block content %}
@@ -350,6 +540,7 @@
         <button class="tab-btn" onclick="switchTab('options')" id="tab-options">Mongosync Options</button>
         <button class="tab-btn" onclick="switchTab('collections')" id="tab-collections">Collections and Partitions</button>
         <button class="tab-btn" onclick="switchTab('errors')" id="tab-errors">Errors and Warnings{% if errors_data %} ({{ errors_data|length }}){% endif %}</button>
+        <button class="tab-btn" onclick="switchTab('logviewer')" id="tab-logviewer">Log Viewer</button>
         {% endif %}
     </div>
 
@@ -603,6 +794,73 @@
                     <div class="no-data-message">No common errors found in the log file</div>
                     {% endif %}
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="logviewer-tab" class="tab-content">
+        <div class="lv-panel">
+            <div class="lv-header">
+                <div class="lv-header-left">
+                    <span class="lv-title" id="lvTitle">Log Viewer</span>
+                    <div class="lv-severity-filter">
+                        <span class="lv-label">Filter:</span>
+                        <div class="lv-severity-buttons">
+                            <button class="lv-sev-btn info active" data-severity="info" onclick="lvToggleSeverity('info')">Info</button>
+                            <button class="lv-sev-btn debug active" data-severity="debug" onclick="lvToggleSeverity('debug')">Debug</button>
+                            <button class="lv-sev-btn trace active" data-severity="trace" onclick="lvToggleSeverity('trace')">Trace</button>
+                            <button class="lv-sev-btn warn active" data-severity="warn" onclick="lvToggleSeverity('warn')">Warn</button>
+                            <button class="lv-sev-btn error active" data-severity="error" onclick="lvToggleSeverity('error')">Error</button>
+                            <button class="lv-sev-btn fatal active" data-severity="fatal" onclick="lvToggleSeverity('fatal')">Fatal</button>
+                            <button class="lv-sev-btn panic active" data-severity="panic" onclick="lvToggleSeverity('panic')">Panic</button>
+                        </div>
+                    </div>
+                    <div class="lv-tools">
+                        <div class="lv-view-mode">
+                            <span class="lv-label">View:</span>
+                            <button class="lv-mode-btn active" data-log-mode="highlighted" onclick="lvSetViewMode('highlighted')">Highlighted</button>
+                            <button class="lv-mode-btn" data-log-mode="raw" onclick="lvSetViewMode('raw')">Raw</button>
+                            <button class="lv-mode-btn" data-log-mode="pretty" onclick="lvSetViewMode('pretty')">Pretty JSON</button>
+                            <button class="lv-mode-btn" data-log-mode="summary" onclick="lvSetViewMode('summary')">Summary</button>
+                        </div>
+                        <div class="lv-semantic-filter">
+                            <span class="lv-label">Focus:</span>
+                            <button class="lv-focus-btn" data-log-filter="errors" onclick="lvToggleFocus('errors')">Errors</button>
+                            <button class="lv-focus-btn" data-log-filter="warnings" onclick="lvToggleFocus('warnings')">Warnings</button>
+                            <button class="lv-focus-btn" data-log-filter="phases" onclick="lvToggleFocus('phases')">Phases</button>
+                            <button class="lv-focus-btn" data-log-filter="opStats" onclick="lvToggleFocus('opStats')">Op Stats</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="lv-header-right">
+                    <input type="text" id="lvSearchInput" class="lv-search" placeholder="Search logs..." oninput="lvOnSearchInput(this.value)">
+                    <span id="lvLineCount" class="lv-line-count">0 lines</span>
+                    <button class="lv-action-btn" onclick="lvDownloadLogs()" title="Download logs">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                    </button>
+                    <button class="lv-action-btn" onclick="lvClear()" title="Clear logs">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="lv-viewer" id="lvViewer">
+                <div class="lv-placeholder" id="lvPlaceholder">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="48" height="48" style="opacity:0.3;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <p>Loading log lines...</p>
+                </div>
+            </div>
+            <div class="lv-pagination" id="lvPagination" style="display:none;">
+                <button class="lv-page-btn" id="lvPrevBtn" onclick="lvPrevPage()" disabled>Previous</button>
+                <span class="lv-page-info" id="lvPageInfo">Page 1</span>
+                <button class="lv-page-btn" id="lvNextBtn" onclick="lvNextPage()" disabled>Next</button>
+                <span class="lv-page-total" id="lvPageTotal"></span>
+                <button class="lv-page-btn lv-back-to-tail" id="lvBackToTail" onclick="lvBackToTail()" style="display:none;">Back to Tail View</button>
             </div>
         </div>
     </div>
@@ -1080,6 +1338,402 @@ function copyNaturalOrderAsMarkdown(buttonElement) {
         fallbackCopyToClipboard(markdown, buttonElement);
     });
 }
+
+// ===== Log Viewer =====
+
+var LV_STORE_ID = {{ log_store_id | tojson }};
+var LV_INITIAL_LINES = {{ log_viewer_lines | tojson }};
+var LV_MAX_LINES = 2000;
+
+var lvLogLines = [];
+var lvViewerMode = sessionStorage.getItem('mi_lv_view_mode') || 'highlighted';
+var lvSearchText = '';
+var lvSearchDebounceTimer = null;
+var lvIsServerSearch = false;
+var lvCurrentPage = 1;
+var lvPerPage = 50;
+var lvTotalResults = 0;
+
+var lvSeverityFilters = {
+    info: true, debug: true, trace: true, warn: true,
+    error: true, fatal: true, panic: true
+};
+
+var lvSemanticFilters = {
+    errors: false, warnings: false, phases: false, opStats: false
+};
+
+// --- Severity & classification ---
+
+function lvGetSeverity(line) {
+    if (/"level"\s*:\s*"panic"/i.test(line) || /\bPANIC\b/.test(line)) return 'panic';
+    if (/"level"\s*:\s*"fatal"/i.test(line) || /\bFATAL\b/.test(line)) return 'fatal';
+    if (/"level"\s*:\s*"error"/i.test(line) || /\bERROR\b/.test(line)) return 'error';
+    if (/"level"\s*:\s*"warn"/i.test(line) || /\bWARN(ING)?\b/.test(line)) return 'warn';
+    if (/"level"\s*:\s*"debug"/i.test(line) || /\bDEBUG\b/.test(line)) return 'debug';
+    if (/"level"\s*:\s*"trace"/i.test(line) || /\bTRACE\b/.test(line)) return 'trace';
+    return 'info';
+}
+
+function lvGetLineClass(line) {
+    if (/"level"\s*:\s*"error"/i.test(line) || /\bERROR\b/.test(line)) return 'error-line';
+    if (/"level"\s*:\s*"warn"/i.test(line) || /\bWARN(ING)?\b/.test(line)) return 'warn-line';
+    if (/phase.*transition|transitioning.*phase|entered.*phase/i.test(line)) return 'phase-line';
+    return '';
+}
+
+function lvParseJson(line) {
+    try { return JSON.parse(line); } catch(e) { return null; }
+}
+
+function lvEscapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// --- Semantic filters ---
+
+function lvHasActiveSemanticFilters() {
+    return Object.values(lvSemanticFilters).some(Boolean);
+}
+
+function lvMatchesSemanticFilters(line, parsed) {
+    if (!lvHasActiveSemanticFilters()) return true;
+    var msg = parsed ? (parsed.message || '') : line;
+    var lvl = parsed ? (parsed.level || '') : '';
+    if (lvSemanticFilters.errors && /error|fatal|panic/i.test(lvl)) return true;
+    if (lvSemanticFilters.warnings && /warn/i.test(lvl)) return true;
+    if (lvSemanticFilters.phases && /phase.*transition|Starting.*phase|Commit handler/i.test(msg)) return true;
+    if (lvSemanticFilters.opStats && /Operation duration stats/i.test(msg)) return true;
+    return false;
+}
+
+// --- Formatting ---
+
+function lvHighlightLine(line) {
+    var html = lvEscapeHtml(line);
+    var lineClass = lvGetLineClass(line);
+
+    html = html.replace(/\{/g, '<span class="json-bracket">{</span>');
+    html = html.replace(/\}/g, '<span class="json-bracket">}</span>');
+    html = html.replace(/,/g, '<span class="json-comma">,</span>');
+    html = html.replace(/(["\w])\s*:\s*(?!\/\/)/g, '$1<span class="json-colon">:</span>');
+
+    html = html.replace(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)/g,
+        '<span class="timestamp">$1</span>');
+    html = html.replace(/\b(INITIAL_SYNC|COLLECTION_COPY|CHANGE_EVENT_APPLICATION|COMMITTED|CEA|IDLE)\b/g,
+        '<span class="phase">$1</span>');
+    html = html.replace(/"([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)"/g,
+        '"<span class="db-name">$1</span>"');
+
+    html = html.replace(/"level"\s*:\s*"(error)"/gi, '"level":"<span class="level-error">$1</span>"');
+    html = html.replace(/"level"\s*:\s*"(warn)"/gi, '"level":"<span class="level-warn">$1</span>"');
+    html = html.replace(/"level"\s*:\s*"(info)"/gi, '"level":"<span class="level-info">$1</span>"');
+    html = html.replace(/"level"\s*:\s*"(debug)"/gi, '"level":"<span class="level-debug">$1</span>"');
+    html = html.replace(/"level"\s*:\s*"(trace)"/gi, '"level":"<span class="level-trace">$1</span>"');
+
+    html = html.replace(/"(averageDurationMs)"\s*:\s*(\d+(?:\.\d+)?)/g,
+        '"<span class="json-key">$1</span>":<span class="duration-avg">$2</span>');
+    html = html.replace(/"(maximumDurationMs)"\s*:\s*(\d+(?:\.\d+)?)/g,
+        '"<span class="json-key">$1</span>":<span class="duration-max">$2</span>');
+    html = html.replace(/"(numOperations)"\s*:\s*(\d+)/g,
+        '"<span class="json-key">$1</span>":<span class="operation-count">$2</span>');
+
+    html = html.replace(/"([Ss]tate)"\s*:\s*"([^"]+)"/g,
+        '"<span class="field-state">$1</span>":"<span class="field-state">$2</span>"');
+    html = html.replace(/"([Cc]an[Cc]ommit)"\s*:\s*(true|false)/gi,
+        '"<span class="field-cancommit">$1</span>":<span class="field-cancommit">$2</span>');
+    html = html.replace(/"([Ll]ag[Tt]ime[Ss]econds?)"\s*:\s*(\d+(?:\.\d+)?)/g,
+        '"<span class="field-lagtime">$1</span>":<span class="field-lagtime">$2</span>');
+    html = html.replace(/"([Ee]stimated[Tt]otal[Bb]ytes)"\s*:\s*(\d+)/g,
+        '"<span class="field-estimated-total">$1</span>":<span class="field-estimated-total">$2</span>');
+    html = html.replace(/"([Ee]stimated[Cc]opied[Bb]ytes)"\s*:\s*(\d+)/g,
+        '"<span class="field-estimated-copied">$1</span>":<span class="field-estimated-copied">$2</span>');
+
+    html = html.replace(/"(totalEventsApplied)"\s*:\s*(\d+(?:\.\d+)?)/g,
+        '"<span class="json-key">$1</span>":<span class="metric-value">$2</span>');
+    html = html.replace(/:\s*(true)(?=\s*[,}])/g, ':<span class="boolean-true">$1</span>');
+    html = html.replace(/:\s*(false)(?=\s*[,}])/g, ':<span class="boolean-false">$1</span>');
+    html = html.replace(/:\s*(\d+(?:\.\d+)?)(?=\s*[,}])/g, ':<span class="json-number">$1</span>');
+
+    return { html: html, lineClass: lineClass };
+}
+
+function lvFormatPrettyJson(line) {
+    var parsed = lvParseJson(line);
+    if (!parsed) {
+        return { html: '<span class="invalid-json-badge">Invalid JSON</span> ' + lvEscapeHtml(line), lineClass: lvGetLineClass(line), formatClass: 'pretty' };
+    }
+    var pretty = JSON.stringify(parsed, null, 2);
+    var html = lvEscapeHtml(pretty);
+    html = html.replace(/"([^"]+)"(?=\s*:)/g, '"<span class="json-key">$1</span>"');
+    html = html.replace(/:\s*"([^"]+)"/g, ': "<span class="json-string">$1</span>"');
+    html = html.replace(/:\s*(\d+(?:\.\d+)?)(?=[,\n\r\s\}])/g, ': <span class="json-number">$1</span>');
+    html = html.replace(/:\s*(true)(?=[,\n\r\s\}])/g, ': <span class="boolean-true">$1</span>');
+    html = html.replace(/:\s*(false)(?=[,\n\r\s\}])/g, ': <span class="boolean-false">$1</span>');
+    return { html: html, lineClass: lvGetLineClass(line), formatClass: 'pretty' };
+}
+
+function lvBuildSummary(parsed) {
+    if (!parsed) return null;
+    var parts = [];
+    if (parsed.time) {
+        var t = parsed.time;
+        if (t.length > 19) t = t.substring(11, 23);
+        parts.push(t);
+    }
+    var lvl = (parsed.level || 'info').toUpperCase();
+    parts.push(lvl);
+    if (parsed.message) parts.push(parsed.message);
+    var progress = parsed.progress;
+    if (progress) {
+        if (progress.state) parts.push('state=' + progress.state);
+        if (progress.canCommit !== undefined) parts.push('canCommit=' + progress.canCommit);
+        if (progress.lagTimeSeconds !== undefined) parts.push('lag=' + progress.lagTimeSeconds + 's');
+        if (progress.collectionCopy) {
+            var cc = progress.collectionCopy;
+            if (cc.estimatedTotalBytes !== undefined && cc.estimatedCopiedBytes !== undefined) {
+                var pct = cc.estimatedTotalBytes > 0 ? ((cc.estimatedCopiedBytes / cc.estimatedTotalBytes) * 100).toFixed(1) : '0';
+                parts.push('copy=' + pct + '%');
+            }
+        }
+    }
+    return parts.join(' | ');
+}
+
+function lvFormatSummary(line) {
+    var parsed = lvParseJson(line);
+    var summary = lvBuildSummary(parsed);
+    if (summary) {
+        return { html: lvEscapeHtml(summary), lineClass: lvGetLineClass(line), formatClass: 'summary' };
+    }
+    return { html: lvEscapeHtml(line), lineClass: lvGetLineClass(line), formatClass: 'summary' };
+}
+
+function lvFormatLine(line) {
+    if (lvViewerMode === 'raw') return { html: lvEscapeHtml(line), lineClass: lvGetLineClass(line), formatClass: 'raw' };
+    if (lvViewerMode === 'pretty') return lvFormatPrettyJson(line);
+    if (lvViewerMode === 'summary') return lvFormatSummary(line);
+    var h = lvHighlightLine(line);
+    return { html: h.html, lineClass: h.lineClass, formatClass: 'highlighted' };
+}
+
+// --- Rendering ---
+
+function lvRenderLines() {
+    var viewer = document.getElementById('lvViewer');
+    var placeholder = document.getElementById('lvPlaceholder');
+    if (placeholder) placeholder.style.display = 'none';
+
+    var filtered = lvLogLines.filter(function(line) {
+        var sev = lvGetSeverity(line);
+        if (!lvSeverityFilters[sev]) return false;
+        if (lvSearchText && !lvIsServerSearch && !line.toLowerCase().includes(lvSearchText.toLowerCase())) return false;
+        var parsed = lvParseJson(line);
+        return lvMatchesSemanticFilters(line, parsed);
+    });
+
+    var html = filtered.map(function(line) {
+        var f = lvFormatLine(line);
+        var cls = ['lv-log-line', f.lineClass, f.formatClass].filter(Boolean).join(' ');
+        return '<div class="' + cls + '">' + f.html + '</div>';
+    }).join('');
+
+    var container = viewer.querySelector('.lv-lines-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.className = 'lv-lines-container';
+        viewer.appendChild(container);
+    }
+    container.innerHTML = html;
+
+    var totalCount = lvLogLines.length;
+    var filteredCount = filtered.length;
+    var countEl = document.getElementById('lvLineCount');
+    if (filteredCount === totalCount) {
+        countEl.textContent = totalCount + ' lines';
+    } else {
+        countEl.textContent = filteredCount + ' / ' + totalCount + ' lines';
+    }
+}
+
+function lvDisplayStaticLogs(lines) {
+    var placeholder = document.getElementById('lvPlaceholder');
+    if (placeholder) placeholder.style.display = 'none';
+    document.getElementById('lvTitle').textContent = 'Log Viewer (Tail - last ' + lines.length + ' lines)';
+    lvLogLines = lines.slice(-LV_MAX_LINES);
+    lvIsServerSearch = false;
+    document.getElementById('lvPagination').style.display = 'none';
+    lvRenderLines();
+    setTimeout(function() {
+        var viewer = document.getElementById('lvViewer');
+        viewer.scrollTop = viewer.scrollHeight;
+    }, 50);
+}
+
+// --- Controls ---
+
+function lvToggleSeverity(severity) {
+    lvSeverityFilters[severity] = !lvSeverityFilters[severity];
+    var btn = document.querySelector('.lv-sev-btn[data-severity="' + severity + '"]');
+    if (btn) btn.classList.toggle('active', lvSeverityFilters[severity]);
+    lvRenderLines();
+}
+
+function lvSetViewMode(mode) {
+    var allowed = ['highlighted', 'raw', 'pretty', 'summary'];
+    if (allowed.indexOf(mode) === -1) return;
+    lvViewerMode = mode;
+    sessionStorage.setItem('mi_lv_view_mode', mode);
+    lvUpdateControlsState();
+    lvRenderLines();
+}
+
+function lvToggleFocus(filterName) {
+    if (!(filterName in lvSemanticFilters)) return;
+    lvSemanticFilters[filterName] = !lvSemanticFilters[filterName];
+    lvUpdateControlsState();
+    lvRenderLines();
+}
+
+function lvUpdateControlsState() {
+    document.querySelectorAll('.lv-mode-btn').forEach(function(btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-log-mode') === lvViewerMode);
+    });
+    document.querySelectorAll('.lv-focus-btn').forEach(function(btn) {
+        var name = btn.getAttribute('data-log-filter');
+        btn.classList.toggle('active', !!lvSemanticFilters[name]);
+    });
+}
+
+function lvClear() {
+    lvLogLines = [];
+    var viewer = document.getElementById('lvViewer');
+    var container = viewer.querySelector('.lv-lines-container');
+    if (container) container.innerHTML = '';
+    var placeholder = document.getElementById('lvPlaceholder');
+    if (placeholder) { placeholder.style.display = 'flex'; placeholder.querySelector('p').textContent = 'Log viewer cleared.'; }
+    document.getElementById('lvLineCount').textContent = '0 lines';
+    document.getElementById('lvTitle').textContent = 'Log Viewer';
+    document.getElementById('lvPagination').style.display = 'none';
+}
+
+function lvDownloadLogs() {
+    if (lvLogLines.length === 0) return;
+    var text = lvLogLines.join('\n');
+    var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    var now = new Date();
+    var ts = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    var fname = 'mongosync_logs_' + ts + '.log';
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+}
+
+// --- Server search ---
+
+function lvOnSearchInput(value) {
+    lvSearchText = (value || '').trim();
+    if (lvSearchDebounceTimer) clearTimeout(lvSearchDebounceTimer);
+    lvSearchDebounceTimer = setTimeout(function() {
+        if (lvSearchText.length >= 3 && LV_STORE_ID) {
+            lvCurrentPage = 1;
+            lvSearchServer(lvSearchText, '', lvCurrentPage);
+        } else {
+            lvIsServerSearch = false;
+            document.getElementById('lvPagination').style.display = 'none';
+            document.getElementById('lvBackToTail').style.display = 'none';
+            if (lvSearchText === '') {
+                lvDisplayStaticLogs(LV_INITIAL_LINES);
+            } else {
+                lvRenderLines();
+            }
+        }
+    }, 300);
+}
+
+function lvSearchServer(query, level, page) {
+    var url = '/search_logs?store_id=' + encodeURIComponent(LV_STORE_ID)
+        + '&q=' + encodeURIComponent(query)
+        + '&page=' + page
+        + '&per_page=' + lvPerPage;
+    if (level) url += '&level=' + encodeURIComponent(level);
+
+    document.getElementById('lvTitle').textContent = 'Log Viewer (Searching...)';
+
+    fetch(url).then(function(resp) {
+        if (!resp.ok) throw new Error('Search failed: ' + resp.status);
+        return resp.json();
+    }).then(function(data) {
+        lvDisplaySearchResults(data);
+    }).catch(function(err) {
+        console.error('Log search error:', err);
+        document.getElementById('lvTitle').textContent = 'Log Viewer (Search failed)';
+    });
+}
+
+function lvDisplaySearchResults(data) {
+    lvIsServerSearch = true;
+    lvTotalResults = data.total || 0;
+    lvCurrentPage = data.page || 1;
+
+    lvLogLines = (data.results || []).map(function(r) { return r.raw; });
+
+    var totalPages = Math.ceil(lvTotalResults / lvPerPage) || 1;
+    document.getElementById('lvTitle').textContent = 'Log Viewer (Search: ' + lvTotalResults + ' results)';
+
+    lvRenderLines();
+
+    var paginationEl = document.getElementById('lvPagination');
+    paginationEl.style.display = 'flex';
+    document.getElementById('lvBackToTail').style.display = 'inline-block';
+
+    document.getElementById('lvPageInfo').textContent = 'Page ' + lvCurrentPage + ' of ' + totalPages;
+    document.getElementById('lvPageTotal').textContent = lvTotalResults + ' total results';
+    document.getElementById('lvPrevBtn').disabled = (lvCurrentPage <= 1);
+    document.getElementById('lvNextBtn').disabled = (lvCurrentPage >= totalPages);
+
+    var viewer = document.getElementById('lvViewer');
+    viewer.scrollTop = 0;
+}
+
+function lvPrevPage() {
+    if (lvCurrentPage > 1) {
+        lvCurrentPage--;
+        lvSearchServer(lvSearchText, '', lvCurrentPage);
+    }
+}
+
+function lvNextPage() {
+    var totalPages = Math.ceil(lvTotalResults / lvPerPage) || 1;
+    if (lvCurrentPage < totalPages) {
+        lvCurrentPage++;
+        lvSearchServer(lvSearchText, '', lvCurrentPage);
+    }
+}
+
+function lvBackToTail() {
+    lvIsServerSearch = false;
+    lvSearchText = '';
+    var searchInput = document.getElementById('lvSearchInput');
+    if (searchInput) searchInput.value = '';
+    document.getElementById('lvPagination').style.display = 'none';
+    document.getElementById('lvBackToTail').style.display = 'none';
+    lvDisplayStaticLogs(LV_INITIAL_LINES);
+}
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', function() {
+    if (LV_INITIAL_LINES && LV_INITIAL_LINES.length > 0) {
+        lvDisplayStaticLogs(LV_INITIAL_LINES);
+    }
+    lvUpdateControlsState();
+});
 </script>
 {% endblock %}
 
