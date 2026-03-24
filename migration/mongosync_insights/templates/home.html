@@ -148,11 +148,6 @@
     <!-- Third form: Migration Verifier -->
     <form id="verifierForm" method="post" action="/Verifier" enctype="multipart/form-data" autocomplete="off">
         <h2>Migration Verifier</h2>
-        <p style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px 12px;font-size:0.85em;margin-bottom:12px;">
-            <strong>Note:</strong> If verifying a migration done via mongosync, check if the
-            <a href="https://www.mongodb.com/docs/cluster-to-cluster-sync/current/reference/verification/embedded/" target="_blank">Embedded Verifier</a>
-            can be used, as it is the preferred approach for verification.
-        </p>
         {{ verifier_connection_string_form | safe }}
         <label for="verifierDbName">Verifier Database Name:</label>
         <input type="text" id="verifierDbName" name="verifierDbName" size="47" autocomplete="off"
@@ -160,6 +155,11 @@
         <input type="submit" value="Monitor Verifier">
         <p> Click the "Monitor Verifier" button to monitor the <a href="https://github.com/mongodb-labs/migration-verifier" target="_blank">migration-verifier</a> tool progress.</p>
         <p><small><strong>Note:</strong> Connect to the MongoDB cluster where the migration-verifier writes its metadata (typically the destination cluster).</small></p>
+        <p style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px 12px;font-size:0.85em;margin-top:12px;margin-bottom:0;">
+            <strong>Note:</strong> If verifying a migration done via mongosync, check if the
+            <a href="https://www.mongodb.com/docs/cluster-to-cluster-sync/current/reference/verification/embedded/" target="_blank">Embedded Verifier</a>
+            can be used, as it is the preferred approach for verification.
+        </p>
     </form>
 </div>
 
