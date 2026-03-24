@@ -31,10 +31,10 @@ def gatherMetrics(connection_string):
     logger = logging.getLogger(__name__)
     
     # Import and use the centralized configuration
-    from .app_config import INTERNAL_DB_NAME, get_database
+    from .app_config import resolve_internal_db_name, get_database
     
     TARGET_MONGO_URI = connection_string
-    internalDb = INTERNAL_DB_NAME
+    internalDb = resolve_internal_db_name(connection_string)
     
     # Connect to MongoDB cluster using connection pooling
     try:
@@ -354,10 +354,10 @@ def gatherPartitionsMetrics(connection_string):
     """Generate progress view with partitions, data copy, phases, and collection progress."""
     logger = logging.getLogger(__name__)
     
-    from .app_config import INTERNAL_DB_NAME, MAX_PARTITIONS_DISPLAY, get_database
+    from .app_config import resolve_internal_db_name, MAX_PARTITIONS_DISPLAY, get_database
     
     TARGET_MONGO_URI = connection_string
-    internalDb = INTERNAL_DB_NAME
+    internalDb = resolve_internal_db_name(connection_string)
     
     try:
         internalDbDst = get_database(TARGET_MONGO_URI, internalDb)
