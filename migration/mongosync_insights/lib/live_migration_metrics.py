@@ -532,19 +532,21 @@ def gatherEndpointMetrics(endpoint_url):
     
     # Create a figure for displaying endpoint data
     fig = make_subplots(
-        rows=4,
+        rows=5,
         cols=4,
-        row_heights=[0.25, 0.25, 0.25, 0.25],
+        row_heights=[0.20, 0.20, 0.20, 0.20, 0.20],
         subplot_titles=(
             "State", "Lag Time", "Can Commit", "Can Write",
             "Info", "Mongosync ID", "Coordinator ID", "Collection Copy",
             "Direction Mapping", "Ping Latency", "Est. Oplog Time Remaining", "Events Applied",
+            "Index Building", "", "", "Collections Index Progress",
             "Embedded Verifier Status", "Verifier Document Count"
         ),
         specs=[
             [{}, {}, {}, {}],
             [{}, {}, {}, {"type": "pie"}],
             [{"type": "table"}, {"type": "table"}, {}, {}],
+            [{"type": "pie"}, {}, {}, {"type": "pie"}],
             [{"type": "table", "colspan": 3}, None, None, {"type": "pie"}]
         ],
         horizontal_spacing=0.08,
@@ -772,7 +774,58 @@ def gatherEndpointMetrics(endpoint_url):
         fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_value(totalEventsApplied)], mode='text',
                                   textfont=dict(size=14, color="black")), row=3, col=4)
         
-        # Row 4: Verification comparison table (source vs destination)
+        # Row 4: Index Building progress
+        index_building = progress.get("indexBuilding", {})
+        indexes_built = index_building.get("indexesBuilt", 0) or 0
+        total_indexes = index_building.get("totalIndexesToBuild", 0) or 0
+        collections_finished = index_building.get("collectionsFinished", 0) or 0
+        collections_total = index_building.get("collectionsTotal", 0) or 0
+        
+        remaining_indexes = max(0, total_indexes - indexes_built)
+        if total_indexes > 0:
+            fig.add_trace(go.Pie(
+                labels=[f"Built ({indexes_built})", f"Remaining ({remaining_indexes})"],
+                values=[indexes_built, remaining_indexes],
+                marker=dict(colors=["green", "lightgray"]),
+                textinfo="percent",
+                textposition="outside",
+                textfont=dict(size=12),
+                hole=0.3,
+                showlegend=True
+            ), row=4, col=1)
+        else:
+            fig.add_trace(go.Pie(
+                labels=["No Data"],
+                values=[1],
+                marker=dict(colors=["lightgray"]),
+                textinfo="label",
+                textfont=dict(size=14),
+                showlegend=False
+            ), row=4, col=1)
+        
+        remaining_colls = max(0, collections_total - collections_finished)
+        if collections_total > 0:
+            fig.add_trace(go.Pie(
+                labels=[f"Finished ({collections_finished})", f"Remaining ({remaining_colls})"],
+                values=[collections_finished, remaining_colls],
+                marker=dict(colors=["blue", "lightgray"]),
+                textinfo="percent",
+                textposition="outside",
+                textfont=dict(size=12),
+                hole=0.3,
+                showlegend=True
+            ), row=4, col=4)
+        else:
+            fig.add_trace(go.Pie(
+                labels=["No Data"],
+                values=[1],
+                marker=dict(colors=["lightgray"]),
+                textinfo="label",
+                textfont=dict(size=14),
+                showlegend=False
+            ), row=4, col=4)
+        
+        # Row 5: Verification comparison table (source vs destination)
         verification = progress.get("verification", {})
         verif_source = verification.get("source", {}) if verification else {}
         verif_dest = verification.get("destination", {}) if verification else {}
@@ -809,13 +862,13 @@ def gatherEndpointMetrics(endpoint_url):
                 header=dict(values=["Field", "Source", "Destination"], font=dict(size=12, color='black')),
                 cells=dict(values=[field_names, source_values, dest_values], align=['left'], font=dict(size=10, color='darkblue')),
                 columnwidth=[1.5, 1, 1]
-            ), row=4, col=1)
+            ), row=5, col=1)
         else:
             fig.add_trace(go.Table(
                 header=dict(values=["Field", "Source", "Destination"], font=dict(size=12, color='black')),
                 cells=dict(values=[["Verification"], ["No Data"], ["No Data"]], align=['left'], font=dict(size=10, color='darkblue')),
                 columnwidth=[1.5, 1, 1]
-            ), row=4, col=1)
+            ), row=5, col=1)
         
         # Verifier Document Count pie chart (Verified vs Remaining)
         src_estimated_docs = verif_source.get("estimatedDocumentCount", 0) or 0 if verif_source else 0
@@ -836,7 +889,7 @@ def gatherEndpointMetrics(endpoint_url):
                 textfont=dict(size=12),
                 hole=0.3,
                 showlegend=True
-            ), row=4, col=4)
+            ), row=5, col=4)
         else:
             fig.add_trace(go.Pie(
                 labels=["No Data"],
@@ -845,7 +898,7 @@ def gatherEndpointMetrics(endpoint_url):
                 textinfo="label",
                 textfont=dict(size=14),
                 showlegend=False
-            ), row=4, col=4)
+            ), row=5, col=4)
         
     except requests.exceptions.Timeout:
         logger.error(f"Timeout connecting to endpoint: {endpoint_url}")
@@ -868,8 +921,8 @@ def gatherEndpointMetrics(endpoint_url):
         fig.add_trace(go.Scatter(x=[0], y=[0], text=[f"ERROR: {str(e)[:50]}"], mode='text',
                                   textfont=dict(size=16, color="red")), row=1, col=1)
     
-    # Hide all axes (4 rows x 4 cols = 16 potential axes)
-    for i in range(1, 17):
+    # Hide all axes (5 rows x 4 cols = 20 potential axes)
+    for i in range(1, 21):
         fig.update_layout(**{
             f'xaxis{i}': dict(showgrid=False, zeroline=False, showticklabels=False),
             f'yaxis{i}': dict(showgrid=False, zeroline=False, showticklabels=False)
@@ -877,7 +930,7 @@ def gatherEndpointMetrics(endpoint_url):
     
     # Update layout
     fig.update_layout(
-        height=800,
+        height=1000,
         width=1550,
         autosize=True,
         title_text=f"Mongosync Endpoint Data - {endpoint_url}",

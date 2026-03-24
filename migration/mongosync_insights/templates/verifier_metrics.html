@@ -105,24 +105,6 @@
         <button class="tab-btn active" id="tab-verifier">Migration Verifier Dashboard</button>
     </div>
     <div id="verifier-tab" class="tab-content active">
-        <details style="margin:12px 0;padding:10px 14px;background:#fff3cd;border:1px solid #ffc107;border-radius:6px;font-size:0.88em;line-height:1.5;">
-            <summary style="cursor:pointer;font-weight:600;color:#856404;">About Migration Verifier &amp; Dashboard Guide</summary>
-            <div style="margin-top:8px;">
-                <p style="margin:0 0 8px;">
-                    <strong>Embedded Verifier preferred:</strong> If verifying a migration done via mongosync, check if the
-                    <a href="https://www.mongodb.com/docs/cluster-to-cluster-sync/current/reference/verification/embedded/" target="_blank">Embedded Verifier</a>
-                    can be used, as it is the preferred approach for verification.
-                </p>
-                <p style="margin:0 0 6px;"><strong>Dashboard terminology:</strong></p>
-                <ul style="margin:0 0 6px;padding-left:20px;">
-                    <li><strong>Generation</strong> — A round of verification. Generation 0 is the initial full check; subsequent generations are rechecks of changed/failed documents. The last generation is marked <strong>FINAL</strong> — only its failures are significant.</li>
-                    <li><strong>Task statuses</strong> — <em>completed</em> (no issues), <em>failed</em> (document mismatch), <em>mismatch</em> (metadata mismatch), <em>processing</em> (in-progress), <em>added</em> (unstarted).</li>
-                </ul>
-                <p style="margin:0;font-size:0.92em;">
-                    See the <a href="https://github.com/mongodb-labs/migration-verifier" target="_blank">Migration Verifier Docs</a> for full details.
-                </p>
-            </div>
-        </details>
         <div class="plot-container">
             <div id="loading">Loading verifier metrics...</div>
             <div id="error" style="display:none;"></div>
