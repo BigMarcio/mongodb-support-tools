@@ -537,9 +537,9 @@ def gatherEndpointMetrics(endpoint_url):
         row_heights=[0.20, 0.20, 0.20, 0.20, 0.20],
         subplot_titles=(
             "State", "Lag Time", "Can Commit", "Can Write",
-            "Info", "Mongosync ID", "Coordinator ID", "Collection Copy",
+            "Phase", "Mongosync ID", "Coordinator ID", "Collection Copy",
             "Direction Mapping", "Ping Latency", "Est. Oplog Time Remaining", "Events Applied",
-            "Index Building", "", "", "Collections Index Progress",
+            "Collections Index Progress", "", "", "Index Building Progress",
             "Embedded Verifier Status", "Verifier Document Count"
         ),
         specs=[
@@ -781,12 +781,12 @@ def gatherEndpointMetrics(endpoint_url):
         collections_finished = index_building.get("collectionsFinished", 0) or 0
         collections_total = index_building.get("collectionsTotal", 0) or 0
         
-        remaining_indexes = max(0, total_indexes - indexes_built)
-        if total_indexes > 0:
+        remaining_colls = max(0, collections_total - collections_finished)
+        if collections_total > 0:
             fig.add_trace(go.Pie(
-                labels=[f"Built ({indexes_built})", f"Remaining ({remaining_indexes})"],
-                values=[indexes_built, remaining_indexes],
-                marker=dict(colors=["green", "lightgray"]),
+                labels=[f"Finished ({collections_finished})", f"Remaining ({remaining_colls})"],
+                values=[collections_finished, remaining_colls],
+                marker=dict(colors=["blue", "lightgray"]),
                 textinfo="percent",
                 textposition="outside",
                 textfont=dict(size=12),
@@ -803,12 +803,12 @@ def gatherEndpointMetrics(endpoint_url):
                 showlegend=False
             ), row=4, col=1)
         
-        remaining_colls = max(0, collections_total - collections_finished)
-        if collections_total > 0:
+        remaining_indexes = max(0, total_indexes - indexes_built)
+        if total_indexes > 0:
             fig.add_trace(go.Pie(
-                labels=[f"Finished ({collections_finished})", f"Remaining ({remaining_colls})"],
-                values=[collections_finished, remaining_colls],
-                marker=dict(colors=["blue", "lightgray"]),
+                labels=[f"Built ({indexes_built})", f"Remaining ({remaining_indexes})"],
+                values=[indexes_built, remaining_indexes],
+                marker=dict(colors=["green", "lightgray"]),
                 textinfo="percent",
                 textposition="outside",
                 textfont=dict(size=12),
