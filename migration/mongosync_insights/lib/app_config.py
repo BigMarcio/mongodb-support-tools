@@ -133,6 +133,7 @@ PROGRESS_ENDPOINT_URL = os.getenv('MI_PROGRESS_ENDPOINT_URL', '')
 
 # MongoDB settings
 INTERNAL_DB_NAME = os.getenv('MI_INTERNAL_DB_NAME', "mongosync_reserved_for_internal_use")
+INTERNAL_DB_NAME_NEW = "__mdb_internal_mongosync"
 VERIFIER_SRC_NAMESPACE = "__mdb_internal_mongosync_verifier_src"
 VERIFIER_DST_NAMESPACE = "__mdb_internal_mongosync_verifier_dst"
 
@@ -300,6 +301,43 @@ def get_database(connection_string, database_name):
     """
     client = get_mongo_client(connection_string)
     return client[database_name]
+
+_resolved_internal_db_cache = {}
+
+def resolve_internal_db_name(connection_string):
+    """
+    Auto-detect which mongosync internal database name exists on the cluster.
+    
+    Checks for the new name first (__mdb_internal_mongosync), then falls back
+    to the legacy name (mongosync_reserved_for_internal_use). Results are cached
+    per connection string. The MI_INTERNAL_DB_NAME env var acts as a hard override.
+    
+    Args:
+        connection_string (str): MongoDB connection string
+        
+    Returns:
+        str: The resolved internal database name
+    """
+    if os.getenv('MI_INTERNAL_DB_NAME'):
+        return INTERNAL_DB_NAME
+
+    if connection_string in _resolved_internal_db_cache:
+        return _resolved_internal_db_cache[connection_string]
+
+    logger = logging.getLogger(__name__)
+    try:
+        client = get_mongo_client(connection_string)
+        db_names = client.list_database_names()
+        if INTERNAL_DB_NAME_NEW in db_names:
+            resolved = INTERNAL_DB_NAME_NEW
+        else:
+            resolved = INTERNAL_DB_NAME
+        _resolved_internal_db_cache[connection_string] = resolved
+        logger.info(f"Resolved internal DB name: {resolved}")
+        return resolved
+    except Exception as e:
+        logger.warning(f"Could not auto-detect internal DB name, using default: {e}")
+        return INTERNAL_DB_NAME
 
 def validate_connection(connection_string):
     """
