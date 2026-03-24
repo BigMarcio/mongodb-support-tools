@@ -207,6 +207,18 @@ This combined approach provides:
 - Full metadata insights from the destination cluster (partitions, collection progress, configuration)
 - Real-time progress data from the mongosync endpoint (state, lag time, verification status)
 
+#### About the Embedded Verifier
+
+The [Embedded Verifier](https://www.mongodb.com/docs/cluster-to-cluster-sync/current/reference/verification/embedded/) is mongosync's built-in verification mechanism, available since mongosync v1.9 and enabled by default. It performs document hashing on both source and destination clusters to confirm data was transferred correctly, without requiring any external tools.
+
+**Embedded Verifier field (Status tab — Option 2):** The "Embedded Verifier" field displays the `verificationmode` value from mongosync's internal metadata. Possible values: `Enabled` (default — verification is active) or `Disabled` (verification was turned off at start).
+
+**Can Write signal (Endpoint tab — Option 3):** `Can Write: True` is the definitive signal that the embedded verifier has completed successfully and found no mismatches. Until verification passes, `Can Write` remains `False`. This is the key field to watch for confirming migration correctness.
+
+**Verification phases (Endpoint tab — Option 3):** The "Embedded Verifier Status" table shows a `Phase` field for both source and destination independently. Key phases include `stream hashing` (actively hashing documents from change streams) and `idle` (not yet started or between operations).
+
+**Verifier Lag Time (Endpoint tab and uploaded metrics):** The `Lag Time Seconds` field in the verification table (and `Verifier Lag Time` in uploaded `mongosync_metrics.log` files) shows how far behind the verifier is in checking documents. High lag means verification will take longer to complete after commit. Persistently high lag may indicate the verifier cannot keep up with the write load.
+
 ### Option 5: Migration Verifier Monitoring
 
 1. Enter the MongoDB **connection string** to the cluster where the [migration-verifier](https://github.com/mongodb-labs/migration-verifier) tool writes its metadata (typically the destination cluster)
@@ -220,6 +232,31 @@ This combined approach provides:
    - Collection metadata mismatches
 
 ![Migration Verifier Dashboard](images/migration_verifier_dashboard.png)
+
+#### Important: Embedded Verifier
+
+> If verifying a migration done via mongosync, please check if the [Embedded Verifier](https://www.mongodb.com/docs/cluster-to-cluster-sync/current/reference/verification/embedded/) can be used, as it is the preferred approach for verification.
+
+#### About Migration Verifier
+
+The [migration-verifier](https://github.com/mongodb-labs/migration-verifier) is a standalone tool that validates migration correctness by comparing documents between source and destination clusters. It stores its state in a MongoDB database (default: `migration_verification_metadata`).
+
+**How it works:** The verifier operates in two phases. First, an initial check (generation 0) partitions the source data into chunks and compares documents byte-by-byte between source and destination. Then, iterative rechecks (generation 1, 2, ...) re-verify any documents that changed or failed during previous rounds. Only the **last generation's failures** are significant — earlier failures may be transient due to ongoing writes.
+
+**Key terms:**
+
+| Term | Description |
+|------|-------------|
+| **Generation** | A round of verification. Generation 0 is the initial full check; subsequent generations are rechecks of changed/failed documents. |
+| **FINAL** | Label shown on the dashboard for the last generation — only its failures indicate real mismatches. |
+| **Task statuses** | `added` (unstarted), `processing` (in-progress), `completed` (no issues), `failed` (document mismatch), `mismatch` (collection metadata mismatch). |
+
+**Metadata collections:**
+
+| Collection | Purpose |
+|------------|---------|
+| `verification_tasks` | Tracks each verification task with a generation number, status, and type (`verify` for documents, `verifyCollection` for metadata). |
+| `mismatches` | Records document-level mismatches found during verification. |
 
 **Note**: The `MI_VERIFIER_CONNECTION_STRING` environment variable can be used to pre-configure the connection string. When omitted, it falls back to `MI_CONNECTION_STRING`. See **[CONFIGURATION.md](CONFIGURATION.md)** for details.
 
