@@ -5,6 +5,7 @@ from flask import render_template
 import json
 import logging
 import textwrap
+import re
 import requests
 from datetime import datetime, timezone
 from bson import Timestamp
@@ -537,13 +538,13 @@ def gatherEndpointMetrics(endpoint_url):
         subplot_titles=(
             "State", "Lag Time", "Can Commit", "Can Write",
             "Info", "Mongosync ID", "Coordinator ID", "Collection Copy",
-            "Direction Mapping", "Source", "Destination", "Events Applied",
+            "Direction Mapping", "Ping Latency", "Est. Oplog Time Remaining", "Events Applied",
             "Embedded Verifier Status", "Verifier Document Count"
         ),
         specs=[
             [{}, {}, {}, {}],
             [{}, {}, {}, {"type": "pie"}],
-            [{"type": "table"}, {"type": "table"}, {"type": "table"}, {}],
+            [{"type": "table"}, {"type": "table"}, {}, {}],
             [{"type": "table", "colspan": 3}, None, None, {"type": "pie"}]
         ],
         horizontal_spacing=0.08,
@@ -719,19 +720,52 @@ def gatherEndpointMetrics(endpoint_url):
         ), row=3, col=1)
         
         source = progress.get("source")
-        src_keys, src_values = dict_to_table(source)
+        destination = progress.get("destination")
+        src_ping = source.get("pingLatencyMs") if source and isinstance(source, dict) else None
+        dst_ping = destination.get("pingLatencyMs") if destination and isinstance(destination, dict) else None
+        sd_keys = ["Source", "Destination"]
+        sd_values = [
+            f"{src_ping} ms" if src_ping is not None else "No Data",
+            f"{dst_ping} ms" if dst_ping is not None else "No Data"
+        ]
         fig.add_trace(go.Table(
             header=dict(values=["Key", "Value"], font=dict(size=12, color='black')),
-            cells=dict(values=[src_keys, src_values], align=['left'], font=dict(size=10, color='darkblue')),
+            cells=dict(values=[sd_keys, sd_values], align=['left'], font=dict(size=10, color='darkblue')),
             columnwidth=[0.75, 2.5]
         ), row=3, col=2)
         
-        destination = progress.get("destination")
-        dst_keys, dst_values = dict_to_table(destination)
-        fig.add_trace(go.Table(
-            header=dict(values=["Key", "Value"], font=dict(size=12, color='black')),
-            cells=dict(values=[dst_keys, dst_values], align=['left'], font=dict(size=10, color='darkblue')),
-            columnwidth=[0.75, 2.5]
+        oplog_time_remaining = progress.get("estimatedOplogTimeRemaining", "")
+        
+        def parse_oplog_minutes(value):
+            if not value or value == "not yet checked":
+                return None
+            if value == "more than 72 hours":
+                return 4320
+            if value == "less than 15 minutes":
+                return 15
+            m = re.match(r"(\d+)\s+minutes?", value)
+            if m:
+                return int(m.group(1))
+            m = re.match(r"(\d+)\s+hours?", value)
+            if m:
+                return int(m.group(1)) * 60
+            return None
+        
+        def get_oplog_color(minutes):
+            if minutes is None:
+                return "red"
+            if minutes > 1440:
+                return "green"
+            if minutes >= 360:
+                return "orange"
+            return "red"
+        
+        oplog_minutes = parse_oplog_minutes(oplog_time_remaining)
+        oplog_color = get_oplog_color(oplog_minutes)
+        oplog_display = oplog_time_remaining.capitalize() if oplog_time_remaining else "No Data"
+        fig.add_trace(go.Scatter(
+            x=[0], y=[0], text=[oplog_display], mode='text',
+            textfont=dict(size=16, color=oplog_color)
         ), row=3, col=3)
         
         totalEventsApplied = progress.get("totalEventsApplied")

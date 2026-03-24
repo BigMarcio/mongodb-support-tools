@@ -133,6 +133,8 @@ PROGRESS_ENDPOINT_URL = os.getenv('MI_PROGRESS_ENDPOINT_URL', '')
 
 # MongoDB settings
 INTERNAL_DB_NAME = os.getenv('MI_INTERNAL_DB_NAME', "mongosync_reserved_for_internal_use")
+VERIFIER_SRC_NAMESPACE = "__mdb_internal_mongosync_verifier_src"
+VERIFIER_DST_NAMESPACE = "__mdb_internal_mongosync_verifier_dst"
 
 # UI settings
 MAX_PARTITIONS_DISPLAY = int(os.getenv('MI_MAX_PARTITIONS_DISPLAY', '10'))
