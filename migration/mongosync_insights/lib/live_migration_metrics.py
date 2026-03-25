@@ -539,14 +539,14 @@ def gatherEndpointMetrics(endpoint_url):
             "State", "Lag Time", "Can Commit", "Can Write",
             "Phase", "Mongosync ID", "Coordinator ID", "Collection Copy",
             "Direction Mapping", "Ping Latency", "Est. Oplog Time Remaining", "Events Applied",
-            "Collections Index Progress", "", "", "Index Building Progress",
+            "Collections Index Progress", "", "Index Building Progress", "",
             "Embedded Verifier Status", "Verifier Document Count"
         ),
         specs=[
             [{}, {}, {}, {}],
             [{}, {}, {}, {"type": "pie"}],
             [{"type": "table"}, {"type": "table"}, {}, {}],
-            [{"type": "pie"}, {}, {}, {"type": "pie"}],
+            [{}, {}, {}, {}],
             [{"type": "table", "colspan": 3}, None, None, {"type": "pie"}]
         ],
         horizontal_spacing=0.08,
@@ -783,47 +783,43 @@ def gatherEndpointMetrics(endpoint_url):
         
         remaining_colls = max(0, collections_total - collections_finished)
         if collections_total > 0:
-            fig.add_trace(go.Pie(
-                labels=[f"Finished ({collections_finished})", f"Remaining ({remaining_colls})"],
-                values=[collections_finished, remaining_colls],
-                marker=dict(colors=["blue", "lightgray"]),
-                textinfo="percent",
-                textposition="outside",
-                textfont=dict(size=12),
-                hole=0.3,
-                showlegend=True
+            fig.add_trace(go.Bar(
+                y=["Collections"], x=[collections_finished],
+                name="Finished", orientation='h',
+                marker=dict(color="blue"),
+                text=[f"{collections_finished}"], textposition="inside"
+            ), row=4, col=1)
+            fig.add_trace(go.Bar(
+                y=["Collections"], x=[remaining_colls],
+                name="Remaining", orientation='h',
+                marker=dict(color="lightgray"),
+                text=[f"{remaining_colls}"], textposition="inside"
             ), row=4, col=1)
         else:
-            fig.add_trace(go.Pie(
-                labels=["No Data"],
-                values=[1],
-                marker=dict(colors=["lightgray"]),
-                textinfo="label",
-                textfont=dict(size=14),
-                showlegend=False
+            fig.add_trace(go.Scatter(
+                x=[0], y=[0], text=["No Data"], mode='text',
+                textfont=dict(size=14, color="black")
             ), row=4, col=1)
         
         remaining_indexes = max(0, total_indexes - indexes_built)
         if total_indexes > 0:
-            fig.add_trace(go.Pie(
-                labels=[f"Built ({indexes_built})", f"Remaining ({remaining_indexes})"],
-                values=[indexes_built, remaining_indexes],
-                marker=dict(colors=["green", "lightgray"]),
-                textinfo="percent",
-                textposition="outside",
-                textfont=dict(size=12),
-                hole=0.3,
-                showlegend=True
-            ), row=4, col=4)
+            fig.add_trace(go.Bar(
+                y=["Indexes"], x=[indexes_built],
+                name="Built", orientation='h',
+                marker=dict(color="green"),
+                text=[f"{indexes_built}"], textposition="inside"
+            ), row=4, col=3)
+            fig.add_trace(go.Bar(
+                y=["Indexes"], x=[remaining_indexes],
+                name="Remaining", orientation='h',
+                marker=dict(color="lightgray"),
+                text=[f"{remaining_indexes}"], textposition="inside"
+            ), row=4, col=3)
         else:
-            fig.add_trace(go.Pie(
-                labels=["No Data"],
-                values=[1],
-                marker=dict(colors=["lightgray"]),
-                textinfo="label",
-                textfont=dict(size=14),
-                showlegend=False
-            ), row=4, col=4)
+            fig.add_trace(go.Scatter(
+                x=[0], y=[0], text=["No Data"], mode='text',
+                textfont=dict(size=14, color="black")
+            ), row=4, col=3)
         
         # Row 5: Verification comparison table (source vs destination)
         verification = progress.get("verification", {})
@@ -935,7 +931,8 @@ def gatherEndpointMetrics(endpoint_url):
         autosize=True,
         title_text=f"Mongosync Endpoint Data - {endpoint_url}",
         showlegend=False,
-        plot_bgcolor="white"
+        plot_bgcolor="white",
+        barmode="stack"
     )
     
     plot_json = json.dumps(fig, cls=PlotlyJSONEncoder)
