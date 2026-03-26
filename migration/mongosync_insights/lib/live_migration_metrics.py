@@ -536,22 +536,24 @@ def gatherEndpointMetrics(endpoint_url):
         cols=4,
         row_heights=[0.20, 0.20, 0.20, 0.20, 0.20],
         subplot_titles=(
-            "State", "Lag Time", "Can Commit", "Can Write",
-            "Phase", "Mongosync ID", "Coordinator ID", "Collection Copy",
-            "Direction Mapping", "Ping Latency", "Est. Oplog Time Remaining", "Events Applied",
-            "Collections Index Progress", "", "Index Building Progress", "",
-            "Embedded Verifier Status", "Verifier Document Count"
+            "State", "Phase", "Can Commit", "Can Write",
+            "Lag Time", "Est. CEA Catchup", "Collection Copy",
+            "Est. Oplog Time Remaining", "Collections Index Progress", "Index Building Progress",
+            "Embedded Verifier Status", "Verifier Document Count",
+            "Direction Mapping", "Ping Latency", "ID", "Events Applied"
         ),
         specs=[
             [{}, {}, {}, {}],
-            [{}, {}, {}, {"type": "pie"}],
-            [{"type": "table"}, {"type": "table"}, {}, {}],
-            [{}, {}, {}, {}],
-            [{"type": "table", "colspan": 3}, None, None, {"type": "pie"}]
+            [{}, {}, {"colspan": 2}, None],
+            [{}, {}, {"colspan": 2}, None],
+            [{"type": "table", "colspan": 3}, None, None, {}],
+            [{"type": "table"}, {"type": "table"}, {"type": "table"}, {}]
         ],
         horizontal_spacing=0.08,
         vertical_spacing=0.12
     )
+    
+    warnings_list = []
     
     try:
         # Make HTTP GET request to the endpoint
@@ -563,6 +565,7 @@ def gatherEndpointMetrics(endpoint_url):
         
         # Extract progress data
         progress = data.get("progress", {})
+        warnings_list = progress.get("warnings", [])
         
         # Helper function to format values for display
         def format_value(value):
@@ -617,14 +620,15 @@ def gatherEndpointMetrics(endpoint_url):
             except (ValueError, TypeError):
                 return "No Data"
         
-        # Row 1: State, Lag Time, Can Commit, Can Write
+        # Row 1: State, Phase, Can Commit, Can Write
         state = progress.get("state", "N/A")
         fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_value(state)], mode='text',
                                   textfont=dict(size=20, color=get_color("state", state))), row=1, col=1)
         
-        lagTime = progress.get("lagTimeSeconds")
-        fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_lag_time(lagTime)], mode='text',
-                                  textfont=dict(size=20, color="black")), row=1, col=2)
+        info = progress.get("info")
+        infoText = "No Data" if info is None or str(info).strip() == "" else str(info).upper()
+        fig.add_trace(go.Scatter(x=[0], y=[0], text=[infoText], mode='text',
+                                  textfont=dict(size=16, color="black")), row=1, col=2)
         
         canCommit = progress.get("canCommit", False)
         fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_value(canCommit)], mode='text',
@@ -634,66 +638,53 @@ def gatherEndpointMetrics(endpoint_url):
         fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_value(canWrite)], mode='text',
                                   textfont=dict(size=20, color=get_color("canWrite", canWrite))), row=1, col=4)
         
-        # Row 2: Info, Mongosync ID, Coordinator ID, Collection Copy (pie chart)
-        info = progress.get("info")
-        infoText = "No Data" if info is None or str(info).strip() == "" else str(info).upper()
-        fig.add_trace(go.Scatter(x=[0], y=[0], text=[infoText], mode='text',
-                                  textfont=dict(size=16, color="black")), row=2, col=1)
+        # Row 2: Lag Time, Est. CEA Catchup, Collection Copy (horizontal bar)
+        lagTime = progress.get("lagTimeSeconds")
+        fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_lag_time(lagTime)], mode='text',
+                                  textfont=dict(size=20, color="black")), row=2, col=1)
         
-        mongosyncID = progress.get("mongosyncID", "N/A")
-        fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_value(mongosyncID)], mode='text',
-                                  textfont=dict(size=16, color="black")), row=2, col=2)
+        cea_catchup_seconds = progress.get("estimatedSecondsToCEACatchup")
+        fig.add_trace(go.Scatter(
+            x=[0], y=[0], text=[format_lag_time(cea_catchup_seconds)], mode='text',
+            textfont=dict(size=16, color="black")
+        ), row=2, col=2)
         
-        coordinatorID = progress.get("coordinatorID", "N/A")
-        coordText = format_value(coordinatorID) if coordinatorID else "No Data"
-        fig.add_trace(go.Scatter(x=[0], y=[0], text=[coordText], mode='text',
-                                  textfont=dict(size=16, color="black")), row=2, col=3)
-        
-        # Collection Copy (pie chart) - Row 2, Col 4
+        # Collection Copy (horizontal bar) - Row 2, Cols 3-4
         collectionCopy = progress.get("collectionCopy", {})
         if collectionCopy and isinstance(collectionCopy, dict):
             estimatedTotalBytes = collectionCopy.get("estimatedTotalBytes", 0) or 0
             estimatedCopiedBytes = collectionCopy.get("estimatedCopiedBytes", 0) or 0
-            remainingBytes = max(0, estimatedTotalBytes - estimatedCopiedBytes)
             
             if estimatedTotalBytes > 0:
-                # Format bytes to human-readable format
+                copiedPct = (estimatedCopiedBytes / estimatedTotalBytes) * 100
+                remainingPct = 100 - copiedPct
                 copiedValue, copiedUnit = format_byte_size(estimatedCopiedBytes)
-                remainingValue, remainingUnit = format_byte_size(remainingBytes)
+                totalValue, totalUnit = format_byte_size(estimatedTotalBytes)
                 
-                # Create labels with formatted byte sizes
-                copiedLabel = f"Copied ({copiedValue:.2f} {copiedUnit})"
-                remainingLabel = f"Remaining ({remainingValue:.2f} {remainingUnit})"
-                
-                # Create pie chart with copied vs remaining bytes
-                fig.add_trace(go.Pie(
-                    labels=[copiedLabel, remainingLabel],
-                    values=[estimatedCopiedBytes, remainingBytes],
-                    marker=dict(colors=["green", "lightgray"]),
-                    textinfo="percent",
-                    textposition="outside",
-                    textfont=dict(size=12),
-                    hole=0.3,
-                    showlegend=True
-                ), row=2, col=4)
+                fig.add_trace(go.Bar(
+                    y=["Progress"], x=[copiedPct],
+                    name=f"Copied ({copiedValue:.2f} {copiedUnit})",
+                    orientation='h',
+                    marker=dict(color="green"),
+                    text=[f"{copiedPct:.1f}%"], textposition="inside"
+                ), row=2, col=3)
+                fig.add_trace(go.Bar(
+                    y=["Progress"], x=[remainingPct],
+                    name=f"Total ({totalValue:.2f} {totalUnit})",
+                    orientation='h',
+                    marker=dict(color="lightgray"),
+                    text=[f"{remainingPct:.1f}%"], textposition="inside"
+                ), row=2, col=3)
             else:
-                fig.add_trace(go.Pie(
-                    labels=["No Data"],
-                    values=[1],
-                    marker=dict(colors=["lightgray"]),
-                    textinfo="label",
-                    textfont=dict(size=14),
-                    showlegend=False
-                ), row=2, col=4)
+                fig.add_trace(go.Scatter(
+                    x=[0], y=[0], text=["No Data"], mode='text',
+                    textfont=dict(size=14, color="black")
+                ), row=2, col=3)
         else:
-            fig.add_trace(go.Pie(
-                labels=["No Data"],
-                values=[1],
-                marker=dict(colors=["lightgray"]),
-                textinfo="label",
-                textfont=dict(size=14),
-                showlegend=False
-            ), row=2, col=4)
+            fig.add_trace(go.Scatter(
+                x=[0], y=[0], text=["No Data"], mode='text',
+                textfont=dict(size=14, color="black")
+            ), row=2, col=3)
         
         # Helper function to create table data from dict
         def dict_to_table(data):
@@ -712,30 +703,7 @@ def gatherEndpointMetrics(endpoint_url):
                 values.append(val_str)
             return keys, values
         
-        # Row 3: Direction Mapping, Source, Destination, Events Applied
-        directionMapping = progress.get("directionMapping")
-        dm_keys, dm_values = dict_to_table(directionMapping)
-        fig.add_trace(go.Table(
-            header=dict(values=["Key", "Value"], font=dict(size=12, color='black')),
-            cells=dict(values=[dm_keys, dm_values], align=['left'], font=dict(size=10, color='darkblue')),
-            columnwidth=[0.75, 2.5]
-        ), row=3, col=1)
-        
-        source = progress.get("source")
-        destination = progress.get("destination")
-        src_ping = source.get("pingLatencyMs") if source and isinstance(source, dict) else None
-        dst_ping = destination.get("pingLatencyMs") if destination and isinstance(destination, dict) else None
-        sd_keys = ["Source", "Destination"]
-        sd_values = [
-            f"{src_ping} ms" if src_ping is not None else "No Data",
-            f"{dst_ping} ms" if dst_ping is not None else "No Data"
-        ]
-        fig.add_trace(go.Table(
-            header=dict(values=["Key", "Value"], font=dict(size=12, color='black')),
-            cells=dict(values=[sd_keys, sd_values], align=['left'], font=dict(size=10, color='darkblue')),
-            columnwidth=[0.75, 2.5]
-        ), row=3, col=2)
-        
+        # Row 3: Est. Oplog Time Remaining, Collections Index Progress, Index Building Progress
         oplog_time_remaining = progress.get("estimatedOplogTimeRemaining", "")
         
         def parse_oplog_minutes(value):
@@ -768,13 +736,8 @@ def gatherEndpointMetrics(endpoint_url):
         fig.add_trace(go.Scatter(
             x=[0], y=[0], text=[oplog_display], mode='text',
             textfont=dict(size=16, color=oplog_color)
-        ), row=3, col=3)
+        ), row=3, col=1)
         
-        totalEventsApplied = progress.get("totalEventsApplied")
-        fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_value(totalEventsApplied)], mode='text',
-                                  textfont=dict(size=14, color="black")), row=3, col=4)
-        
-        # Row 4: Index Building progress
         index_building = progress.get("indexBuilding", {})
         indexes_built = index_building.get("indexesBuilt", 0) or 0
         total_indexes = index_building.get("totalIndexesToBuild", 0) or 0
@@ -788,18 +751,18 @@ def gatherEndpointMetrics(endpoint_url):
                 name="Finished", orientation='h',
                 marker=dict(color="blue"),
                 text=[f"{collections_finished}"], textposition="inside"
-            ), row=4, col=1)
+            ), row=3, col=2)
             fig.add_trace(go.Bar(
                 y=["Collections"], x=[remaining_colls],
                 name="Remaining", orientation='h',
                 marker=dict(color="lightgray"),
                 text=[f"{remaining_colls}"], textposition="inside"
-            ), row=4, col=1)
+            ), row=3, col=2)
         else:
             fig.add_trace(go.Scatter(
                 x=[0], y=[0], text=["No Data"], mode='text',
                 textfont=dict(size=14, color="black")
-            ), row=4, col=1)
+            ), row=3, col=2)
         
         remaining_indexes = max(0, total_indexes - indexes_built)
         if total_indexes > 0:
@@ -808,25 +771,24 @@ def gatherEndpointMetrics(endpoint_url):
                 name="Built", orientation='h',
                 marker=dict(color="green"),
                 text=[f"{indexes_built}"], textposition="inside"
-            ), row=4, col=3)
+            ), row=3, col=3)
             fig.add_trace(go.Bar(
                 y=["Indexes"], x=[remaining_indexes],
                 name="Remaining", orientation='h',
                 marker=dict(color="lightgray"),
                 text=[f"{remaining_indexes}"], textposition="inside"
-            ), row=4, col=3)
+            ), row=3, col=3)
         else:
             fig.add_trace(go.Scatter(
                 x=[0], y=[0], text=["No Data"], mode='text',
                 textfont=dict(size=14, color="black")
-            ), row=4, col=3)
+            ), row=3, col=3)
         
-        # Row 5: Verification comparison table (source vs destination)
+        # Row 4: Embedded Verifier Status, Verifier Document Count
         verification = progress.get("verification", {})
         verif_source = verification.get("source", {}) if verification else {}
         verif_dest = verification.get("destination", {}) if verification else {}
         
-        # Define the fields to compare
         verif_fields = [
             ("phase", "Phase"),
             ("lagTimeSeconds", "Lag Time Seconds"), 
@@ -836,65 +798,94 @@ def gatherEndpointMetrics(endpoint_url):
             ("estimatedDocumentCount", "Estimated Document Count")
         ]
         
-        # Build table columns
         field_names = []
         source_values = []
         dest_values = []
         
         for field_key, field_label in verif_fields:
             field_names.append(field_label)
-            
-            # Get source value
             src_val = verif_source.get(field_key) if verif_source else None
             source_values.append(str(src_val) if src_val is not None else "No Data")
-            
-            # Get destination value
             dst_val = verif_dest.get(field_key) if verif_dest else None
             dest_values.append(str(dst_val) if dst_val is not None else "No Data")
         
-        # Create verification comparison table
         if verification:
             fig.add_trace(go.Table(
                 header=dict(values=["Field", "Source", "Destination"], font=dict(size=12, color='black')),
                 cells=dict(values=[field_names, source_values, dest_values], align=['left'], font=dict(size=10, color='darkblue')),
                 columnwidth=[1.5, 1, 1]
-            ), row=5, col=1)
+            ), row=4, col=1)
         else:
             fig.add_trace(go.Table(
                 header=dict(values=["Field", "Source", "Destination"], font=dict(size=12, color='black')),
                 cells=dict(values=[["Verification"], ["No Data"], ["No Data"]], align=['left'], font=dict(size=10, color='darkblue')),
                 columnwidth=[1.5, 1, 1]
-            ), row=5, col=1)
+            ), row=4, col=1)
         
-        # Verifier Document Count pie chart (Verified vs Remaining)
         src_estimated_docs = verif_source.get("estimatedDocumentCount", 0) or 0 if verif_source else 0
         dst_estimated_docs = verif_dest.get("estimatedDocumentCount", 0) or 0 if verif_dest else 0
-        
-        # Verified Documents = src_estimated_docs (documents already verified)
-        # Remaining Documents = dst_estimated_docs - src_estimated_docs (documents left to verify)
         verified_docs = dst_estimated_docs
         remaining_docs = max(0,  src_estimated_docs - dst_estimated_docs)
         
         if verified_docs > 0 or remaining_docs > 0:
-            fig.add_trace(go.Pie(
-                labels=[f"Verified ({verified_docs:,})", f"Remaining ({remaining_docs:,})"],
-                values=[verified_docs, remaining_docs],
-                marker=dict(colors=["green", "lightgray"]),
-                textinfo="percent",
-                textposition="outside",
-                textfont=dict(size=12),
-                hole=0.3,
-                showlegend=True
-            ), row=5, col=4)
+            fig.add_trace(go.Bar(
+                y=["Documents"], x=[verified_docs],
+                name="Verified", orientation='h',
+                marker=dict(color="green"),
+                text=[f"{verified_docs:,}"], textposition="inside"
+            ), row=4, col=4)
+            fig.add_trace(go.Bar(
+                y=["Documents"], x=[remaining_docs],
+                name="Remaining", orientation='h',
+                marker=dict(color="lightgray"),
+                text=[f"{remaining_docs:,}"], textposition="inside"
+            ), row=4, col=4)
         else:
-            fig.add_trace(go.Pie(
-                labels=["No Data"],
-                values=[1],
-                marker=dict(colors=["lightgray"]),
-                textinfo="label",
-                textfont=dict(size=14),
-                showlegend=False
-            ), row=5, col=4)
+            fig.add_trace(go.Scatter(
+                x=[0], y=[0], text=["No Data"], mode='text',
+                textfont=dict(size=14, color="black")
+            ), row=4, col=4)
+        
+        # Row 5: Direction Mapping, Ping Latency, ID, Events Applied
+        directionMapping = progress.get("directionMapping")
+        dm_keys, dm_values = dict_to_table(directionMapping)
+        fig.add_trace(go.Table(
+            header=dict(values=["Key", "Value"], font=dict(size=12, color='black')),
+            cells=dict(values=[dm_keys, dm_values], align=['left'], font=dict(size=10, color='darkblue')),
+            columnwidth=[0.75, 2.5]
+        ), row=5, col=1)
+        
+        source = progress.get("source")
+        destination = progress.get("destination")
+        src_ping = source.get("pingLatencyMs") if source and isinstance(source, dict) else None
+        dst_ping = destination.get("pingLatencyMs") if destination and isinstance(destination, dict) else None
+        sd_keys = ["Source", "Destination"]
+        sd_values = [
+            f"{src_ping} ms" if src_ping is not None else "No Data",
+            f"{dst_ping} ms" if dst_ping is not None else "No Data"
+        ]
+        fig.add_trace(go.Table(
+            header=dict(values=["Key", "Value"], font=dict(size=12, color='black')),
+            cells=dict(values=[sd_keys, sd_values], align=['left'], font=dict(size=10, color='darkblue')),
+            columnwidth=[0.75, 2.5]
+        ), row=5, col=2)
+        
+        mongosyncID = progress.get("mongosyncID", "N/A")
+        coordinatorID = progress.get("coordinatorID", "N/A")
+        id_keys = ["Mongosync", "Coordinator"]
+        id_values = [
+            format_value(mongosyncID),
+            format_value(coordinatorID) if coordinatorID else "No Data"
+        ]
+        fig.add_trace(go.Table(
+            header=dict(values=["Key", "Value"], font=dict(size=12, color='black')),
+            cells=dict(values=[id_keys, id_values], align=['left'], font=dict(size=10, color='darkblue')),
+            columnwidth=[0.75, 2.5]
+        ), row=5, col=3)
+        
+        totalEventsApplied = progress.get("totalEventsApplied")
+        fig.add_trace(go.Scatter(x=[0], y=[0], text=[format_value(totalEventsApplied)], mode='text',
+                                  textfont=dict(size=14, color="black")), row=5, col=4)
         
     except requests.exceptions.Timeout:
         logger.error(f"Timeout connecting to endpoint: {endpoint_url}")
@@ -917,8 +908,8 @@ def gatherEndpointMetrics(endpoint_url):
         fig.add_trace(go.Scatter(x=[0], y=[0], text=[f"ERROR: {str(e)[:50]}"], mode='text',
                                   textfont=dict(size=16, color="red")), row=1, col=1)
     
-    # Hide all axes (5 rows x 4 cols = 20 potential axes)
-    for i in range(1, 21):
+    # Hide all axes for non-chart cells
+    for i in range(1, 17):
         fig.update_layout(**{
             f'xaxis{i}': dict(showgrid=False, zeroline=False, showticklabels=False),
             f'yaxis{i}': dict(showgrid=False, zeroline=False, showticklabels=False)
@@ -936,7 +927,11 @@ def gatherEndpointMetrics(endpoint_url):
     )
     
     plot_json = json.dumps(fig, cls=PlotlyJSONEncoder)
-    return plot_json
+    result = json.dumps({
+        "plot": json.loads(plot_json),
+        "warnings": warnings_list
+    })
+    return result
 
 
 def plotMetrics(has_connection_string=True, has_endpoint_url=False):
