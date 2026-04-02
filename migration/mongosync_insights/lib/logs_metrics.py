@@ -149,6 +149,7 @@ def upload_file():
         partition_sampling_info = []
         partition_persisted_after_sampling = []
         verifier_dst_lag_items = []
+        verifier_src_lag_items = []
         
         # Initialize metrics collector for prometheus metrics
         metrics_collector = MetricsCollector()
@@ -286,6 +287,9 @@ def upload_file():
                 if json_obj.get('verifierDstLagTimeSeconds') is not None and 'time' in json_obj:
                     verifier_dst_lag_items.append(json_obj)
                 
+                if json_obj.get('verifierSrcLagTimeSeconds') is not None and 'time' in json_obj:
+                    verifier_src_lag_items.append(json_obj)
+                
                 # Check for common error patterns
                 for ep in error_patterns:
                     if ep['pattern'].search(message):
@@ -349,6 +353,7 @@ def upload_file():
         mongosync_partition_progress.sort(key=lambda x: x.get('time', ''))
         mongosync_sent_response.sort(key=lambda x: x.get('time', ''))
         verifier_dst_lag_items.sort(key=lambda x: x.get('time', ''))
+        verifier_src_lag_items.sort(key=lambda x: x.get('time', ''))
 
         # Aggregate partition initialization data per collection
         partition_init_data = []
@@ -637,12 +642,8 @@ def upload_file():
         dst_lag_times = [datetime.strptime(item['time'][:26], "%Y-%m-%dT%H:%M:%S.%f") for item in verifier_dst_lag_items if 'time' in item]
         verifierDstLagTimeSeconds = [item['verifierDstLagTimeSeconds'] for item in verifier_dst_lag_items if 'verifierDstLagTimeSeconds' in item]
 
-        src_lag_times = []
-        verifierSrcLagTimeSeconds = []
-        for item in data:
-            if 'verifierSrcLagTimeSeconds' in item and 'time' in item:
-                src_lag_times.append(datetime.strptime(item['time'][:26], "%Y-%m-%dT%H:%M:%S.%f"))
-                verifierSrcLagTimeSeconds.append(item['verifierSrcLagTimeSeconds'])
+        src_lag_times = [datetime.strptime(item['time'][:26], "%Y-%m-%dT%H:%M:%S.%f") for item in verifier_src_lag_items if 'time' in item]
+        verifierSrcLagTimeSeconds = [item['verifierSrcLagTimeSeconds'] for item in verifier_src_lag_items if 'verifierSrcLagTimeSeconds' in item]
 
         # Calculate global date range from all time sources for X-axis synchronization
         all_times = []
