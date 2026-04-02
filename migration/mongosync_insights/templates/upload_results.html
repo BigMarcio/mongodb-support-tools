@@ -308,6 +308,36 @@
         border-left: 4px solid #00684A;
     }
 
+    .error-detail-content {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .error-detail-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .error-detail-actions .copy-btn {
+        padding: 8px 14px;
+        font-size: 12px;
+        border: 1px solid #00684A;
+        background-color: #fff;
+        color: #00684A;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .error-detail-actions .copy-btn:hover {
+        background-color: #00684A;
+        color: #fff;
+        transform: translateY(-2px);
+        box-shadow: 0 2px 8px rgba(0, 104, 74, 0.2);
+    }
+
     .error-detail-cell pre {
         white-space: pre-wrap;
         word-break: break-word;
@@ -315,6 +345,12 @@
         font-size: 12px;
         font-family: 'Courier New', monospace;
         color: #1a5276;
+        background-color: #fff;
+        padding: 12px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        max-height: 400px;
+        overflow-y: auto;
     }
 
     @media (max-width: 768px) {
@@ -768,7 +804,7 @@
                         <thead>
                             <tr>
                                 <th style="width: 15%;">Friendly Name</th>
-                                <th style="width: 20%;">Time</th>
+                                <th style="width: 20%; cursor: pointer;" onclick="sortErrorsTable('time')" title="Click to sort by time">Time &#11021;</th>
                                 <th style="width: 10%;">Level</th>
                                 <th style="width: 55%;">Message</th>
                             </tr>
@@ -781,9 +817,15 @@
                                 <td>{{ error.level }}</td>
                                 <td class="value-cell">{{ error.message }}</td>
                             </tr>
-                            <tr id="error-detail-{{ loop.index }}" class="error-detail-row">
+                            <tr id="error-detail-{{ loop.index }}" class="error-detail-row" style="display: none;">
                                 <td colspan="4" class="error-detail-cell">
-                                    <pre>{{ error.full_log }}</pre>
+                                    <div class="error-detail-content">
+                                        <div class="error-detail-actions">
+                                            <button class="copy-btn" onclick="copyErrorLog('{{ loop.index }}', 'plain', this); event.stopPropagation();" title="Copy log line as plain text">Copy Plain Log</button>
+                                            <button class="copy-btn" onclick="copyErrorLog('{{ loop.index }}', 'markdown', this); event.stopPropagation();" title="Copy log line in Markdown format">Copy as Markdown</button>
+                                        </div>
+                                        <pre id="error-log-{{ loop.index }}">{{ error.full_log }}</pre>
+                                    </div>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -1169,7 +1211,8 @@ function filterTables(searchText) {
 function toggleErrorDetail(id) {
     var detailRow = document.getElementById(id);
     if (detailRow) {
-        detailRow.style.display = (detailRow.style.display === 'table-row') ? 'none' : 'table-row';
+        var isVisible = detailRow.style.display !== 'none' && detailRow.style.display !== '';
+        detailRow.style.display = isVisible ? 'none' : 'table-row';
     }
 }
 
@@ -1239,6 +1282,57 @@ function copyErrorsAsMarkdown(buttonElement) {
     }).catch(function(err) {
         console.error('Failed to copy: ', err);
         fallbackCopyToClipboard(markdown, buttonElement);
+    });
+}
+
+function copyErrorLog(index, format, buttonElement) {
+    var logElement = document.getElementById('error-log-' + index);
+    if (!logElement) return;
+
+    var logContent = logElement.textContent;
+    var textToCopy = (format === 'markdown') ? '```json\n' + logContent + '\n```' : logContent;
+
+    navigator.clipboard.writeText(textToCopy).then(function() {
+        var originalText = buttonElement.textContent;
+        buttonElement.textContent = 'Copied!';
+        buttonElement.classList.add('copied');
+
+        setTimeout(function() {
+            buttonElement.textContent = originalText;
+            buttonElement.classList.remove('copied');
+        }, 2000);
+    }).catch(function(err) {
+        console.error('Failed to copy: ', err);
+        fallbackCopyToClipboard(textToCopy, buttonElement);
+    });
+}
+
+function sortErrorsTable(sortBy) {
+    var table = document.getElementById('errors-table');
+    if (!table) return;
+
+    var tbody = table.querySelector('tbody');
+    var rows = Array.from(tbody.querySelectorAll('tr.error-row'));
+
+    var headerCell = table.querySelector('th[onclick*="sortErrorsTable"]');
+    if (headerCell) {
+        var currentIndicator = headerCell.textContent.includes('\u2B0D') ? '\u2B0D' : '\u2B0C';
+        var newIndicator = currentIndicator === '\u2B0D' ? '\u2B0C' : '\u2B0D';
+        headerCell.innerHTML = 'Time ' + newIndicator;
+    }
+
+    rows.sort(function(a, b) {
+        var aTime = a.cells[1].textContent.trim();
+        var bTime = b.cells[1].textContent.trim();
+        return new Date(bTime) - new Date(aTime);
+    });
+
+    rows.forEach(function(row) {
+        tbody.appendChild(row);
+        var detailRow = row.nextElementSibling;
+        if (detailRow && detailRow.classList.contains('error-detail-row')) {
+            tbody.appendChild(detailRow);
+        }
     });
 }
 
