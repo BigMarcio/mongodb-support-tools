@@ -4,7 +4,7 @@ This document explains the configuration management system for Mongosync Insight
 
 ## Prerequisites
 
-**Python 3.11+** and **libmagic** system library are required to run Mongosync Insights. See [README.md](README.md) for complete installation instructions including system dependencies.
+**Python 3.11+** is required to run Mongosync Insights. See [README.md](README.md) for complete installation instructions.
 
 ## Configuration Overview
 
@@ -55,7 +55,7 @@ All configuration can be set using `export` commands before running the applicat
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MI_ERROR_PATTERNS_FILE` | `error_patterns.json` _(same directory as the application)_ | Path to a custom error patterns JSON file used during log analysis to detect common errors (e.g., oplog rollover, timeouts, verifier mismatches) |
+| `MI_ERROR_PATTERNS_FILE` | `lib/error_patterns.json` _(auto-detected)_ | Path to a custom error patterns JSON file used during log analysis to detect common errors (e.g., oplog rollover, timeouts, verifier mismatches) |
 
 ### UI Customization
 
@@ -94,7 +94,7 @@ All configuration can be set using `export` commands before running the applicat
 
 ---
 
-## 🚀 Usage Examples
+## Usage Examples
 
 ### Example 1: Basic Local Development
 

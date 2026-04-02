@@ -4,7 +4,6 @@ from plotly.subplots import make_subplots
 from flask import render_template
 import json
 import logging
-import textwrap
 import re
 import requests
 from datetime import datetime, timezone

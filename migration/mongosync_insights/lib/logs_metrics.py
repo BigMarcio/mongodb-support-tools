@@ -17,7 +17,7 @@ from .utils import format_byte_size, convert_bytes
 from .app_config import (
     MAX_FILE_SIZE, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES,
     load_error_patterns, classify_file_type,
-    LOG_VIEWER_MAX_LINES, LOG_STORE_DIR, LOG_STORE_MAX_AGE_HOURS,
+    LOG_VIEWER_MAX_LINES, LOG_STORE_DIR,
 )
 from .file_decompressor import decompress_file_classified, is_compressed_mime_type
 from .otel_metrics import MetricsCollector, create_metrics_plots
@@ -120,7 +120,7 @@ def upload_file():
         
         logger.info(f"File validation passed: {filename} ({file_size} bytes, {file_ext}, MIME: {file_mime_type})")
         # Optimized single-pass log parsing with streaming approach
-        logging.info("Starting optimized log parsing - single pass through file")
+        logger.info("Starting optimized log parsing - single pass through file")
         
         # Pre-compile all regex patterns once
         patterns = {
@@ -325,10 +325,10 @@ def upload_file():
             except json.JSONDecodeError as e:
                 invalid_json_count += 1
                 if invalid_json_count <= 5:  # Log first 5 errors to avoid spam
-                    logging.warning(f"Invalid JSON on line {line_count}: {e}")
+                    logger.warning(f"Invalid JSON on line {line_count}: {e}")
                 # Only treat as fatal error if this is the first error AND we haven't processed any valid lines
                 if invalid_json_count == 1 and logs_line_count == 0 and metrics_line_count == 0:
-                    logging.error(f"File appears to contain invalid JSON. First error on line {line_count}: {e}")
+                    logger.error(f"File appears to contain invalid JSON. First error on line {line_count}: {e}")
                     return render_template('error.html',
                                          error_title="Invalid File Format",
                                          error_message=f"The uploaded file does not contain valid JSON format. Error on line {line_count}: {str(e)}. Please ensure you're uploading a valid mongosync log file in NDJSON format.")
@@ -338,20 +338,20 @@ def upload_file():
         if log_store.total_documents > 0:
             log_store.build_fts_index()
             log_store_registry.register(store_id, db_path)
-            logging.info(f"Log store ready: {log_store.total_documents} documents, store_id={store_id[:8]}...")
+            logger.info(f"Log store ready: {log_store.total_documents} documents, store_id={store_id[:8]}...")
         else:
             log_store.delete()
             store_id = ''
         
-        logging.info(f"Processed {line_count} total lines ({logs_line_count} logs, {metrics_line_count} metrics), found {invalid_json_count} invalid JSON lines")
-        logging.info(f"Found: {len(data)} replication progress, {len(version_info_list)} version info, "
+        logger.info(f"Processed {line_count} total lines ({logs_line_count} logs, {metrics_line_count} metrics), found {invalid_json_count} invalid JSON lines")
+        logger.info(f"Found: {len(data)} replication progress, {len(version_info_list)} version info, "
                     f"{len(mongosync_ops_stats)} operation stats, {len(mongosync_sent_response)} sent responses, "
                     f"{len(phase_transitions_json)} phase transitions, {len(mongosync_opts_list)} options, "
                     f"{len(mongosync_hiddenflags)} hidden flags, {len(mongosync_crud_rate)} CRUD rate entries, "
                     f"{len(mongosync_partition_progress)} partition progress entries, "
                     f"{len(natural_order_collections)} natural order collections, "
                     f"{len(matched_errors)} common errors")
-        logging.info(f"Metrics collector: {metrics_collector.metrics_count} metric points from {metrics_collector.line_count} lines")  
+        logger.info(f"Metrics collector: {metrics_collector.metrics_count} metric points from {metrics_collector.line_count} lines")  
         
         has_any_log_data = (len(data) > 0 or len(version_info_list) > 0 or len(mongosync_ops_stats) > 0 or
                             len(mongosync_sent_response) > 0 or len(phase_transitions_json) > 0 or
@@ -460,7 +460,7 @@ def upload_file():
                     'init_ended': ended[:26] if ended else '',
                     'duration_sec': duration_sec,
                 })
-            logging.info(f"Aggregated partition init data for {len(partition_init_data)} collections")
+            logger.info(f"Aggregated partition init data for {len(partition_init_data)} collections")
 
         # Build partition init progress time series (in-progress and completed per collection over time)
         partition_init_progress_times = []
@@ -494,11 +494,9 @@ def upload_file():
                     partition_init_progress_times.append(ts)
                     partition_init_progress_in_progress.append(in_prog)
                     partition_init_progress_completed.append(done)
-                logging.info(f"Built partition init progress time series with {len(init_events)} events")
+                logger.info(f"Built partition init progress time series with {len(init_events)} events")
 
-        # The 'body' field is also a JSON string, so parse that as well
-        #mongosync_sent_response_body = json.loads(mongosync_sent_response.get('body'))
-        mongosync_sent_response_body = None 
+        mongosync_sent_response_body = None
         for response in mongosync_sent_response:
             try:  
                 parsed_body = json.loads(response['body'])
@@ -507,7 +505,7 @@ def upload_file():
                     mongosync_sent_response_body = parsed_body  
             except (json.JSONDecodeError, TypeError):  
                 mongosync_sent_response_body = None  # If parse fails, use None 
-                logging.warning(f"No message 'sent response' found in the logs") 
+                logger.warning(f"No message 'sent response' found in the logs") 
 
         # Create a string with all the version information
         if version_info_list and isinstance(version_info_list[0], dict):  
@@ -517,17 +515,17 @@ def upload_file():
             version_text = f"MongoSync Version: {version}, OS: {os_name}, Arch: {arch}"   
         else:  
             version_text = f"MongoSync Version is not available"  
-            logging.error(version_text)  
+            logger.error(version_text)  
             
 
-        logging.info(f"Extracting data")
+        logger.info(f"Extracting data")
 
         # Log if options data is empty
         if not mongosync_hiddenflags:
-            logging.info("mongosync_hiddenflags is empty")
+            logger.info("mongosync_hiddenflags is empty")
         
         if not mongosync_opts_list:
-            logging.info("mongosync_opts_list is empty")
+            logger.info("mongosync_opts_list is empty")
 
         #Getting the Timezone
         try:  
@@ -704,11 +702,11 @@ def upload_file():
                     # Try get Phase Transitions from the sent response body if it is Live Migrate
                     phase_transitions = mongosync_sent_response_body['progress']['atlasLiveMigrateMetrics']['PhaseTransitions']  
                 except KeyError as e:  
-                    logging.error(f"Key not found: {e}")  
+                    logger.error(f"Key not found: {e}")  
                     phase_transitions = []
 
             else:
-                logging.warning(f"Key 'progress' not found in mongosync_sent_response_body")
+                logger.warning(f"Key 'progress' not found in mongosync_sent_response_body")
 
         # If phase_transitions is not empty, plot the phase transitions as it is Live Migrate
         if phase_transitions:
@@ -739,7 +737,7 @@ def upload_file():
         estimated_copied_bytes = convert_bytes(estimated_copied_bytes, estimated_total_bytes_unit)
         estimatedCopiedBytes_converted = [convert_bytes(b, estimated_total_bytes_unit) for b in estimatedCopiedBytes_series]
 
-        logging.info(f"Plotting")
+        logger.info(f"Plotting")
 
         # Create a subplot for the scatter plots (tables are now in a separate tab)
         fig = make_subplots(rows=13, cols=2, subplot_titles=("Mongosync Phases", "Mongosync Phases Table",
@@ -1078,12 +1076,12 @@ def upload_file():
         # Convert the figure to JSON
         plot_json = json.dumps(fig, cls=PlotlyJSONEncoder) if logs_line_count > 0 else ""
 
-        logging.info(f"Render the plot in the browser")
+        logger.info(f"Render the plot in the browser")
         
         # Generate metrics plot if we have metrics data
         metrics_plot_json = ""
         if metrics_collector.metrics_count > 0:
-            logging.info(f"Creating Prometheus metrics plots")
+            logger.info(f"Creating Prometheus metrics plots")
             metrics_plot_json = create_metrics_plots(metrics_collector)
 
         # Prepare mongosync options data for HTML table
@@ -1144,6 +1142,6 @@ def upload_file():
         try:
             save_snapshot(snapshot_id, filename, file_size, line_count, store_id, template_data)
         except Exception as e:
-            logging.warning(f"Failed to save snapshot: {e}")
+            logger.warning(f"Failed to save snapshot: {e}")
 
         return render_template('upload_results.html', **template_data)

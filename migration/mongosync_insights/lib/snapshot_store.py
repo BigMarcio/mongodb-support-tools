@@ -27,7 +27,7 @@ def _snapshot_path(snapshot_id: str) -> str:
     return os.path.join(LOG_STORE_DIR, f'{_SNAPSHOT_PREFIX}{snapshot_id}.json')
 
 
-def _logstore_path(store_id: str) -> str:
+def logstore_path(store_id: str) -> str:
     return os.path.join(LOG_STORE_DIR, f'{_LOGSTORE_PREFIX}{store_id}.db')
 
 
@@ -91,7 +91,7 @@ def load_snapshot(snapshot_id: str) -> Optional[dict]:
     # Refresh mtime on companion SQLite DB if it exists
     store_id = data.get('log_store_id', '')
     if store_id:
-        db_path = _logstore_path(store_id)
+        db_path = logstore_path(store_id)
         try:
             if os.path.exists(db_path):
                 os.utime(db_path, None)
@@ -176,7 +176,7 @@ def delete_snapshot(snapshot_id: str) -> tuple[bool, str]:
             logger.warning(f"Failed to delete snapshot {path}: {e}")
 
         if store_id:
-            db_path = _logstore_path(store_id)
+            db_path = logstore_path(store_id)
             for fpath in (db_path, db_path + '-wal', db_path + '-shm'):
                 try:
                     if os.path.exists(fpath):

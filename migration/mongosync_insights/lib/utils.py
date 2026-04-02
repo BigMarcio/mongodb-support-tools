@@ -1,44 +1,38 @@
-def format_byte_size(bytes):
-    # Define the conversion factors
+def format_byte_size(size_bytes):
     kilobyte = 1024
     megabyte = kilobyte * 1024
     gigabyte = megabyte * 1024
     terabyte = gigabyte * 1024
-    # Determine the appropriate unit and calculate the value
-    if bytes >= terabyte:
-        value = bytes / terabyte
+    if size_bytes >= terabyte:
+        value = size_bytes / terabyte
         unit = 'TeraBytes'
-    elif bytes >= gigabyte:
-        value = bytes / gigabyte
+    elif size_bytes >= gigabyte:
+        value = size_bytes / gigabyte
         unit = 'GigaBytes'
-    elif bytes >= megabyte:
-        value = bytes / megabyte
+    elif size_bytes >= megabyte:
+        value = size_bytes / megabyte
         unit = 'MegaBytes'
-    elif bytes >= kilobyte:
-        value = bytes / kilobyte
+    elif size_bytes >= kilobyte:
+        value = size_bytes / kilobyte
         unit = 'KiloBytes'
     else:
-        value = bytes
+        value = size_bytes
         unit = 'Bytes'
-    # Return the value rounded to two decimal places and the unit separately
     return round(value, 4), unit
 
-def convert_bytes(bytes, target_unit):
-    # Define conversion factors
+def convert_bytes(size_bytes, target_unit):
     kilobyte = 1024
     megabyte = kilobyte * 1024
     gigabyte = megabyte * 1024
     terabyte = gigabyte * 1024
-    # Perform conversion based on target unit
     if target_unit == 'KiloBytes':
-        value = bytes / kilobyte
+        value = size_bytes / kilobyte
     elif target_unit == 'MegaBytes':
-        value = bytes / megabyte
+        value = size_bytes / megabyte
     elif target_unit == 'GigaBytes':
-        value = bytes / gigabyte
+        value = size_bytes / gigabyte
     elif target_unit == 'TeraBytes':
-        value = bytes / terabyte
+        value = size_bytes / terabyte
     else:
-        value = bytes
-    # Return the converted value rounded to two decimal places and the unit
+        value = size_bytes
     return round(value, 4)

@@ -33,6 +33,7 @@ class LogStoreRegistry:
             self._entries[store_id] = {
                 'db_path': db_path,
                 'created_at': time.time(),
+                'store': None,
             }
         logger.debug(f"Registered log store {store_id[:8]}... -> {db_path}")
 
@@ -51,16 +52,25 @@ class LogStoreRegistry:
 
     def open_store(self, store_id: str) -> Optional[LogStore]:
         """
-        Open a LogStore connection for the given store_id.
+        Return a cached LogStore connection for the given store_id.
 
         Returns None if the store_id is not registered or the DB file
-        no longer exists. Caller is responsible for closing the returned
-        LogStore when done.
+        no longer exists. The returned LogStore is owned by the registry;
+        callers must NOT close it.
         """
-        db_path = self.get_path(store_id)
-        if not db_path or not os.path.exists(db_path):
-            return None
-        return LogStore(db_path)
+        with self._lock:
+            entry = self._entries.get(store_id)
+            if not entry:
+                return None
+            if time.time() - entry['created_at'] > self._ttl:
+                self._remove_entry(store_id)
+                return None
+            db_path = entry['db_path']
+            if not os.path.exists(db_path):
+                return None
+            if entry['store'] is None:
+                entry['store'] = LogStore(db_path)
+            return entry['store']
 
     def remove(self, store_id: str):
         """Remove a store entry and delete the DB file from disk."""
@@ -71,6 +81,12 @@ class LogStoreRegistry:
         """Internal: remove entry and delete DB file. Caller must hold lock."""
         entry = self._entries.pop(store_id, None)
         if entry:
+            cached_store = entry.get('store')
+            if cached_store is not None:
+                try:
+                    cached_store.close()
+                except Exception:
+                    pass
             db_path = entry['db_path']
             try:
                 if os.path.exists(db_path):

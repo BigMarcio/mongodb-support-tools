@@ -575,32 +575,3 @@ def create_metrics_plots(collector: MetricsCollector, config_path: Path = None) 
     return json.dumps(fig, cls=PlotlyJSONEncoder)
 
 
-def process_metrics_lines(lines_iterator) -> str:
-    """
-    Process an iterator of metrics log lines and create plots.
-    
-    Args:
-        lines_iterator: Iterator yielding log lines (bytes or str)
-        
-    Returns:
-        JSON string of the Plotly figure, or empty string if no data
-    """
-    collector = MetricsCollector()
-    
-    for line in lines_iterator:
-        # Handle both bytes and string input
-        if isinstance(line, bytes):
-            line = line.decode('utf-8', errors='replace')
-        line = line.strip()
-        
-        if not line or not line.startswith('{'):
-            continue
-        
-        collector.process_line(line)
-    
-    logger.info(f"Processed {collector.line_count} metrics lines, extracted {collector.metrics_count} metric points")
-    
-    if collector.metrics_count == 0:
-        return ""
-    
-    return create_metrics_plots(collector)

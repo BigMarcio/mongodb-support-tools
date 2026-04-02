@@ -191,8 +191,6 @@ def search_logs():
     except Exception as e:
         logger.error(f"Log search error: {e}")
         return jsonify({'error': 'Search failed', 'detail': str(e)}), 500
-    finally:
-        store.close()
 
 @app.route('/list_snapshots')
 def list_snapshots_route():
@@ -216,8 +214,8 @@ def load_snapshot_route(snapshot_id):
 
     store_id = data.get('log_store_id', '')
     if store_id:
-        from lib.snapshot_store import _logstore_path
-        db_path = _logstore_path(store_id)
+        from lib.snapshot_store import logstore_path
+        db_path = logstore_path(store_id)
         if os.path.exists(db_path):
             log_store_registry.register(store_id, db_path)
 
@@ -471,8 +469,7 @@ if __name__ == '__main__':
     # Run the Flask app with or without SSL
     if SSL_ENABLED:
         import ssl
-        import os
-        
+
         # Verify certificate files exist
         if not os.path.exists(SSL_CERT_PATH):
             logger.error(f"SSL certificate not found: {SSL_CERT_PATH}")

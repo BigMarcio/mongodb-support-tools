@@ -32,6 +32,7 @@ class LogStore:
     def _open(self):
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA synchronous=OFF")
         self._conn.execute("PRAGMA cache_size=-64000")  # 64 MB cache
         self._conn.execute("""
@@ -262,29 +263,27 @@ class LogStore:
     @staticmethod
     def cleanup_old_stores(store_dir: str, max_age_hours: int = 24):
         """
-        Delete log store DB files and snapshot JSON files older than max_age_hours.
+        Delete log store DB files older than max_age_hours.
 
-        Scans the given directory for files matching mi_logstore_*.db and
-        mi_snapshot_*.json, removing those that exceed the age threshold.
+        Scans the given directory for files matching mi_logstore_*.db,
+        removing those that exceed the age threshold. Snapshot JSON cleanup
+        is handled separately by cleanup_old_snapshots() in snapshot_store.
         """
         cutoff = time.time() - (max_age_hours * 3600)
         removed = 0
+        pattern = os.path.join(store_dir, 'mi_logstore_*.db')
 
-        for pattern in (
-            os.path.join(store_dir, 'mi_logstore_*.db'),
-            os.path.join(store_dir, 'mi_snapshot_*.json'),
-        ):
-            for filepath in glob.glob(pattern):
-                try:
-                    if os.path.getmtime(filepath) < cutoff:
-                        os.remove(filepath)
-                        for suffix in ('-wal', '-shm'):
-                            extra = filepath + suffix
-                            if os.path.exists(extra):
-                                os.remove(extra)
-                        removed += 1
-                except OSError as e:
-                    logger.warning(f"Failed to clean up {filepath}: {e}")
+        for filepath in glob.glob(pattern):
+            try:
+                if os.path.getmtime(filepath) < cutoff:
+                    os.remove(filepath)
+                    for suffix in ('-wal', '-shm'):
+                        extra = filepath + suffix
+                        if os.path.exists(extra):
+                            os.remove(extra)
+                    removed += 1
+            except OSError as e:
+                logger.warning(f"Failed to clean up {filepath}: {e}")
 
         if removed:
-            logger.info(f"Cleaned up {removed} expired store/snapshot file(s) from {store_dir}")
+            logger.info(f"Cleaned up {removed} expired log store file(s) from {store_dir}")

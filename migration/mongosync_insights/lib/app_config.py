@@ -42,7 +42,6 @@ ALLOWED_MIME_TYPES = [
     'text/plain',
     'application/json',
     'application/x-ndjson',
-    'text/plain',  # Prometheus/OTel metrics files (mongosync_metrics.log)
     'application/gzip', 'application/x-gzip',
     'application/zip', 'application/x-zip-compressed',
     'application/x-bzip2',
@@ -305,6 +304,7 @@ def get_database(connection_string, database_name):
     return client[database_name]
 
 _resolved_internal_db_cache = {}
+_resolved_internal_db_lock = threading.Lock()
 
 def resolve_internal_db_name(connection_string):
     """
@@ -323,8 +323,9 @@ def resolve_internal_db_name(connection_string):
     if os.getenv('MI_INTERNAL_DB_NAME'):
         return INTERNAL_DB_NAME
 
-    if connection_string in _resolved_internal_db_cache:
-        return _resolved_internal_db_cache[connection_string]
+    with _resolved_internal_db_lock:
+        if connection_string in _resolved_internal_db_cache:
+            return _resolved_internal_db_cache[connection_string]
 
     logger = logging.getLogger(__name__)
     try:
@@ -334,7 +335,8 @@ def resolve_internal_db_name(connection_string):
             resolved = INTERNAL_DB_NAME_NEW
         else:
             resolved = INTERNAL_DB_NAME
-        _resolved_internal_db_cache[connection_string] = resolved
+        with _resolved_internal_db_lock:
+            _resolved_internal_db_cache[connection_string] = resolved
         logger.info(f"Resolved internal DB name: {resolved}")
         return resolved
     except Exception as e:

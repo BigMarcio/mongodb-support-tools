@@ -4,12 +4,13 @@ This tool can parse **mongosync** logs and metrics files, read the **mongosync**
 
 ## What Does This Tool Do?
 
-Mongosync Insights provides four main capabilities:
+Mongosync Insights provides five main capabilities:
 
 1. **Log File Analysis**: Upload and parse mongosync log files to visualize migration progress, data transfer rates, performance metrics, configuration options, and detected errors
 2. **Mongosync Metrics Analysis**: Upload and parse `mongosync_metrics.log` files to visualize 40+ mongosync metrics across Collection Copy, CEA, Indexes, Verifier, and more
 3. **Live Monitoring**: Connect directly to the **mongosync** internal database or to the **mongosync** progress endpoint for real-time monitoring of ongoing migrations with auto-refreshing dashboards
-4. **Migration Verifier Monitoring**: Connect to the database where the [migration-verifier](https://github.com/mongodb-labs/migration-verifier) tool stores its metadata to track verification progress, generation history, and mismatch details
+4. **Combined Monitoring**: Provide both a MongoDB connection string and a progress endpoint URL to get a comprehensive view that merges metadata insights with real-time progress data
+5. **Migration Verifier Monitoring**: Connect to the database where the [migration-verifier](https://github.com/mongodb-labs/migration-verifier) tool stores its metadata to track verification progress, generation history, and mismatch details
 
 ## Prerequisites
 
@@ -64,7 +65,7 @@ python3 mongosync_insights.py
 
 The application will start and display:
 ```
-Starting Mongosync Insights v0.8.0.18
+Starting Mongosync Insights v0.8.1.14
 Server: 127.0.0.1:3030
 ```
 
