@@ -53,7 +53,6 @@ def detect_mime_type(file_sample: bytes, filename: str) -> str:
     except UnicodeDecodeError:
         return 'application/octet-stream'
 
-
 def upload_file():
     # Use the centralized logging configuration
     logger = logging.getLogger(__name__)

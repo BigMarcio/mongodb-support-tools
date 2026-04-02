@@ -93,7 +93,7 @@ def add_security_headers(response):
 # Make app version available to all templates
 @app.context_processor
 def inject_app_version():
-    return dict(app_version=APP_VERSION)
+    return dict(app_version=APP_VERSION, developer_credits=DEVELOPER_CREDITS)
 
 # Handle file too large error
 @app.errorhandler(413)
@@ -321,8 +321,8 @@ def liveMonitoring():
     
     return response
 
-@app.route('/get_metrics_data', methods=['POST'])
-def getMetrics():
+@app.route('/getLiveMonitoring', methods=['POST'])
+def getLiveMonitoring():
     # Get connection string from env var or in-memory session store
     if CONNECTION_STRING:
         connection_string = CONNECTION_STRING
@@ -337,7 +337,7 @@ def getMetrics():
     
     return gatherMetrics(connection_string)
 
-@app.route('/get_partitions_data', methods=['POST'])
+@app.route('/getPartitionsData', methods=['POST'])
 def getPartitionsData():
     # Get connection string from env var or in-memory session store
     if CONNECTION_STRING:
@@ -353,7 +353,7 @@ def getPartitionsData():
     
     return gatherPartitionsMetrics(connection_string)
 
-@app.route('/get_endpoint_data', methods=['POST'])
+@app.route('/getEndpointData', methods=['POST'])
 def getEndpointData():
     # Get endpoint URL from env var or in-memory session store
     if PROGRESS_ENDPOINT_URL:
@@ -369,8 +369,8 @@ def getEndpointData():
     
     return gatherEndpointMetrics(endpoint_url)
 
-@app.route('/renderVerifier', methods=['POST'])
-def renderVerifier():
+@app.route('/Verifier', methods=['POST'])
+def Verifier():
     """Render the migration verifier monitoring page."""
     # Get connection string from env var or form
     if VERIFIER_CONNECTION_STRING:
@@ -435,7 +435,7 @@ def renderVerifier():
     
     return response
 
-@app.route('/get_verifier_data', methods=['POST'])
+@app.route('/getVerifierData', methods=['POST'])
 def getVerifierData():
     """Get migration verifier metrics data for AJAX refresh."""
     session_id = request.cookies.get(SESSION_COOKIE_NAME)
