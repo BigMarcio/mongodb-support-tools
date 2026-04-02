@@ -141,5 +141,9 @@
         "pattern": "refetched db-spec for recreating dst coll for natural scan",
         "friendly_name": "Restart Collection Copy in natural order",
         "full_error_message": "refetched db-spec for recreating dst coll for natural scan, collSpec: {COLLECTION DETAILS UUID {}}, isSrcDropped: XXX"
+      },
+      {
+        "pattern": "Change Event Application failed",
+        "friendly_name": "CEA failed undefined reason"
       }
     ]

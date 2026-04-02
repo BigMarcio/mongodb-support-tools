@@ -169,6 +169,7 @@ def upload_file():
         partition_multi_created = []
         partition_sampling_info = []
         partition_persisted_after_sampling = []
+        verifier_dst_lag_items = []
         
         # Initialize metrics collector for prometheus metrics
         metrics_collector = MetricsCollector()
@@ -303,6 +304,9 @@ def upload_file():
                 if patterns['partition_persisted_after_sampling'].search(message):
                     partition_persisted_after_sampling.append(json_obj)
                 
+                if json_obj.get('verifierDstLagTimeSeconds') is not None and 'time' in json_obj:
+                    verifier_dst_lag_items.append(json_obj)
+                
                 # Check for common error patterns
                 for ep in error_patterns:
                     if ep['pattern'].search(message):
@@ -365,6 +369,7 @@ def upload_file():
         mongosync_crud_rate.sort(key=lambda x: x.get('time', ''))
         mongosync_partition_progress.sort(key=lambda x: x.get('time', ''))
         mongosync_sent_response.sort(key=lambda x: x.get('time', ''))
+        verifier_dst_lag_items.sort(key=lambda x: x.get('time', ''))
 
         # Aggregate partition initialization data per collection
         partition_init_data = []
@@ -650,6 +655,16 @@ def upload_file():
                 eventRatePerSecond.append(float(rate))
                 eventRatePerSecond_times.append(datetime.strptime(item['time'][:26], "%Y-%m-%dT%H:%M:%S.%f"))
 
+        dst_lag_times = [datetime.strptime(item['time'][:26], "%Y-%m-%dT%H:%M:%S.%f") for item in verifier_dst_lag_items if 'time' in item]
+        verifierDstLagTimeSeconds = [item['verifierDstLagTimeSeconds'] for item in verifier_dst_lag_items if 'verifierDstLagTimeSeconds' in item]
+
+        src_lag_times = []
+        verifierSrcLagTimeSeconds = []
+        for item in data:
+            if 'verifierSrcLagTimeSeconds' in item and 'time' in item:
+                src_lag_times.append(datetime.strptime(item['time'][:26], "%Y-%m-%dT%H:%M:%S.%f"))
+                verifierSrcLagTimeSeconds.append(item['verifierSrcLagTimeSeconds'])
+
         # Calculate global date range from all time sources for X-axis synchronization
         all_times = []
         if times:
@@ -662,6 +677,10 @@ def upload_file():
             all_times.extend(estimatedCopiedBytes_times)
         if index_built_times:
             all_times.extend(index_built_times)
+        if dst_lag_times:
+            all_times.extend(dst_lag_times)
+        if src_lag_times:
+            all_times.extend(src_lag_times)
         
         if all_times:
             global_min_date = min(all_times)
@@ -723,7 +742,7 @@ def upload_file():
         logging.info(f"Plotting")
 
         # Create a subplot for the scatter plots (tables are now in a separate tab)
-        fig = make_subplots(rows=12, cols=2, subplot_titles=("Mongosync Phases", "Mongosync Phases Table",
+        fig = make_subplots(rows=13, cols=2, subplot_titles=("Mongosync Phases", "Mongosync Phases Table",
                                                             "Lag Time (seconds)", "Estimated Source Oplog Time Remaining (minutes)",
                                                             "Ping Latency (ms)", "Average Source CRUD Event Rate (Events/sec)",
                                                             "Partition Init Progress", "Partition Init Summary",
@@ -734,7 +753,8 @@ def upload_file():
                                                             "Change Events Applied", "Events Rate per Second",
                                                             "CEA Source - Avg and Max Read time (ms)", "CEA Source Reads",
                                                             "CEA Destination - Avg and Max Write time (ms)", "CEA Destination Writes",
-                                                            "Index Built", "Total and Index Built"),
+                                                            "Index Built", "Total and Index Built",
+                                                            "Source Verifier Lag Time (seconds)", "Destination Verifier Lag Time (seconds)"),
                             specs=[ [{}, {"type": "table"}], #Row 1: Mongosync Phases and Phases Table
                                     [{}, {}], #Row 2: Lag Time and Estimated Source Oplog Time Remaining
                                     [{}, {}], #Row 3: Ping Latency and CRUD Event Rate
@@ -746,7 +766,8 @@ def upload_file():
                                     [{}, {}], #Row 9: Change Events Applied and Events Rate per Second
                                     [{}, {}], #Row 10: CEA Source
                                     [{}, {}], #Row 11: CEA Destination
-                                    [{}, {}] ]) #Row 12: Index Built and Total and Index Built
+                                    [{}, {}], #Row 12: Index Built and Total and Index Built
+                                    [{}, {}] ]) #Row 13: Verifier Lag
 
         # Add traces
 
@@ -990,9 +1011,25 @@ def upload_file():
             fig.update_yaxes(range=[-1, 1], row=12, col=2)
             fig.update_xaxes(range=[-1, 1], row=12, col=2)
 
+        # Row 13: Source Verifier Lag Time
+        if verifierSrcLagTimeSeconds:
+            fig.add_trace(go.Scattergl(x=src_lag_times, y=verifierSrcLagTimeSeconds, mode='lines', name='Source Verifier Lag Time (seconds)', legendgroup="groupVerifierLag"), row=13, col=1)
+        else:
+            fig.add_trace(go.Scatter(x=[0], y=[0], text="NO DATA", mode='text', name='Source Verifier Lag Time', textfont=dict(size=30, color="black")), row=13, col=1)
+            fig.update_yaxes(range=[-1, 1], row=13, col=1)
+            fig.update_xaxes(range=[-1, 1], row=13, col=1)
+
+        # Row 13: Destination Verifier Lag Time
+        if verifierDstLagTimeSeconds:
+            fig.add_trace(go.Scattergl(x=dst_lag_times, y=verifierDstLagTimeSeconds, mode='lines', name='Destination Verifier Lag Time (seconds)', legendgroup="groupVerifierLag"), row=13, col=2)
+        else:
+            fig.add_trace(go.Scatter(x=[0], y=[0], text="NO DATA", mode='text', name='Destination Verifier Lag Time', textfont=dict(size=30, color="black")), row=13, col=2)
+            fig.update_yaxes(range=[-1, 1], row=13, col=2)
+            fig.update_xaxes(range=[-1, 1], row=13, col=2)
+
         # Update layout
-        # 225 per plot (12 rows = 2700)
-        fig.update_layout(height=2700, width=1450, title_text="Mongosync Replication Progress - " + version_text + " - Timezone info: " + timeZoneInfo, legend_tracegroupgap=190, showlegend=False)
+        # 225 per plot (13 rows = 2925)
+        fig.update_layout(height=2925, width=1450, title_text="Mongosync Replication Progress - " + version_text + " - Timezone info: " + timeZoneInfo, legend_tracegroupgap=190, showlegend=False)
         
         # Force all y-axes to start at 0 for better visual comparison
         fig.update_yaxes(rangemode='tozero')
@@ -1003,6 +1040,7 @@ def upload_file():
             ("Collection Copy Metrics", 'yaxis6'),        # row 4
             ("CEA Metrics", 'yaxis15'),                   # row 9
             ("Indexes Metrics", 'yaxis21'),               # row 12
+            ("Verifier Metrics", 'yaxis23'),               # row 13
         ]
         for section_name, yaxis_key in section_labels:
             domain = fig.layout[yaxis_key].domain
@@ -1027,7 +1065,7 @@ def upload_file():
                 for col in range(1, 3):
                     fig.update_xaxes(range=[global_min_date, global_max_date], row=row, col=col)
             fig.update_xaxes(range=[global_min_date, global_max_date], row=4, col=1)
-            for row in range(5, 13):  # rows 5-12 (both cols are charts)
+            for row in range(5, 14):  # rows 5-13 (both cols are charts)
                 for col in range(1, 3):
                     fig.update_xaxes(range=[global_min_date, global_max_date], row=row, col=col)
 
