@@ -177,6 +177,15 @@
         font-weight: 600;
     }
 
+    .options-table th.sortable-th {
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .options-table th.sortable-th:hover {
+        background-color: rgba(0, 104, 74, 0.08);
+    }
+
     .options-table td {
         padding: 10px 15px;
         border-bottom: 1px solid #e0e0e0;
@@ -746,16 +755,16 @@
                     <table class="options-table" id="partitioninit-table">
                         <thead>
                             <tr>
-                                <th>Collection</th>
-                                <th>Type</th>
-                                <th>Reason</th>
-                                <th>Partitions</th>
-                                <th>Doc Count</th>
-                                <th>Expected Partition Size</th>
-                                <th>Sampler</th>
-                                <th>IDs Sampled</th>
-                                <th>Init Started</th>
-                                <th>Init Duration (s)</th>
+                                <th class="sortable-th" data-label="Collection" onclick="sortTableByColumn('partitioninit-table', 0, 'text')" title="Click to sort">Collection</th>
+                                <th class="sortable-th" data-label="Type" onclick="sortTableByColumn('partitioninit-table', 1, 'text')" title="Click to sort">Type</th>
+                                <th class="sortable-th" data-label="Reason" onclick="sortTableByColumn('partitioninit-table', 2, 'text')" title="Click to sort">Reason</th>
+                                <th class="sortable-th" data-label="Partitions" onclick="sortTableByColumn('partitioninit-table', 3, 'numeric')" title="Click to sort">Partitions</th>
+                                <th class="sortable-th" data-label="Doc Count" onclick="sortTableByColumn('partitioninit-table', 4, 'numeric')" title="Click to sort">Doc Count</th>
+                                <th class="sortable-th" data-label="Expected Partition Size" onclick="sortTableByColumn('partitioninit-table', 5, 'text')" title="Click to sort">Expected Partition Size</th>
+                                <th class="sortable-th" data-label="Sampler" onclick="sortTableByColumn('partitioninit-table', 6, 'text')" title="Click to sort">Sampler</th>
+                                <th class="sortable-th" data-label="IDs Sampled" onclick="sortTableByColumn('partitioninit-table', 7, 'numeric')" title="Click to sort">IDs Sampled</th>
+                                <th class="sortable-th" data-label="Init Started" onclick="sortTableByColumn('partitioninit-table', 8, 'date')" title="Click to sort">Init Started</th>
+                                <th class="sortable-th" data-label="Init Duration (s)" onclick="sortTableByColumn('partitioninit-table', 9, 'numeric')" title="Click to sort">Init Duration (s)</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -803,10 +812,10 @@
                     <table class="options-table" id="errors-table">
                         <thead>
                             <tr>
-                                <th style="width: 15%;">Friendly Name</th>
-                                <th style="width: 20%; cursor: pointer;" onclick="sortErrorsTable('time')" title="Click to sort by time">Time &#11021;</th>
-                                <th style="width: 10%;">Level</th>
-                                <th style="width: 55%;">Message</th>
+                                <th style="width: 15%;" class="sortable-th" data-label="Friendly Name" onclick="sortTableByColumn('errors-table', 0, 'text')" title="Click to sort">Friendly Name</th>
+                                <th style="width: 20%;" class="sortable-th" data-label="Time" onclick="sortTableByColumn('errors-table', 1, 'date')" title="Click to sort">Time</th>
+                                <th style="width: 10%;" class="sortable-th" data-label="Level" onclick="sortTableByColumn('errors-table', 2, 'text')" title="Click to sort">Level</th>
+                                <th style="width: 55%;" class="sortable-th" data-label="Message" onclick="sortTableByColumn('errors-table', 3, 'text')" title="Click to sort">Message</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1076,13 +1085,16 @@ var errorsData = {{ errors_data | tojson }};
 var partitionInitData = {{ partition_init_data | tojson }};
 
 function switchTab(tabName) {
-    // Update tab buttons
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.getElementById('tab-' + tabName).classList.add('active');
-    
-    // Update tab content
+
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
     document.getElementById(tabName + '-tab').classList.add('active');
+
+    if (tabName === 'logviewer' && !lvInitialized && LV_INITIAL_LINES && LV_INITIAL_LINES.length > 0) {
+        lvInitialized = true;
+        lvDisplayStaticLogs(LV_INITIAL_LINES);
+    }
 }
 
 function copyTableAsMarkdown(tableType, buttonElement) {
@@ -1307,31 +1319,63 @@ function copyErrorLog(index, format, buttonElement) {
     });
 }
 
-function sortErrorsTable(sortBy) {
-    var table = document.getElementById('errors-table');
+var _sortState = {};
+
+function sortTableByColumn(tableId, colIndex, dataType) {
+    var table = document.getElementById(tableId);
     if (!table) return;
 
     var tbody = table.querySelector('tbody');
-    var rows = Array.from(tbody.querySelectorAll('tr.error-row'));
+    var isErrorsTable = (tableId === 'errors-table');
+    var rows = Array.from(tbody.querySelectorAll(isErrorsTable ? 'tr.error-row' : 'tr'));
 
-    var headerCell = table.querySelector('th[onclick*="sortErrorsTable"]');
-    if (headerCell) {
-        var currentIndicator = headerCell.textContent.includes('\u2B0D') ? '\u2B0D' : '\u2B0C';
-        var newIndicator = currentIndicator === '\u2B0D' ? '\u2B0C' : '\u2B0D';
-        headerCell.innerHTML = 'Time ' + newIndicator;
+    var key = tableId + '-' + colIndex;
+    _sortState[key] = (_sortState[key] === 'asc') ? 'desc' : 'asc';
+    var dir = _sortState[key];
+    var mult = (dir === 'asc') ? 1 : -1;
+
+    var headers = table.querySelectorAll('th.sortable-th');
+    headers.forEach(function(th) {
+        var label = th.getAttribute('data-label');
+        if (label) th.innerHTML = label;
+    });
+    var activeHeader = headers[colIndex];
+    if (activeHeader) {
+        var indicator = (dir === 'asc') ? ' \u25B2' : ' \u25BC';
+        activeHeader.innerHTML = activeHeader.getAttribute('data-label') + indicator;
     }
 
     rows.sort(function(a, b) {
-        var aTime = a.cells[1].textContent.trim();
-        var bTime = b.cells[1].textContent.trim();
-        return new Date(bTime) - new Date(aTime);
+        var aVal = a.cells[colIndex].textContent.trim();
+        var bVal = b.cells[colIndex].textContent.trim();
+        var result = 0;
+
+        if (dataType === 'numeric') {
+            var aNum = parseFloat(aVal.replace(/,/g, ''));
+            var bNum = parseFloat(bVal.replace(/,/g, ''));
+            if (isNaN(aNum)) aNum = -Infinity;
+            if (isNaN(bNum)) bNum = -Infinity;
+            result = aNum - bNum;
+        } else if (dataType === 'date') {
+            var aDate = new Date(aVal);
+            var bDate = new Date(bVal);
+            var aTime = isNaN(aDate.getTime()) ? 0 : aDate.getTime();
+            var bTime = isNaN(bDate.getTime()) ? 0 : bDate.getTime();
+            result = aTime - bTime;
+        } else {
+            result = aVal.localeCompare(bVal);
+        }
+
+        return result * mult;
     });
 
     rows.forEach(function(row) {
         tbody.appendChild(row);
-        var detailRow = row.nextElementSibling;
-        if (detailRow && detailRow.classList.contains('error-detail-row')) {
-            tbody.appendChild(detailRow);
+        if (isErrorsTable) {
+            var detailRow = row.nextElementSibling;
+            if (detailRow && detailRow.classList.contains('error-detail-row')) {
+                tbody.appendChild(detailRow);
+            }
         }
     });
 }
@@ -1440,6 +1484,7 @@ var LV_INITIAL_LINES = {{ log_viewer_lines | tojson }};
 var LV_MAX_LINES = 2000;
 
 var lvLogLines = [];
+var lvInitialized = false;
 var lvViewerMode = sessionStorage.getItem('mi_lv_view_mode') || 'highlighted';
 var lvSearchText = '';
 var lvSearchDebounceTimer = null;
@@ -1615,20 +1660,19 @@ function lvFormatLine(line) {
 
 // --- Rendering ---
 
-function lvRenderLines() {
-    var viewer = document.getElementById('lvViewer');
-    var placeholder = document.getElementById('lvPlaceholder');
-    if (placeholder) placeholder.style.display = 'none';
-
-    var filtered = lvLogLines.filter(function(line) {
+function lvFilterLines() {
+    return lvLogLines.filter(function(line) {
         var sev = lvGetSeverity(line);
         if (!lvSeverityFilters[sev]) return false;
         if (lvSearchText && !lvIsServerSearch && !line.toLowerCase().includes(lvSearchText.toLowerCase())) return false;
         var parsed = lvParseJson(line);
         return lvMatchesSemanticFilters(line, parsed);
     });
+}
 
-    var html = filtered.map(function(line) {
+function lvRenderSlice(lines) {
+    var viewer = document.getElementById('lvViewer');
+    var html = lines.map(function(line) {
         var f = lvFormatLine(line);
         var cls = ['lv-log-line', f.lineClass, f.formatClass].filter(Boolean).join(' ');
         return '<div class="' + cls + '">' + f.html + '</div>';
@@ -1641,37 +1685,91 @@ function lvRenderLines() {
         viewer.appendChild(container);
     }
     container.innerHTML = html;
+}
 
-    var totalCount = lvLogLines.length;
-    var filteredCount = filtered.length;
+function lvRenderTailPage() {
+    var viewer = document.getElementById('lvViewer');
+    var placeholder = document.getElementById('lvPlaceholder');
+    if (placeholder) placeholder.style.display = 'none';
+
+    var filtered = lvFilterLines();
+    var totalFiltered = filtered.length;
+    var totalAll = lvLogLines.length;
+    var totalPages = Math.max(1, Math.ceil(totalFiltered / lvPerPage));
+
+    if (lvCurrentPage > totalPages) lvCurrentPage = totalPages;
+    if (lvCurrentPage < 1) lvCurrentPage = 1;
+
+    var start = (lvCurrentPage - 1) * lvPerPage;
+    var pageSlice = filtered.slice(start, start + lvPerPage);
+
+    lvRenderSlice(pageSlice);
+
     var countEl = document.getElementById('lvLineCount');
-    if (filteredCount === totalCount) {
-        countEl.textContent = totalCount + ' lines';
+    if (totalFiltered === totalAll) {
+        countEl.textContent = totalAll + ' lines';
     } else {
-        countEl.textContent = filteredCount + ' / ' + totalCount + ' lines';
+        countEl.textContent = totalFiltered + ' / ' + totalAll + ' lines';
+    }
+
+    var paginationEl = document.getElementById('lvPagination');
+    if (totalPages > 1) {
+        paginationEl.style.display = 'flex';
+        document.getElementById('lvPageInfo').textContent = 'Page ' + lvCurrentPage + ' of ' + totalPages;
+        document.getElementById('lvPageTotal').textContent = totalFiltered + ' lines';
+        document.getElementById('lvPrevBtn').disabled = (lvCurrentPage <= 1);
+        document.getElementById('lvNextBtn').disabled = (lvCurrentPage >= totalPages);
+    } else {
+        paginationEl.style.display = 'none';
+    }
+
+    document.getElementById('lvBackToTail').style.display = lvIsServerSearch ? 'inline-block' : 'none';
+
+    viewer.scrollTop = 0;
+}
+
+function lvRenderLines() {
+    if (lvIsServerSearch) {
+        var viewer = document.getElementById('lvViewer');
+        var placeholder = document.getElementById('lvPlaceholder');
+        if (placeholder) placeholder.style.display = 'none';
+        var filtered = lvFilterLines();
+        lvRenderSlice(filtered);
+        var countEl = document.getElementById('lvLineCount');
+        countEl.textContent = filtered.length + ' lines';
+    } else {
+        lvRenderTailPage();
     }
 }
 
 function lvDisplayStaticLogs(lines) {
     var placeholder = document.getElementById('lvPlaceholder');
     if (placeholder) placeholder.style.display = 'none';
-    document.getElementById('lvTitle').textContent = 'Log Viewer (Tail - last ' + lines.length + ' lines)';
     lvLogLines = lines.slice(-LV_MAX_LINES);
     lvIsServerSearch = false;
-    document.getElementById('lvPagination').style.display = 'none';
-    lvRenderLines();
-    setTimeout(function() {
-        var viewer = document.getElementById('lvViewer');
-        viewer.scrollTop = viewer.scrollHeight;
-    }, 50);
+
+    var filtered = lvFilterLines();
+    var totalPages = Math.max(1, Math.ceil(filtered.length / lvPerPage));
+    lvCurrentPage = totalPages;
+
+    document.getElementById('lvTitle').textContent = 'Log Viewer (Tail - last ' + lvLogLines.length + ' lines)';
+    lvRenderTailPage();
 }
 
 // --- Controls ---
+
+function lvResetToLastPage() {
+    if (!lvIsServerSearch) {
+        var filtered = lvFilterLines();
+        lvCurrentPage = Math.max(1, Math.ceil(filtered.length / lvPerPage));
+    }
+}
 
 function lvToggleSeverity(severity) {
     lvSeverityFilters[severity] = !lvSeverityFilters[severity];
     var btn = document.querySelector('.lv-sev-btn[data-severity="' + severity + '"]');
     if (btn) btn.classList.toggle('active', lvSeverityFilters[severity]);
+    lvResetToLastPage();
     lvRenderLines();
 }
 
@@ -1688,6 +1786,7 @@ function lvToggleFocus(filterName) {
     if (!(filterName in lvSemanticFilters)) return;
     lvSemanticFilters[filterName] = !lvSemanticFilters[filterName];
     lvUpdateControlsState();
+    lvResetToLastPage();
     lvRenderLines();
 }
 
@@ -1740,12 +1839,11 @@ function lvOnSearchInput(value) {
             lvSearchServer(lvSearchText, '', lvCurrentPage);
         } else {
             lvIsServerSearch = false;
-            document.getElementById('lvPagination').style.display = 'none';
-            document.getElementById('lvBackToTail').style.display = 'none';
             if (lvSearchText === '') {
                 lvDisplayStaticLogs(LV_INITIAL_LINES);
             } else {
-                lvRenderLines();
+                lvResetToLastPage();
+                lvRenderTailPage();
             }
         }
     }, 300);
@@ -1797,17 +1895,29 @@ function lvDisplaySearchResults(data) {
 }
 
 function lvPrevPage() {
-    if (lvCurrentPage > 1) {
-        lvCurrentPage--;
+    if (lvCurrentPage <= 1) return;
+    lvCurrentPage--;
+    if (lvIsServerSearch) {
         lvSearchServer(lvSearchText, '', lvCurrentPage);
+    } else {
+        lvRenderTailPage();
     }
 }
 
 function lvNextPage() {
-    var totalPages = Math.ceil(lvTotalResults / lvPerPage) || 1;
-    if (lvCurrentPage < totalPages) {
-        lvCurrentPage++;
-        lvSearchServer(lvSearchText, '', lvCurrentPage);
+    if (lvIsServerSearch) {
+        var totalPages = Math.ceil(lvTotalResults / lvPerPage) || 1;
+        if (lvCurrentPage < totalPages) {
+            lvCurrentPage++;
+            lvSearchServer(lvSearchText, '', lvCurrentPage);
+        }
+    } else {
+        var filtered = lvFilterLines();
+        var totalPages = Math.max(1, Math.ceil(filtered.length / lvPerPage));
+        if (lvCurrentPage < totalPages) {
+            lvCurrentPage++;
+            lvRenderTailPage();
+        }
     }
 }
 
@@ -1816,16 +1926,11 @@ function lvBackToTail() {
     lvSearchText = '';
     var searchInput = document.getElementById('lvSearchInput');
     if (searchInput) searchInput.value = '';
-    document.getElementById('lvPagination').style.display = 'none';
-    document.getElementById('lvBackToTail').style.display = 'none';
     lvDisplayStaticLogs(LV_INITIAL_LINES);
 }
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', function() {
-    if (LV_INITIAL_LINES && LV_INITIAL_LINES.length > 0) {
-        lvDisplayStaticLogs(LV_INITIAL_LINES);
-    }
     lvUpdateControlsState();
 });
 </script>
