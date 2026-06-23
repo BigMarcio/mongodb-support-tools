@@ -19,7 +19,8 @@ from werkzeug.utils import secure_filename
 from .utils import format_byte_size, convert_bytes
 from .app_config import (
     MAX_FILE_SIZE, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES,
-    load_error_patterns, classify_file_type,
+    load_error_patterns, classify_file_type, is_multi_file_archive,
+    UNRECOGNIZED_FILENAME_ERROR_MESSAGE,
     LOG_VIEWER_MAX_LINES,
 )
 from .snapshot_store import logstore_path
@@ -313,19 +314,38 @@ def upload_file():
 
         # Reset file pointer to beginning
         file.seek(0)
+
+        is_archive = is_multi_file_archive(filename, file_mime_type)
+        compressed_upload = is_compressed_mime_type(file_mime_type)
+
+        if compressed_upload and not is_archive:
+            upload_file_type = classify_file_type(filename)
+            if upload_file_type is None:
+                logger.error("Unrecognized compressed upload filename: %s", filename)
+                return render_template(
+                    'error.html',
+                    error_title="Unrecognized File",
+                    error_message=UNRECOGNIZED_FILENAME_ERROR_MESSAGE,
+                )
+        elif not compressed_upload:
+            upload_file_type = classify_file_type(filename)
+            if upload_file_type is None:
+                logger.error("Unrecognized upload filename: %s", filename)
+                return render_template(
+                    'error.html',
+                    error_title="Unrecognized File",
+                    error_message=UNRECOGNIZED_FILENAME_ERROR_MESSAGE,
+                )
         
         try:
             # Determine if file is compressed and get appropriate iterator
             # Use classified decompressor to track file types from archives
-            if is_compressed_mime_type(file_mime_type):
+            if compressed_upload:
                 logger.info(f"Decompressing {file_mime_type} file before processing (with classification)")
                 file_iterator = decompress_file_classified(file, file_mime_type, filename)
                 use_classified = True
             else:
-                # For non-compressed files, classify by filename
-                file_type = classify_file_type(filename)
-                if file_type is None:
-                    file_type = 'logs'
+                file_type = upload_file_type
                 logger.info(f"Non-compressed file classified as: {file_type}")
                 file_iterator = file
                 use_classified = False
@@ -510,6 +530,14 @@ def upload_file():
                             len(phase_in_memory_json) > 0 or
                             len(mongosync_partition_progress) > 0 or len(mongosync_crud_rate) > 0)
         has_any_metrics_data = metrics_collector.metrics_count > 0
+        if is_archive and line_count == 0:
+            logger.warning("Archive contained no recognizable log or metrics files: %s", filename)
+            log_store.delete()
+            return render_template(
+                'error.html',
+                error_title="Unrecognized File",
+                error_message=UNRECOGNIZED_FILENAME_ERROR_MESSAGE,
+            )
         if not has_any_log_data and not has_any_metrics_data:
             logger.warning(f"No recognizable mongosync data found in {filename} ({line_count} lines processed)")
             return render_template('error.html',

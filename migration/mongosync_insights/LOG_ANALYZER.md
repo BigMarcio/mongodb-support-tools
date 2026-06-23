@@ -28,6 +28,21 @@ Mongosync Insights detects two kinds of content in the uploaded file:
 
 A single upload can contain log lines only, metrics only, or both. Tabs appear based on what was found.
 
+### Filename recognition
+
+Uploads are classified by **substring** in the filename (basename, case-insensitive). Compression suffixes (`.gz`, `.bz2`, `.zip`) are stripped before matching.
+
+| Type | Filename must contain |
+|------|------------------------|
+| Metrics | `metrics` |
+| Log | `mongosync` or `liveimport` |
+
+If the name contains both `metrics` and `mongosync`, it is treated as a **metrics** file.
+
+Files that do not match either rule are rejected with an **Unrecognized File** error. For `.zip` / `.tar` archives, each inner file is classified the same way; unrecognized members are skipped. If the archive contains no recognizable log or metrics files, the upload is rejected.
+
+Examples: `mongosync_metrics_22JUN2026.log` → metrics; `mongosync.log.1` → log; `myfile.log` → rejected.
+
 ### Log verbosity
 
 Charts and panels depend on the **verbosity level** mongosync used when the log was captured. For full chart coverage (including partition init duration/count), capture logs with at least `--verbosity 1`:

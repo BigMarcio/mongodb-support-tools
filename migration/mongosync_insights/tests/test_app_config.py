@@ -7,6 +7,7 @@ import pytest
 from lib import app_config
 from lib.app_config import (
     build_progress_endpoint_url,
+    classify_file_type,
     normalize_progress_endpoint_url,
     parse_env_int,
     validate_config,
@@ -104,3 +105,23 @@ class TestProgressEndpointUrl:
     def test_validate_accepts_normalized_output(self):
         url = normalize_progress_endpoint_url("localhost:27182")
         assert validate_progress_endpoint_url(url) is True
+
+
+class TestClassifyFileType:
+    @pytest.mark.parametrize("filename,expected", [
+        ("mongosync_metrics.log", "metrics"),
+        ("mongosync_metrics_22JUN2026.log", "metrics"),
+        ("my_metrics_export.log", "metrics"),
+        ("mongosync_metrics_foo.log", "metrics"),
+        ("mongosync.log", "logs"),
+        ("mongosync.log.1", "logs"),
+        ("mongosync-foo.log", "logs"),
+        ("liveimport_x.log", "logs"),
+        ("mongosync.log.gz", "logs"),
+        ("archive/mongosync.log", "logs"),
+        ("myfile.log", None),
+        ("backup.gz", None),
+        ("data.json", None),
+    ])
+    def test_classify_file_type(self, filename, expected):
+        assert classify_file_type(filename) == expected

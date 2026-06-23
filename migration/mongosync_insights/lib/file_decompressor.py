@@ -13,6 +13,19 @@ from typing import BinaryIO, Iterator, Tuple, Optional
 logger = logging.getLogger(__name__)
 
 
+def should_skip_archive_member(name: str) -> bool:
+    """Skip macOS metadata paths that are not mongosync log/metrics content."""
+    normalized = name.replace('\\', '/')
+    basename = normalized.rsplit('/', 1)[-1]
+    if normalized.startswith('__MACOSX/') or '/__MACOSX/' in normalized:
+        return True
+    if basename.startswith('._'):
+        return True
+    if basename == '.DS_Store':
+        return True
+    return False
+
+
 def decompress_gzip(file_obj: BinaryIO) -> Iterator[bytes]:
     """
     Decompress a gzip file and yield lines.
@@ -82,7 +95,10 @@ def decompress_zip(file_obj: BinaryIO) -> Iterator[bytes]:
             # Skip directories
             if filename.endswith('/'):
                 continue
-            
+            if should_skip_archive_member(filename):
+                logger.info(f"Skipping archive metadata file: {filename}")
+                continue
+
             logger.info(f"Processing file from ZIP: {filename}")
             with zf.open(filename) as inner_file:
                 if filename.lower().endswith('.gz'):
@@ -129,7 +145,10 @@ def decompress_tar(file_obj: BinaryIO, compression: str = 'gz') -> Iterator[byte
             # Skip directories and non-regular files
             if not member.isfile():
                 continue
-            
+            if should_skip_archive_member(member.name):
+                logger.info(f"Skipping archive metadata file: {member.name}")
+                continue
+
             logger.info(f"Processing file from TAR: {member.name}")
             inner_file = tf.extractfile(member)
             if inner_file:
@@ -275,11 +294,14 @@ def decompress_zip_classified(file_obj: BinaryIO) -> Iterator[Tuple[bytes, Optio
             # Skip directories
             if filename.endswith('/'):
                 continue
+            if should_skip_archive_member(filename):
+                logger.info(f"Skipping archive metadata file: {filename}")
+                continue
 
             file_type = classify_file_type(filename)
             logger.info(f"Processing file from ZIP: {filename} (classified as: {file_type})")
 
-            # Skip files that don't match known patterns
+            # Skip files that don't match known filename rules (metrics / mongosync / liveimport)
             if file_type is None:
                 logger.warning(f"Skipping unrecognized file: {filename}")
                 continue
@@ -330,11 +352,14 @@ def decompress_tar_classified(file_obj: BinaryIO, compression: str = 'gz') -> It
             # Skip directories and non-regular files
             if not member.isfile():
                 continue
-            
+            if should_skip_archive_member(member.name):
+                logger.info(f"Skipping archive metadata file: {member.name}")
+                continue
+
             file_type = classify_file_type(member.name)
             logger.info(f"Processing file from TAR: {member.name} (classified as: {file_type})")
             
-            # Skip files that don't match known patterns
+            # Skip files that don't match known filename rules (metrics / mongosync / liveimport)
             if file_type is None:
                 logger.warning(f"Skipping unrecognized file: {member.name}")
                 continue

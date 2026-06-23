@@ -56,7 +56,7 @@ PORT = parse_env_int('MI_PORT', 3030, min_value=1, max_value=65535)
 
 # Application constants
 APP_NAME = "Mongosync Insights"
-APP_VERSION = "0.9.0.16"
+APP_VERSION = "0.9.1.1"
 
 DEVELOPER_CREDITS = {
     "copyright": "\u00a9 MongoDB Inc.",
@@ -106,49 +106,61 @@ EXTENSION_TO_COMPRESSION = {
     '.tar.bz2': 'tar_bzip2'
 }
 
-# File type patterns for identification
-# mongosync logs: mongosync.log or mongosync-* (but NOT mongosync_metrics*) or liveimport_*
-MONGOSYNC_LOG_PATTERN = re.compile(r'^mongosync\.log$|^mongosync-(?!metrics).*|^liveimport_.*', re.IGNORECASE)
-# mongosync metrics: mongosync_metrics.log or mongosync_metrics-*
-MONGOSYNC_METRICS_PATTERN = re.compile(r'^mongosync_metrics\.log$|^mongosync_metrics-.*', re.IGNORECASE)
+# Filename substring rules for log/metrics identification (see classify_file_type)
+UNRECOGNIZED_FILENAME_ERROR_MESSAGE = (
+    "No mongosync log or metrics file was recognized from the filename. "
+    "Metrics files must include 'metrics' in the name; "
+    "log files must include 'mongosync' or 'liveimport'."
+)
 
 
-def classify_file_type(filename: str) -> str:
+def classify_file_type(filename: str):
     """
-    Classify a file as mongosync logs, mongosync metrics, or unknown based on filename pattern.
-    
+    Classify a file as mongosync logs, mongosync metrics, or unknown based on filename.
+
+    Metrics: basename contains 'metrics' (case-insensitive).
+    Logs: basename contains 'mongosync' or 'liveimport' (case-insensitive).
+    Metrics is checked before mongosync/liveimport when both appear in the name.
+
     Args:
         filename: The filename to classify (can include path, only basename is used)
-        
+
     Returns:
         'logs' for mongosync log files
         'metrics' for mongosync metrics files
         None for unrecognized files
     """
     import os
-    # Extract just the filename without path
     basename = os.path.basename(filename)
-    
-    # Remove compression extensions to get the base name
-    # Handle compound extensions like .log.gz, .log.1.gz, etc.
+
     name_without_compression = basename
-    for ext in ['.gz', '.bz2', '.zip']:
+    for ext in ('.gz', '.bz2', '.zip'):
         if name_without_compression.lower().endswith(ext):
             name_without_compression = name_without_compression[:-len(ext)]
-    
-    # Check patterns against the name without compression extension
-    if MONGOSYNC_METRICS_PATTERN.match(name_without_compression):
-        return 'metrics'
-    elif MONGOSYNC_LOG_PATTERN.match(name_without_compression):
-        return 'logs'
-    
-    # Also check the original basename in case pattern includes extension
-    if MONGOSYNC_METRICS_PATTERN.match(basename):
-        return 'metrics'
-    elif MONGOSYNC_LOG_PATTERN.match(basename):
-        return 'logs'
-    
+
+    for name in (name_without_compression, basename):
+        lower = name.lower()
+        if 'metrics' in lower:
+            return 'metrics'
+        if 'mongosync' in lower or 'liveimport' in lower:
+            return 'logs'
+
     return None
+
+
+def is_multi_file_archive(filename: str, mime_type: str) -> bool:
+    """True for zip/tar archives where inner members are classified individually."""
+    import os
+    filename_lower = (filename or '').lower()
+    for ext in ('.tar.gz', '.tar.bz2', '.tgz'):
+        if filename_lower.endswith(ext):
+            return True
+    ext = os.path.splitext(filename_lower)[1]
+    if ext in ('.zip',):
+        return True
+    if mime_type in ('application/zip', 'application/x-zip-compressed'):
+        return True
+    return False
 
 
 # SSL/TLS settings
