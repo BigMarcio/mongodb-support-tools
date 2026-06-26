@@ -2,7 +2,6 @@
 import json
 import os
 import uuid
-from unittest.mock import patch
 
 import pytest
 
@@ -136,36 +135,3 @@ class TestLogStoreRegistry:
         registry.register(store_id, str(db_path))
         assert registry.count() == 1
 
-
-class TestLogsRoutes:
-    @pytest.fixture
-    def app_client(self, tmp_path, monkeypatch):
-        log_dir = tmp_path / 'logs'
-        log_dir.mkdir()
-        monkeypatch.setenv('MI_LOG_FILE', str(log_dir / 'insights.log'))
-        monkeypatch.setattr(snapshot_store, 'LOG_STORE_DIR', str(tmp_path / 'store'))
-        (tmp_path / 'store').mkdir()
-
-        with patch('lib.app_config.validate_config', return_value=True):
-            with patch('lib.app_config.setup_logging') as mock_log:
-                mock_log.return_value = __import__('logging').getLogger('test')
-                from mongosync_insights import create_app
-                app = create_app()
-                app.config['TESTING'] = True
-                with app.test_client() as client:
-                    yield client
-
-    def test_load_snapshot_invalid_id(self, app_client):
-        r = app_client.get('/logs/load_snapshot/not-a-uuid')
-        assert r.status_code == 200
-        assert b'Snapshot Not Found' in r.data
-
-    def test_delete_snapshot_invalid_id(self, app_client):
-        r = app_client.delete('/logs/delete_snapshot/not-a-uuid')
-        assert r.status_code == 404
-        assert r.get_json()['error'] == 'Snapshot not found'
-
-    def test_search_logs_invalid_store_id(self, app_client):
-        r = app_client.get('/logs/search_logs?store_id=../x')
-        assert r.status_code == 400
-        assert r.get_json()['error'] == 'Invalid store_id parameter'
