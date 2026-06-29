@@ -76,8 +76,13 @@ def live_monitoring():
             progress_url = build_progress_endpoint_url(
                 progress_host, progress_port or None
             )
-        except ValueError:
-            progress_url = None
+        except ValueError as e:
+            logger.error("Invalid progress endpoint port: %s", e)
+            return render_template(
+                "error.html",
+                error_title="Invalid Progress Endpoint",
+                error_message=str(e),
+            )
 
     if not target_mongo_uri and not progress_url:
         logger.error("No connection string or progress endpoint URL provided")

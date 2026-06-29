@@ -179,6 +179,24 @@ VERIFIER_CONNECTION_STRING = os.getenv('MI_VERIFIER_CONNECTION_STRING', '') or C
 
 PROGRESS_API_PATH = "/api/v1/progress"
 DEFAULT_PROGRESS_PORT = 27182
+PROGRESS_PORT_MIN = 1
+PROGRESS_PORT_MAX = 65535
+
+
+def _parse_progress_port(port_str: str) -> int:
+    """Parse and validate a TCP port for the progress endpoint."""
+    try:
+        port_num = int(port_str.strip())
+    except (ValueError, AttributeError) as e:
+        raise ValueError(
+            f"Invalid progress endpoint port: {port_str!r}. Must be an integer."
+        ) from e
+    if port_num < PROGRESS_PORT_MIN or port_num > PROGRESS_PORT_MAX:
+        raise ValueError(
+            f"Invalid progress endpoint port: {port_num}. "
+            f"Must be between {PROGRESS_PORT_MIN} and {PROGRESS_PORT_MAX}."
+        )
+    return port_num
 
 
 def build_progress_endpoint_url(host, port=None):
@@ -186,12 +204,13 @@ def build_progress_endpoint_url(host, port=None):
     Build canonical progress endpoint URL from host and port.
 
     Returns None when host is empty (progress endpoint not configured).
+    Raises ValueError when port is non-numeric or outside 1-65535.
     """
     host = (host or "").strip()
     if not host:
         return None
     port_str = str(port).strip() if port is not None else ""
-    port_num = DEFAULT_PROGRESS_PORT if not port_str else int(port_str)
+    port_num = DEFAULT_PROGRESS_PORT if not port_str else _parse_progress_port(port_str)
     return f"{host}:{port_num}{PROGRESS_API_PATH}"
 
 
@@ -287,6 +306,12 @@ def validate_config():
             f"Must be one of: {', '.join(sorted(VALID_LOG_LEVELS))}."
         )
 
+    if PROGRESS_ENDPOINT_URL and not validate_progress_endpoint_url(PROGRESS_ENDPOINT_URL):
+        raise ValueError(
+            f"Invalid MI_PROGRESS_ENDPOINT_URL: {_raw_progress_endpoint!r}. "
+            "Use host:port or host:port/api/v1/progress with port between 1 and 65535."
+        )
+
     return True
 
 def validate_progress_endpoint_url(url):
@@ -297,12 +322,19 @@ def validate_progress_endpoint_url(url):
         url (str): URL to validate in format host:port/api/v1/progress
         
     Returns:
-        bool: True if URL matches the expected format
+        bool: True if URL matches the expected format and port is 1-65535
     """
     if not url:
         return False
-    pattern = r'^[\w\.\-]+:\d+/api/v1/progress$'
-    return bool(re.match(pattern, url))
+    pattern = r'^[\w\.\-]+:(\d+)' + re.escape(PROGRESS_API_PATH) + r'$'
+    match = re.match(pattern, url)
+    if not match:
+        return False
+    try:
+        _parse_progress_port(match.group(1))
+    except ValueError:
+        return False
+    return True
 
 # Database Connection Management
 # Connection pool settings

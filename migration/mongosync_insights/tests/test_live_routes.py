@@ -34,6 +34,15 @@ class TestLiveMonitoring:
         assert r.status_code == 200
         assert b"Invalid Progress Endpoint" in r.data
 
+    def test_live_monitoring_out_of_range_port(self, app_client):
+        r = app_client.post(
+            "/live/live_monitoring",
+            data={"progressHost": "myhost", "progressPort": "70000"},
+        )
+        assert r.status_code == 200
+        assert b"Invalid Progress Endpoint" in r.data
+        assert b"65535" in r.data
+
 
 class TestProgressMonitor:
     @patch("blueprints.live.build_live_monitor_payload", return_value={"ok": True})

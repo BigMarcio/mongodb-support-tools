@@ -77,6 +77,16 @@ class TestValidateConfig:
         mock_path.return_value.parent.exists.return_value = True
         assert validate_config() is True
 
+    @patch.object(app_config, "PROGRESS_ENDPOINT_URL", "host:70000/api/v1/progress")
+    @patch.object(app_config, "_raw_progress_endpoint", "host:70000")
+    @patch.object(app_config, "LOG_LEVEL", "INFO")
+    @patch("lib.app_config.os.access", return_value=True)
+    @patch("lib.app_config.Path")
+    def test_rejects_invalid_progress_endpoint_url(self, mock_path, mock_access):
+        mock_path.return_value.parent.exists.return_value = True
+        with pytest.raises(ValueError, match="MI_PROGRESS_ENDPOINT_URL"):
+            validate_config()
+
 
 class TestProgressEndpointUrl:
     def test_build_empty_host_returns_none(self):
@@ -94,6 +104,18 @@ class TestProgressEndpointUrl:
             build_progress_endpoint_url("myhost", "9999")
             == "myhost:9999/api/v1/progress"
         )
+
+    def test_build_rejects_out_of_range_port(self):
+        with pytest.raises(ValueError, match="65535"):
+            build_progress_endpoint_url("myhost", "70000")
+
+    def test_build_rejects_zero_port(self):
+        with pytest.raises(ValueError, match="65535"):
+            build_progress_endpoint_url("myhost", "0")
+
+    def test_build_rejects_non_integer_port(self):
+        with pytest.raises(ValueError, match="integer"):
+            build_progress_endpoint_url("myhost", "abc")
 
     def test_normalize_short_form(self):
         assert (
@@ -237,6 +259,8 @@ class TestValidateProgressEndpointUrlRejects:
             "host/api/v1/progress",
             "host:abc/api/v1/progress",
             "http://host:27182/api/v1/progress",
+            "host:70000/api/v1/progress",
+            "host:0/api/v1/progress",
         ],
     )
     def test_rejects_invalid_urls(self, url):
