@@ -18,7 +18,6 @@
 <div class="form-container">
     <form id="metadataForm" method="post" action="{{ url_for('live.live_monitoring') }}" enctype="multipart/form-data" autocomplete="off">
         <h2>Migration Monitoring</h2>
-        <p>The <strong>Mongosync progress endpoint</strong> is the main source for live migration progress. The <strong>destination MongoDB connection string</strong> is optional and used as a fallback when the endpoint is unavailable, and to complement the dashboard with metadata from the destination cluster (index building, filters, verifier persistence).</p>
         {% if progress_endpoint_configured %}
         <p><b>Mongosync progress endpoint (primary): </b>{{ progress_endpoint_url }}</p>
         {% else %}
@@ -33,6 +32,7 @@
         {{ connection_string_form | safe }}
         <input type="submit" value="Monitor migration">
         <p>Click <strong>Monitor migration</strong> to start real-time monitoring. Provide the progress endpoint, the connection string, or both.</p>
+        <p><small><strong>Note:</strong> The <strong>Mongosync progress endpoint</strong> is the main source for live migration progress. The <strong>destination MongoDB connection string</strong> is optional and used as a fallback when the endpoint is unavailable, and to complement the dashboard with metadata from the destination cluster (index building, filters, verifier persistence).</small></p>
     </form>
 
     <form id="verifierForm" method="post" action="{{ url_for('live.verifier') }}" enctype="multipart/form-data" autocomplete="off">
