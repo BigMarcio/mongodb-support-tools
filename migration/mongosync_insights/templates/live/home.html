@@ -18,9 +18,9 @@
 <div class="form-container">
     <form id="metadataForm" method="post" action="{{ url_for('live.live_monitoring') }}" enctype="multipart/form-data" autocomplete="off">
         <h2>Migration Monitoring</h2>
-        {{ connection_string_form | safe }}
+        <p>The <strong>Mongosync progress endpoint</strong> is the main source for live migration progress. The <strong>destination MongoDB connection string</strong> is optional and used as a fallback when the endpoint is unavailable, and to complement the dashboard with metadata from the destination cluster (index building, filters, verifier persistence).</p>
         {% if progress_endpoint_configured %}
-        <p><b>Mongosync Progress Endpoint: </b>{{ progress_endpoint_url }}</p>
+        <p><b>Mongosync progress endpoint (primary): </b>{{ progress_endpoint_url }}</p>
         {% else %}
         <label for="progressHost">Mongosync progress endpoint:</label>
         <div class="progress-endpoint-row">
@@ -30,8 +30,9 @@
                 value="27182" placeholder="27182" class="progress-port-input" size="5" maxlength="5">
         </div><br>
         {% endif %}
+        {{ connection_string_form | safe }}
         <input type="submit" value="Monitor migration">
-        <p>Click the "Monitor migration" button to start monitoring the migration progress in real time.</p>
+        <p>Click <strong>Monitor migration</strong> to start real-time monitoring. Provide the progress endpoint, the connection string, or both.</p>
     </form>
 
     <form id="verifierForm" method="post" action="{{ url_for('live.verifier') }}" enctype="multipart/form-data" autocomplete="off">
@@ -63,7 +64,7 @@ function validateMetadataForm() {
     var hostConfigured = hostField === null || hostField.value.trim() !== '';
 
     if (!connConfigured && !hostConfigured) {
-        alert("Please provide at least one of the following: MongoDB Connection String or Mongosync Progress Endpoint (or both).");
+        alert("Please provide at least one of the following: Mongosync Progress Endpoint or MongoDB connection string (or both).");
         return false;
     }
 

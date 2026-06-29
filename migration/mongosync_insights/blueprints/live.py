@@ -32,12 +32,12 @@ logger = logging.getLogger(__name__)
 @bp.route("/")
 def live_home():
     if not CONNECTION_STRING:
-        connection_string_form = """<label for="connectionString">Atlas MongoDB Connection String:</label>  
+        connection_string_form = """<label for="connectionString">Destination MongoDB connection string (optional):</label>  
                                     <input type="text" id="connectionString" name="connectionString" size="47" autocomplete="off"
                                         placeholder="mongodb+srv://usr:pwd@cluster0.mongodb.net/"><br><br>"""
     else:
         sanitized_connection = sanitize_for_display(CONNECTION_STRING)
-        connection_string_form = f"<p><b>Connecting to Destination Cluster at: </b>{sanitized_connection}</p>"
+        connection_string_form = f"<p><b>Destination cluster (metadata fallback): </b>{sanitized_connection}</p>"
 
     progress_endpoint_configured = bool(PROGRESS_ENDPOINT_URL)
 
@@ -89,7 +89,7 @@ def live_monitoring():
         return render_template(
             "error.html",
             error_title="No Input Provided",
-            error_message="Please provide at least one of the following: MongoDB Connection String or Mongosync Progress Endpoint (host and port, or both).",
+            error_message="Please provide at least one of the following: Mongosync Progress Endpoint or MongoDB connection string (or both).",
         )
 
     if progress_url and not validate_progress_endpoint_url(progress_url):

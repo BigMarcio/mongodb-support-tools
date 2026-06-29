@@ -7,6 +7,12 @@ class TestLiveHome:
         r = app_client.get("/live/")
         assert r.status_code == 200
 
+    def test_live_home_endpoint_before_connection_string(self, app_client):
+        r = app_client.get("/live/")
+        html = r.data.decode()
+        assert html.index("progressHost") < html.index("connectionString")
+        assert "main source" in html.lower()
+
 
 class TestLiveMonitoring:
     @patch("blueprints.live.validate_connection", return_value=True)
