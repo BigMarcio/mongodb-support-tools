@@ -200,5 +200,11 @@
     "friendly_name": "Shard tags already exist in destination",
     "full_error_message": "destination namespace has preconfigured shard zone ranges (shard tags); mongosync cannot migrate into namespaces that already have shard tags configured. Please remove all shard tag ranges for any namespaces mongosync will migrate into on the destination cluster. Then restart the migration from scratch and add the desired zone ranges after the migration is COMMITTED.",
     "recommendation": "Please remove all shard tag ranges for any namespaces mongosync will migrate into on the destination cluster. Then restart the migration from scratch and add the desired zone ranges after the migration is COMMITTED."
+  },
+  {
+    "pattern": "Will retry initial hashing after CollectionUUIDMismatch error",
+    "friendly_name": "Collection UUID mismatch (initial Embedded Verifier hashing)",
+    "full_error_message": "Will retry initial hashing after CollectionUUIDMismatch error.",
+    "recommendation": "CollectionUUIDMismatch during initial hashing means the embedded verifier (ClusterAuditor / HashController on the destination) tried to scan a collection using a cached collection UUID, but that namespace now points at a different collection (same db.collection name, new UUID)—usually because the destination collection was dropped and recreated while hashing was in progress. Mongosync treats this as retryable (e.g. “Will retry initial hashing after CollectionUUIDMismatch error”); occasional hits during natural-order collection copy restarts are expected. If it repeats or becomes fatal: stop DDL and external writes on the destination during migration, ensure nothing else is dropping/recreating migrated collections, check for concurrent collection-copy restarts or timeouts on that namespace, then rerun verification or restart the migration for the affected collection if hashing does not recover."
   }
 ]
