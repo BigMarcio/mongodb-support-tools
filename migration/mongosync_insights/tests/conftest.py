@@ -70,6 +70,7 @@ def minimal_template_data():
         "natural_order_data": [],
         "errors_data": [],
         "partition_init_data": [],
+        "progress_data": [],
         "has_logs_data": False,
         "has_metrics_data": False,
         "log_viewer_lines": [],

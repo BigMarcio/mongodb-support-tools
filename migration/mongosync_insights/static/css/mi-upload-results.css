@@ -144,6 +144,38 @@
     color: var(--mongodb-green-dark2);
 }
 
+.chart-copy-badge {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--lm-card-border);
+    background: var(--lm-card-bg);
+    color: var(--lm-text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    pointer-events: auto;
+    box-shadow: var(--lm-card-shadow);
+    padding: 0;
+}
+
+.chart-copy-badge .chart-copy-icon {
+    display: block;
+}
+
+.chart-copy-badge:hover {
+    border-color: var(--mongodb-green-dark2);
+    color: var(--mongodb-green-dark2);
+}
+
+.chart-copy-badge.copied {
+    background: var(--mi-btn-success-bg);
+    border-color: var(--mi-btn-success-bg);
+    color: var(--mongodb-white);
+}
+
 .chart-info-tooltip {
     position: absolute;
     min-width: 180px;

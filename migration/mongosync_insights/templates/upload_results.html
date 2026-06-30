@@ -515,6 +515,78 @@ function buildInfoOverlay(plotElId) {
     });
 
     plotEl.appendChild(overlay);
+    return overlay;
+}
+
+function chartCopyIconHtml() {
+    return '<svg class="chart-copy-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+}
+
+function chartCopiedIconHtml() {
+    return '<svg class="chart-copy-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+}
+
+function showChartCopyFeedback(buttonElement) {
+    var originalHtml = buttonElement.innerHTML;
+    var originalTitle = buttonElement.title;
+    buttonElement.innerHTML = chartCopiedIconHtml();
+    buttonElement.classList.add('copied');
+    buttonElement.title = 'Copied!';
+
+    setTimeout(function() {
+        buttonElement.innerHTML = originalHtml;
+        buttonElement.classList.remove('copied');
+        buttonElement.title = originalTitle;
+    }, 2000);
+}
+
+function buildTableCopyOverlay(plotElId) {
+    var plotEl = document.getElementById(plotElId);
+    if (!plotEl || plotElId !== 'plot' || !plotEl._fullLayout || !plotEl._fullData) return;
+    var fullData = plotEl._fullData;
+    var size = plotEl._fullLayout._size;
+    if (!size) return;
+
+    var overlay = plotEl.querySelector('.chart-info-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'chart-info-overlay';
+        plotEl.appendChild(overlay);
+    }
+
+    overlay.querySelectorAll('.chart-copy-badge').forEach(function(btn) { btn.remove(); });
+
+    var tableTrace = fullData.find(function(trace) {
+        return trace.type === 'table'
+            && trace.meta
+            && trace.meta.markdownKey === 'progress';
+    });
+    if (!tableTrace) return;
+
+    var cellValues = tableTrace.cells && tableTrace.cells.values;
+    if (!cellValues || !cellValues[0] || cellValues[0].length === 0) return;
+
+    var domain = tableTrace.domain;
+    if (!domain || !Array.isArray(domain.x) || !Array.isArray(domain.y)) return;
+
+    var leftPx = size.l + domain.x[1] * size.w - 22;
+    var topPx = size.t + (1 - domain.y[1]) * size.h + 4;
+
+    var badge = document.createElement('button');
+    badge.type = 'button';
+    badge.className = 'chart-copy-badge';
+    badge.innerHTML = chartCopyIconHtml();
+    badge.title = 'Copy as Markdown';
+    badge.setAttribute('aria-label', 'Copy Mongosync Progress as Markdown');
+    badge.style.left = Math.max(0, leftPx) + 'px';
+    badge.style.top = Math.max(0, topPx) + 'px';
+
+    badge.addEventListener('click', function(e) {
+        e.stopPropagation();
+        copyProgressAsMarkdown(badge);
+    });
+
+    overlay.appendChild(badge);
 }
 
 function bindInfoOverlayEvents(plotElId) {
@@ -523,6 +595,7 @@ function bindInfoOverlayEvents(plotElId) {
     plotEl.dataset.infoOverlayBound = 'true';
     plotEl.on('plotly_relayout', function() {
         buildInfoOverlay(plotElId);
+        buildTableCopyOverlay(plotElId);
     });
     document.addEventListener('click', function(event) {
         var overlay = plotEl.querySelector('.chart-info-overlay');
@@ -540,6 +613,7 @@ if (plot && plot.data) {
     miRenderPlot('plot', plot, {
         onRendered: function(elId) {
             buildInfoOverlay(elId);
+            buildTableCopyOverlay(elId);
             bindInfoOverlayEvents(elId);
         }
     });
@@ -566,6 +640,7 @@ var startOptionsData = {{ start_options_data | tojson }};
 var naturalOrderData = {{ natural_order_data | tojson }};
 var errorsData = {{ errors_data | tojson }};
 var partitionInitData = {{ partition_init_data | tojson }};
+var progressData = {{ progress_data | default([]) | tojson }};
 
 function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -642,6 +717,11 @@ function fallbackCopyToClipboard(text, buttonElement) {
     
     try {
         document.execCommand('copy');
+        if (buttonElement.classList.contains('chart-copy-badge')) {
+            showChartCopyFeedback(buttonElement);
+            return;
+        }
+
         var originalText = buttonElement.textContent;
         buttonElement.textContent = 'Copied!';
         buttonElement.classList.add('copied');
@@ -652,10 +732,17 @@ function fallbackCopyToClipboard(text, buttonElement) {
         }, 2000);
     } catch (err) {
         console.error('Fallback copy failed: ', err);
-        buttonElement.textContent = 'Copy failed';
-        setTimeout(function() {
-            buttonElement.textContent = 'Copy as Markdown';
-        }, 2000);
+        if (buttonElement.classList.contains('chart-copy-badge')) {
+            buttonElement.title = 'Copy failed';
+            setTimeout(function() {
+                buttonElement.title = 'Copy as Markdown';
+            }, 2000);
+        } else {
+            buttonElement.textContent = 'Copy failed';
+            setTimeout(function() {
+                buttonElement.textContent = 'Copy as Markdown';
+            }, 2000);
+        }
     }
     
     document.body.removeChild(textArea);
@@ -746,6 +833,46 @@ function filterErrorsTable(searchText) {
     if (noResultsMsg) {
         noResultsMsg.style.display = (visibleCount === 0 && filter !== '') ? 'block' : 'none';
     }
+}
+
+function copyProgressAsMarkdown(buttonElement) {
+    if (!progressData || progressData.length === 0) {
+        return;
+    }
+
+    var markdown = '## Mongosync Progress\n\n';
+    markdown += '| Date Time | Event |\n';
+    markdown += '|-----------|-------|\n';
+
+    progressData.forEach(function(item) {
+        var time = String(item.time || '')
+            .replace(/\|/g, '\\|')
+            .replace(/\n/g, ' ');
+        var event = String(item.event || '')
+            .replace(/\|/g, '\\|')
+            .replace(/\n/g, ' ');
+
+        markdown += '| ' + time + ' | ' + event + ' |\n';
+    });
+
+    navigator.clipboard.writeText(markdown).then(function() {
+        if (buttonElement.classList.contains('chart-copy-badge')) {
+            showChartCopyFeedback(buttonElement);
+            return;
+        }
+
+        var originalText = buttonElement.textContent;
+        buttonElement.textContent = 'Copied!';
+        buttonElement.classList.add('copied');
+
+        setTimeout(function() {
+            buttonElement.textContent = originalText;
+            buttonElement.classList.remove('copied');
+        }, 2000);
+    }).catch(function(err) {
+        console.error('Failed to copy: ', err);
+        fallbackCopyToClipboard(markdown, buttonElement);
+    });
 }
 
 function copyErrorsAsMarkdown(buttonElement) {
