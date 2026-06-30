@@ -51,6 +51,59 @@ class TestLogStoreSearch:
         assert len(page["results"]) == 2
         assert page["total"] == 5
 
+    def test_find_by_timestamp_gte(self, store):
+        store.insert_many([
+            _doc(time="2026-01-01T10:00:00.000Z", message="early"),
+            _doc(time="2026-01-01T10:30:00.000Z", message="middle"),
+            _doc(time="2026-01-01T11:00:00.000Z", message="late"),
+        ])
+        store.build_fts_index()
+        result = store.find({"timestamp_gte": "2026-01-01T10:30:00.000Z"})
+        assert result["total"] == 2
+        messages = {row["message"] for row in result["results"]}
+        assert messages == {"middle", "late"}
+
+    def test_find_by_timestamp_lte(self, store):
+        store.insert_many([
+            _doc(time="2026-01-01T10:00:00.000Z", message="early"),
+            _doc(time="2026-01-01T10:30:00.000Z", message="middle"),
+            _doc(time="2026-01-01T11:00:00.000Z", message="late"),
+        ])
+        store.build_fts_index()
+        result = store.find({"timestamp_lte": "2026-01-01T10:30:00.999999Z"})
+        assert result["total"] == 2
+        messages = {row["message"] for row in result["results"]}
+        assert messages == {"early", "middle"}
+
+    def test_find_by_timestamp_range(self, store):
+        store.insert_many([
+            _doc(time="2026-01-01T10:00:00.000Z", message="early"),
+            _doc(time="2026-01-01T10:30:00.000Z", message="middle"),
+            _doc(time="2026-01-01T11:00:00.000Z", message="late"),
+        ])
+        store.build_fts_index()
+        result = store.find({
+            "timestamp_gte": "2026-01-01T10:15:00.000Z",
+            "timestamp_lte": "2026-01-01T10:45:00.999999Z",
+        })
+        assert result["total"] == 1
+        assert result["results"][0]["message"] == "middle"
+
+    def test_find_by_timestamp_range_and_text(self, store):
+        store.insert_many([
+            _doc(time="2026-01-01T10:00:00.000Z", message="Replication early"),
+            _doc(time="2026-01-01T10:30:00.000Z", message="Replication middle"),
+            _doc(time="2026-01-01T11:00:00.000Z", message="Replication late"),
+        ])
+        store.build_fts_index()
+        result = store.find({
+            "$text": "Replication",
+            "timestamp_gte": "2026-01-01T10:20:00.000Z",
+            "timestamp_lte": "2026-01-01T10:45:00.999999Z",
+        })
+        assert result["total"] == 1
+        assert result["results"][0]["message"] == "Replication middle"
+
 
 class TestLogStoreUtilities:
     def test_fetch_latest_raw_lines(self, store):

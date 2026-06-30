@@ -112,6 +112,7 @@ Indexed log lines are stored in a SQLite **log store** for fast search without r
 
 - **Tail** — last N lines (default **2000**, `MI_LOG_VIEWER_MAX_LINES`)
 - **Search** — full-text search with level filter and pagination
+- **Date/time range** — **From** / **To** datetime filters (searched as entered, matching log `time` values); can be used alone or combined with text search across the full indexed log store
 - **Focus** — quick filters for errors, warnings, or custom text
 - **Download** — export the tail buffer as a `.log` file
 

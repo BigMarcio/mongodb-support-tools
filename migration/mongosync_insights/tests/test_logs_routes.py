@@ -70,6 +70,77 @@ class TestSearchLogs:
         body = r.get_json()
         assert body["total"] >= 1
 
+    def test_search_by_timestamp_range(self, app_client, tmp_path):
+        store_id = str(uuid.uuid4())
+        db_path = snapshot_store.logstore_path(store_id)
+        store = LogStore(db_path)
+        store.insert_many([
+            {"time": "2026-01-01T10:00:00.000Z", "level": "info", "message": "early"},
+            {"time": "2026-01-01T10:30:00.000Z", "level": "info", "message": "middle"},
+            {"time": "2026-01-01T11:00:00.000Z", "level": "info", "message": "late"},
+        ])
+        store.build_fts_index()
+        store.close()
+        log_store_registry.register(store_id, db_path)
+
+        r = app_client.get(
+            "/logs/search_logs"
+            f"?store_id={store_id}"
+            "&start=2026-01-01T10:15:00.000Z"
+            "&end=2026-01-01T10:45:00.000Z"
+        )
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["total"] == 1
+        assert body["results"][0]["message"] == "middle"
+
+    def test_search_date_only_without_text(self, app_client, tmp_path):
+        store_id = str(uuid.uuid4())
+        db_path = snapshot_store.logstore_path(store_id)
+        store = LogStore(db_path)
+        store.insert_many([
+            {"time": "2026-01-01T10:00:00.000Z", "level": "info", "message": "early"},
+            {"time": "2026-01-01T11:00:00.000Z", "level": "info", "message": "late"},
+        ])
+        store.build_fts_index()
+        store.close()
+        log_store_registry.register(store_id, db_path)
+
+        r = app_client.get(
+            f"/logs/search_logs?store_id={store_id}&start=2026-01-01T10:30:00.000Z"
+        )
+        assert r.status_code == 200
+        assert r.get_json()["total"] == 1
+
+    def test_search_invalid_timestamp(self, app_client, tmp_path):
+        store_id = str(uuid.uuid4())
+        db_path = snapshot_store.logstore_path(store_id)
+        store = LogStore(db_path)
+        store.insert_many([{"time": "2026-01-01T00:00:00Z", "level": "info", "message": "x"}])
+        store.build_fts_index()
+        store.close()
+        log_store_registry.register(store_id, db_path)
+
+        r = app_client.get(f"/logs/search_logs?store_id={store_id}&start=not-a-date")
+        assert r.status_code == 400
+
+    def test_search_start_after_end(self, app_client, tmp_path):
+        store_id = str(uuid.uuid4())
+        db_path = snapshot_store.logstore_path(store_id)
+        store = LogStore(db_path)
+        store.insert_many([{"time": "2026-01-01T00:00:00Z", "level": "info", "message": "x"}])
+        store.build_fts_index()
+        store.close()
+        log_store_registry.register(store_id, db_path)
+
+        r = app_client.get(
+            "/logs/search_logs"
+            f"?store_id={store_id}"
+            "&start=2026-01-02T00:00:00.000Z"
+            "&end=2026-01-01T00:00:00.000Z"
+        )
+        assert r.status_code == 400
+
     def test_search_invalid_store_id(self, app_client):
         r = app_client.get("/logs/search_logs?store_id=../x")
         assert r.status_code == 400
