@@ -6,6 +6,8 @@ This document explains the configuration management system for Mongosync Insight
 
 **Python 3.11+** is required to run Mongosync Insights. See [README.md](README.md) for complete installation instructions.
 
+For **mongosync** version compatibility, see [README.md — mongosync compatibility](README.md#mongosync-compatibility).
+
 ## Configuration Overview
 
 Mongosync Insights is configured entirely through **environment variables**. No configuration files are used.

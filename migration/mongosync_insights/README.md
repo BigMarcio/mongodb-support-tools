@@ -13,9 +13,18 @@ See **[MIGRATION_MONITORING.md](MIGRATION_MONITORING.md)** for how Migration Mon
 
 See **[LOG_ANALYZER.md](LOG_ANALYZER.md)** for uploading logs, analysis tabs, snapshots, and the Log Viewer.
 
-## Quick start
+## Prerequisites
 
-**Python 3.11+** required.
+- **Python 3.11+** (required)
+- **mongosync** — see [mongosync compatibility](#mongosync-compatibility) below
+
+## mongosync compatibility
+
+Mongosync Insights was developed and tested with **mongosync 1.21**.
+
+Earlier and later mongosync versions may work where log formats and APIs (for example `/api/v1/progress` and internal metadata databases) are unchanged. Behavior with untested versions is not guaranteed—validate charts and monitoring panels against your mongosync version before relying on them in production.
+
+## Quick start
 
 Run from source:
 
