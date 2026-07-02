@@ -92,7 +92,9 @@ When metadata is used for embedded verifier progress, the card notes that progre
 
 The second form on `/live/` monitors the standalone migration-verifier tool (not mongosync embedded verifier). Configure via `MI_VERIFIER_CONNECTION_STRING` or the UI; it falls back to `MI_CONNECTION_STRING` when unset. Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_migration_verifier`).
 
-The dashboard uses the same Atlas-style card UI as Migration Monitoring: status badge, generation overview, per-generation progress, namespace counts, and collection metadata mismatches (final generation only). The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20).
+The dashboard uses the same Atlas-style card UI as Migration Monitoring: status badge, generation overview, per-generation progress (task and document level), namespace document progress for the current generation, and collection metadata mismatches (current generation only). The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20).
+
+**Progress semantics:** Task progress counts `verification_tasks` by status (excluding the coordinator `primary` task). Document progress uses the same aggregation as migration-verifier’s `/progress` API (`docsCompared` / `totalDocs` from `found_source_documents_count` and `documents_count`). The **current generation** is read from the `generation` collection (not the highest generation number in `verification_tasks`, which can include pre-inserted recheck tasks). The pass/fail badge reflects the current generation when all its tasks are finished; migration-verifier does not persist writes-off state in the metadata database.
 
 ![Migration Verifier dashboard](images/migration_verifier_dashboard.png)
 

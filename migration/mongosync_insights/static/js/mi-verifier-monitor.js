@@ -99,10 +99,14 @@
         }
         textBlock.appendChild(title);
 
+        var genLabel = display && display.currentGeneration != null
+            ? 'generation ' + display.currentGeneration
+            : 'the current generation';
         var subtitle = el(
             'p',
             'lm-page-subtitle',
-            'Progress of the standalone migration-verifier tool. The final generation determines pass/fail.'
+            'Progress of the standalone migration-verifier tool. Pass/fail reflects ' +
+                genLabel + ' when all its tasks are finished.'
         );
         textBlock.appendChild(subtitle);
 
@@ -120,7 +124,7 @@
         var table = el('table', 'lm-phase-times-table');
         var thead = el('thead');
         var headerRow = el('tr');
-        ['Generation', 'Name', 'Total', 'Completed', 'Failed', 'Start Time'].forEach(function (h) {
+        ['Generation', 'Name', 'Total', 'Completed', 'Failed', 'Pending', 'Start Time'].forEach(function (h) {
             headerRow.appendChild(el('th', null, h));
         });
         thead.appendChild(headerRow);
@@ -134,6 +138,7 @@
             tr.appendChild(el('td', null, formatCount(g.total)));
             tr.appendChild(el('td', null, formatCount(g.completed)));
             tr.appendChild(el('td', null, formatCount(g.failed)));
+            tr.appendChild(el('td', null, formatCount(g.pending)));
             tr.appendChild(el('td', null, g.startTime || '—'));
             tbody.appendChild(tr);
         });
@@ -171,7 +176,7 @@
 
     function renderGenerationDetail(genDetail) {
         var genKey = String(genDetail.num);
-        var defaultExpanded = genDetail.isFinal || generationExpanded[genKey] === true;
+        var defaultExpanded = genDetail.isCurrent || genDetail.isFinal || generationExpanded[genKey] === true;
         if (generationExpanded[genKey] === undefined) {
             generationExpanded[genKey] = defaultExpanded;
         }
@@ -190,13 +195,24 @@
             'lm-natural-order-details' + (generationExpanded[genKey] ? ' is-open' : '')
         );
 
-        var phaseRow = el('div', 'lm-phase-row');
-        var phaseText = el('span');
-        phaseText.appendChild(document.createTextNode('Progress: '));
-        phaseText.appendChild(el('b', null, (genDetail.percentComplete != null ? genDetail.percentComplete.toFixed(1) : '0') + '%'));
-        phaseRow.appendChild(phaseText);
-        details.appendChild(phaseRow);
-        details.appendChild(progressBar(genDetail.percentComplete, false));
+        function appendProgressRow(label, percent) {
+            var row = el('div', 'lm-phase-row');
+            var text = el('span');
+            text.appendChild(document.createTextNode(label + ': '));
+            var pctText = percent != null ? percent.toFixed(1) + '%' : '—';
+            text.appendChild(el('b', null, pctText));
+            row.appendChild(text);
+            details.appendChild(row);
+            details.appendChild(progressBar(percent, percent == null));
+        }
+
+        appendProgressRow('Tasks', genDetail.percentComplete);
+
+        var docPct = genDetail.docPercentComplete;
+        if (genDetail.totalDocs === 0) {
+            docPct = null;
+        }
+        appendProgressRow('Documents', docPct);
 
         var metrics = el('div', 'lm-metrics');
         [
@@ -238,9 +254,14 @@
         );
     }
 
-    function renderNamespaces(namespaces) {
+    function renderNamespaces(namespaces, display) {
+        var currentGen = display && display.currentGeneration != null
+            ? display.currentGeneration
+            : '?';
+        var desc = 'Current generation (gen ' + currentGen + ') document progress by namespace.';
+
         if (!namespaces || namespaces.length === 0) {
-            return card('Namespace Progress', 'All-time task counts grouped by namespace.', [
+            return card('Namespace Progress', desc, [
                 el('p', 'lm-muted', 'No namespace data available.'),
             ]);
         }
@@ -248,7 +269,7 @@
         var table = el('table', 'lm-phase-times-table');
         var thead = el('thead');
         var headerRow = el('tr');
-        ['Namespace', 'Completed', 'Failed', 'Pending', 'Total'].forEach(function (h) {
+        ['Namespace', 'Docs Compared', 'Total Docs', 'Partitions Done', 'Partitions Pending'].forEach(function (h) {
             headerRow.appendChild(el('th', null, h));
         });
         thead.appendChild(headerRow);
@@ -258,30 +279,26 @@
         namespaces.forEach(function (ns) {
             var tr = el('tr');
             tr.appendChild(el('td', null, ns.name || '—'));
-            tr.appendChild(el('td', null, formatCount(ns.completed)));
-            tr.appendChild(el('td', null, formatCount(ns.failed)));
-            tr.appendChild(el('td', null, formatCount(ns.pending)));
-            tr.appendChild(el('td', null, formatCount(ns.total)));
+            tr.appendChild(el('td', null, formatCount(ns.docsCompared)));
+            tr.appendChild(el('td', null, formatCount(ns.totalDocs)));
+            tr.appendChild(el('td', null, formatCount(ns.partitionsDone)));
+            tr.appendChild(el('td', null, formatCount(ns.partitionsPending)));
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
 
-        return card(
-            'Namespace Progress',
-            'All-time task counts grouped by namespace (top 25 by failures).',
-            [table]
-        );
+        return card('Namespace Progress', desc, [table]);
     }
 
     function renderCollectionMismatches(display) {
         var mismatches = display.collectionMismatches || [];
-        var finalName = display.finalGenerationName || 'final generation';
+        var currentName = display.finalGenerationName || 'current generation';
 
         if (mismatches.length === 0) {
             return card(
                 'Collection Metadata',
-                'Collection/index metadata mismatches from the final generation only.',
-                [banner('info', 'No collection metadata mismatches in ' + finalName + '.')]
+                'Collection/index metadata mismatches from the current generation only.',
+                [banner('info', 'No collection metadata mismatches in ' + currentName + '.')]
             );
         }
 
@@ -306,7 +323,7 @@
 
         return card(
             'Collection Metadata',
-            'Collection/index metadata mismatches from the final generation only.',
+            'Collection/index metadata mismatches from the current generation only.',
             [table]
         );
     }
@@ -357,7 +374,7 @@
         var genDetailsCard = renderGenerationDetails(display.generationDetails);
         if (genDetailsCard) stack.appendChild(genDetailsCard);
 
-        stack.appendChild(renderNamespaces(display.namespaces));
+        stack.appendChild(renderNamespaces(display.namespaces, display));
         stack.appendChild(renderCollectionMismatches(display));
 
         var connCard = renderConnectivity(payload.connectivity);
