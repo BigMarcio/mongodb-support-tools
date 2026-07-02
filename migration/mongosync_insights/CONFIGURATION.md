@@ -8,6 +8,8 @@ This document explains the configuration management system for Mongosync Insight
 
 For **mongosync** version compatibility, see [README.md — mongosync compatibility](README.md#mongosync-compatibility).
 
+For **migration-verifier** version compatibility, see [README.md — Migration Verifier compatibility](README.md#migration-verifier-compatibility).
+
 ## Configuration Overview
 
 Mongosync Insights is configured entirely through **environment variables**. No configuration files are used.

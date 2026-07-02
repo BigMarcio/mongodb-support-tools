@@ -90,7 +90,7 @@ When metadata is used for embedded verifier progress, the card notes that progre
 
 ## Migration Verifier monitoring
 
-The second form on `/live/` monitors the standalone migration-verifier tool (not mongosync embedded verifier). Configure via `MI_VERIFIER_CONNECTION_STRING` or the UI; it falls back to `MI_CONNECTION_STRING` when unset. Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_migration_verifier`).
+The second form on `/live/` monitors the standalone migration-verifier tool (not mongosync embedded verifier). Configure via `MI_VERIFIER_CONNECTION_STRING` or the UI; it falls back to `MI_CONNECTION_STRING` when unset. Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_migration_verifier`). For **migration-verifier** version compatibility, see [README.md — Migration Verifier compatibility](README.md#migration-verifier-compatibility) (tested with **0.2.2**).
 
 The dashboard uses the same Atlas-style card UI as Migration Monitoring: status badge, **verification completeness** summary (documents, namespaces, partitions, and tasks for the current generation), generation overview, namespace document progress for the current generation, and collection metadata mismatches (current generation only). The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20).
 

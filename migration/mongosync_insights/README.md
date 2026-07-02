@@ -17,12 +17,19 @@ See **[LOG_ANALYZER.md](LOG_ANALYZER.md)** for uploading logs, analysis tabs, sn
 
 - **Python 3.11+** (required)
 - **mongosync** — see [mongosync compatibility](#mongosync-compatibility) below
+- **migration-verifier** (optional, for Migration Verifier monitoring) — see [Migration Verifier compatibility](#migration-verifier-compatibility) below
 
 ## mongosync compatibility
 
 Mongosync Insights was developed and tested with **mongosync 1.21**.
 
 Earlier and later mongosync versions may work where log formats and APIs (for example `/api/v1/progress` and internal metadata databases) are unchanged. Behavior with untested versions is not guaranteed—validate charts and monitoring panels against your mongosync version before relying on them in production.
+
+## Migration Verifier compatibility
+
+Migration Verifier monitoring in Mongosync Insights was developed and tested with **migration-verifier 0.2.2**.
+
+Earlier and later migration-verifier versions may work where metadata database schemas and collection layouts are unchanged. Behavior with untested versions is not guaranteed—validate the verifier dashboard against your migration-verifier version before relying on it in production.
 
 ## Quick start
 
