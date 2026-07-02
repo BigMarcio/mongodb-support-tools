@@ -22,6 +22,7 @@ from lib.app_config import (
     MI_MONGOSYNC_DB_NAME,
     MI_MONGOSYNC_DB_NAME_NEW,
     MI_MIGRATION_VERIFIER_DB_NAME,
+    VERIFIER_GENERATION_LIMIT,
 )
 
 
@@ -247,6 +248,23 @@ class TestMigrationVerifierDbName:
         importlib.reload(config_module)
         try:
             assert config_module.MI_MIGRATION_VERIFIER_DB_NAME == "custom_verifier_db"
+        finally:
+            importlib.reload(app_config)
+
+
+class TestVerifierGenerationLimit:
+    def test_default_generation_limit(self):
+        assert VERIFIER_GENERATION_LIMIT == 5
+
+    @patch.dict("os.environ", {"MI_VERIFIER_GENERATION_LIMIT": "10"}, clear=False)
+    def test_env_override(self):
+        import importlib
+
+        import lib.app_config as config_module
+
+        importlib.reload(config_module)
+        try:
+            assert config_module.VERIFIER_GENERATION_LIMIT == 10
         finally:
             importlib.reload(app_config)
 

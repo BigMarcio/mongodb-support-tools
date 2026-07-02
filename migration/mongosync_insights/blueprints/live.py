@@ -7,7 +7,7 @@ from lib.live_monitoring import (
     build_live_monitor_payload,
     progress_monitor_no_config_response,
 )
-from lib.migration_verifier import gather_verifier_metrics, plot_verifier_metrics
+from lib.migration_verifier import build_verifier_monitor_payload, plot_verifier_metrics
 from lib.session_support import SESSION_COOKIE_NAME, store_session_data
 from lib.app_config import (
     CONNECTION_STRING,
@@ -258,4 +258,4 @@ def get_verifier_data():
             }
         ), 400
 
-    return jsonify(gather_verifier_metrics(connection_string))
+    return jsonify(build_verifier_monitor_payload(connection_string))

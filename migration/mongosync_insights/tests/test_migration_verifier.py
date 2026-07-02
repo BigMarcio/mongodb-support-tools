@@ -5,7 +5,7 @@ import pytest
 from pymongo.errors import PyMongoError
 
 from lib.migration_verifier import (
-    gather_verifier_metrics,
+    build_verifier_monitor_payload,
     get_failed_tasks,
     get_generation_history,
     get_generation_name,
@@ -77,30 +77,50 @@ class TestGetGenerationHistory:
         assert history[0]["_id"] == 2
 
 
-class TestGatherVerifierMetrics:
+class TestBuildVerifierMonitorPayload:
     @patch("lib.app_config.get_database")
     def test_connection_error_returns_error_dict(self, mock_get_db):
         mock_get_db.side_effect = PyMongoError("fail")
-        result = gather_verifier_metrics("mongodb://localhost:27017")
+        result = build_verifier_monitor_payload("mongodb://localhost:27017")
         assert "error" in result
+        assert result["display"] is None
+        assert result["connectivity"] is not None
 
     @patch("lib.app_config.get_database")
-    def test_success_returns_metrics_payload(self, mock_get_db):
+    def test_success_returns_display_payload(self, mock_get_db):
         db = MagicMock()
         db.verification_tasks.find_one.return_value = {"generation": 0}
         db.verification_tasks.aggregate.return_value = []
+        find_cursor = MagicMock()
+        find_cursor.limit.return_value = []
+        db.verification_tasks.find.return_value = find_cursor
         db.mismatches.find.return_value = []
         mock_get_db.return_value = db
-        result = gather_verifier_metrics("mongodb://localhost:27017")
-        assert "error" not in result
-        assert "generation" in result or "summary" in result or isinstance(result, dict)
+        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        assert result.get("error") is None
+        assert result["display"] is not None
+        assert "stateBadge" in result["display"]
+        assert "generations" in result["display"]
+        assert "connectivity" in result
+
+    @patch("lib.migration_verifier.get_generation_history", return_value=[])
+    @patch("lib.app_config.get_database")
+    @patch("lib.app_config.VERIFIER_GENERATION_LIMIT", 10)
+    def test_uses_configured_generation_limit(self, mock_get_db, mock_gen_history):
+        db = MagicMock()
+        find_cursor = MagicMock()
+        find_cursor.limit.return_value = []
+        db.verification_tasks.find.return_value = find_cursor
+        db.verification_tasks.aggregate.return_value = []
+        mock_get_db.return_value = db
+        build_verifier_monitor_payload("mongodb://localhost:27017")
+        mock_gen_history.assert_called_once()
+        assert mock_gen_history.call_args.kwargs["limit"] == 10
 
 
 class TestPlotVerifierMetrics:
     @patch("lib.migration_verifier.render_template")
-    @patch("lib.migration_verifier.gather_verifier_metrics")
-    def test_plot_renders_template(self, mock_gather, mock_render):
-        mock_gather.return_value = {"generation": 0, "summary": {}}
+    def test_plot_renders_template(self, mock_render):
         mock_render.return_value = "html"
         result = plot_verifier_metrics()
         assert result == "html"

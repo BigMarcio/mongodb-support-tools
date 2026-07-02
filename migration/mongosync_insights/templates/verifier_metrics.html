@@ -4,95 +4,51 @@
 
 {% block header_title %}Migration Verifier Monitoring{% endblock %}
 
-{% block styles %}
-    .error-container {
-        background-color: var(--mi-error-banner-bg);
-        border: 1px solid var(--mongodb-red-base);
-        border-radius: 8px;
-        padding: 20px;
-        margin: 20px auto;
-        max-width: 600px;
-        text-align: center;
-        color: var(--mi-text-primary);
-    }
-
-    .error-container h3 {
-        color: var(--mongodb-red-base);
-        margin-top: 0;
-    }
+{% block head_links %}
+    <link rel="preload" href="https://assets.mongodb-cdn.com/mms/static/font/EuclidCircularA-Regular-WebXL.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="https://assets.mongodb-cdn.com/mms/static/font/EuclidCircularA-Semibold-WebXL.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/static/css/mi-live-monitor.css">
 {% endblock %}
 
 {% block content %}
-<div class="tabs-container">
-    <div class="tab-buttons">
-        <button class="tab-btn active" id="tab-verifier">Migration Verifier Dashboard</button>
-    </div>
-    <div id="verifier-tab" class="tab-content active">
-        <div class="plot-container">
-            <div id="loading">Loading verifier metrics...</div>
-            <div id="error" style="display:none;"></div>
-            <div id="plot" style="display:none;"></div>
-        </div>
-    </div>
-</div>
+<div id="verifier-monitor-loading" class="lm-loading">Loading verifier metrics...</div>
+<div id="verifier-monitor-root" class="lm-main" style="display:none;"></div>
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/mi-verifier-monitor.js"></script>
 <script>
 const MI_LIVE = { verifier: {{ url_for('live.get_verifier_data')|tojson }} };
-const MI_HUB = {{ url_for('hub')|tojson }};
-function showVerifierError(title, message) {
-    const err = document.getElementById("error");
-    err.replaceChildren();
-    const container = document.createElement("div");
-    container.className = "error-container";
-    const h3 = document.createElement("h3");
-    h3.textContent = title;
-    container.appendChild(h3);
-    const pMsg = document.createElement("p");
-    pMsg.textContent = message;
-    container.appendChild(pMsg);
-    const pLink = document.createElement("p");
-    const a = document.createElement("a");
-    a.href = MI_HUB;
-    a.textContent = "Go back to home";
-    pLink.appendChild(a);
-    container.appendChild(pLink);
-    err.appendChild(container);
-}
 
-async function fetchVerifierData() {
+async function fetchVerifierMonitorData() {
+    const loading = document.getElementById('verifier-monitor-loading');
+    const root = document.getElementById('verifier-monitor-root');
     try {
         const response = await fetch(MI_LIVE.verifier, { method: 'POST', credentials: 'same-origin' });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Request failed');
+        const payload = await response.json();
+        if (!response.ok && !payload.error) {
+            throw new Error(payload.error || 'Request failed');
         }
-        const plotData = await response.json();
-        
-        if (plotData.error) {
-            document.getElementById("loading").style.display = "none";
-            document.getElementById("error").style.display = "block";
-            showVerifierError("Connection Error", String(plotData.error));
-            return;
-        }
-        
-        document.getElementById("loading").style.display = "none";
-        document.getElementById("error").style.display = "none";
-        document.getElementById("plot").style.display = "block";
-        miRenderPlot('plot', plotData, { react: true });
+        loading.style.display = 'none';
+        root.style.display = 'block';
+        miRenderVerifierMonitor(root, payload);
     } catch (err) {
-        console.error("Error fetching verifier data:", err);
-        document.getElementById("loading").style.display = "none";
-        document.getElementById("error").style.display = "block";
-        showVerifierError("Error Loading Data", "Failed to fetch verifier metrics. Please check your connection.");
+        console.error('Error fetching verifier data:', err);
+        loading.style.display = 'none';
+        root.style.display = 'block';
+        miRenderVerifierMonitor(root, {
+            connectivity: null,
+            display: null,
+            error: 'Error loading data: ' + err.message
+        });
     }
 }
 
-fetchVerifierData(); // initial load
+fetchVerifierMonitorData();
+
 var _refreshMs = parseInt(sessionStorage.getItem('mi_refresh_time'), 10);
 _refreshMs = (_refreshMs > 0 ? _refreshMs * 1000 : {{ refresh_time_ms }});
-var _refreshIntervalId = setInterval(fetchVerifierData, _refreshMs);
+var _refreshIntervalId = setInterval(fetchVerifierMonitorData, _refreshMs);
 
 function _updateFooterRefresh(ms) {
     var label = document.getElementById('mi-verifier-refresh-label');
@@ -105,7 +61,7 @@ window.addEventListener('mi-refresh-changed', function(e) {
     if (newMs > 0 && newMs !== _refreshMs) {
         clearInterval(_refreshIntervalId);
         _refreshMs = newMs;
-        _refreshIntervalId = setInterval(fetchVerifierData, _refreshMs);
+        _refreshIntervalId = setInterval(fetchVerifierMonitorData, _refreshMs);
         _updateFooterRefresh(_refreshMs);
     }
 });

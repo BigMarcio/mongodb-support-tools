@@ -84,12 +84,12 @@ class TestVerifierRoutes:
         assert r.status_code == 200
         assert b"No Connection String" in r.data
 
-    @patch("blueprints.live.gather_verifier_metrics", return_value={"summary": {}})
+    @patch("blueprints.live.build_verifier_monitor_payload", return_value={"display": {"generations": []}})
     @patch("blueprints.live.session_store.get_session", return_value={"verifier_connection_string": "mongodb://localhost:27017"})
     def test_get_verifier_data(self, _session, _gather, app_client):
         r = app_client.post("/live/get_verifier_data")
         assert r.status_code == 200
-        assert "summary" in r.get_json()
+        assert "display" in r.get_json()
 
     @patch("blueprints.live.session_store.get_session", return_value={})
     def test_get_verifier_data_missing_connection(self, _session, app_client):

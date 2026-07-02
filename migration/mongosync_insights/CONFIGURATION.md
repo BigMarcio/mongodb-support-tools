@@ -42,6 +42,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_VERIFIER_CONNECTION_STRING` | _(falls back to `MI_CONNECTION_STRING`)_ | MongoDB connection string for the migration verifier database. When omitted, the value of `MI_CONNECTION_STRING` is used. Set this when the verifier database lives on a different cluster. |
 | `MI_MONGOSYNC_DB_NAME` | _(auto-detected)_ | Mongosync internal metadata database name. When not set, the app auto-detects between `__mdb_internal_mongosync` (new) and `mongosync_reserved_for_internal_use` (legacy). Set this variable to override auto-detection. |
 | `MI_MIGRATION_VERIFIER_DB_NAME` | `__mdb_internal_migration_verifier` | Standalone migration-verifier metadata database name. |
+| `MI_VERIFIER_GENERATION_LIMIT` | `5` | Maximum generations shown on the Migration Verifier dashboard (1–20). |
 | `MI_EMBEDDED_VERIFIER_SRC_DB_NAME` | `__mdb_internal_mongosync_verifier_src` | Embedded verifier source persistence database on the destination cluster. |
 | `MI_EMBEDDED_VERIFIER_DST_DB_NAME` | `__mdb_internal_mongosync_verifier_dst` | Embedded verifier destination persistence database on the destination cluster. |
 | `MI_POOL_SIZE` | `10` | MongoDB connection pool size |
@@ -236,6 +237,9 @@ export MI_VERIFIER_CONNECTION_STRING="mongodb+srv://user:pass@verifier-cluster.m
 
 # Optional: override migration-verifier metadata database name (default: __mdb_internal_migration_verifier)
 export MI_MIGRATION_VERIFIER_DB_NAME="__mdb_internal_migration_verifier"
+
+# Optional: number of generations shown on the verifier dashboard (default: 5, range: 1–20)
+export MI_VERIFIER_GENERATION_LIMIT=10
 
 # Or reuse the same connection string as migration monitoring
 export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"

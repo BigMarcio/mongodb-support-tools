@@ -244,6 +244,9 @@ MI_EMBEDDED_VERIFIER_SRC_DB_NAME = os.getenv(
 MI_EMBEDDED_VERIFIER_DST_DB_NAME = os.getenv(
     "MI_EMBEDDED_VERIFIER_DST_DB_NAME", "__mdb_internal_mongosync_verifier_dst"
 )
+VERIFIER_GENERATION_LIMIT = parse_env_int(
+    "MI_VERIFIER_GENERATION_LIMIT", 5, min_value=1, max_value=20
+)
 
 # Error patterns file
 ERROR_PATTERNS_FILE = os.getenv('MI_ERROR_PATTERNS_FILE', 
