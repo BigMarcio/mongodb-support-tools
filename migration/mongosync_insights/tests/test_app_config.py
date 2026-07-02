@@ -16,11 +16,14 @@ from lib.app_config import (
     normalize_progress_endpoint_url,
     parse_env_int,
     resolve_internal_db_name,
+    resolve_verifier_db_name,
     validate_config,
     validate_connection,
     validate_progress_endpoint_url,
     INTERNAL_DB_NAME,
     INTERNAL_DB_NAME_NEW,
+    VERIFIER_DB_NAME_LEGACY,
+    VERIFIER_DB_NAME_NEW,
 )
 
 
@@ -231,6 +234,69 @@ class TestResolveInternalDbName:
             INTERNAL_DB_NAME,
         ]
         assert resolve_internal_db_name("mongodb://localhost:27017") == INTERNAL_DB_NAME
+
+
+class TestResolveVerifierDbName:
+    def setup_method(self):
+        app_config.clear_connection_cache()
+
+    @patch("lib.app_config.get_mongo_client")
+    def test_prefers_new_verifier_db_when_default_requested(self, mock_get_client):
+        client = mock_get_client.return_value
+        client.list_database_names.return_value = [VERIFIER_DB_NAME_NEW]
+
+        def db_getitem(name):
+            db = MagicMock()
+            db.list_collection_names.return_value = (
+                ["verification_tasks"] if name == VERIFIER_DB_NAME_NEW else []
+            )
+            return db
+
+        client.__getitem__.side_effect = db_getitem
+        assert (
+            resolve_verifier_db_name("mongodb://localhost:27017", VERIFIER_DB_NAME_LEGACY)
+            == VERIFIER_DB_NAME_NEW
+        )
+
+    @patch("lib.app_config.get_mongo_client")
+    def test_falls_back_when_preferred_db_has_no_tasks(self, mock_get_client):
+        client = mock_get_client.return_value
+        client.list_database_names.return_value = [
+            "__mdb_internal_mongosync",
+            VERIFIER_DB_NAME_NEW,
+        ]
+
+        def db_getitem(name):
+            db = MagicMock()
+            if name == "__mdb_internal_mongosync":
+                db.list_collection_names.return_value = ["globalState"]
+            else:
+                db.list_collection_names.return_value = ["verification_tasks"]
+            return db
+
+        client.__getitem__.side_effect = db_getitem
+        assert (
+            resolve_verifier_db_name("mongodb://localhost:27017", "__mdb_internal_mongosync")
+            == VERIFIER_DB_NAME_NEW
+        )
+
+    @patch("lib.app_config.get_mongo_client")
+    def test_keeps_legacy_when_only_legacy_has_tasks(self, mock_get_client):
+        client = mock_get_client.return_value
+        client.list_database_names.return_value = [VERIFIER_DB_NAME_LEGACY]
+
+        def db_getitem(name):
+            db = MagicMock()
+            db.list_collection_names.return_value = (
+                ["verification_tasks"] if name == VERIFIER_DB_NAME_LEGACY else []
+            )
+            return db
+
+        client.__getitem__.side_effect = db_getitem
+        assert (
+            resolve_verifier_db_name("mongodb://localhost:27017", VERIFIER_DB_NAME_LEGACY)
+            == VERIFIER_DB_NAME_LEGACY
+        )
 
 
 class TestValidateConnection:

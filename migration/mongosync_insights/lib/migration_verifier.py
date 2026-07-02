@@ -144,8 +144,10 @@ def get_generation_name(gen_num):
 
 def gather_verifier_metrics(connection_string, db_name="migration_verification_metadata"):
     """Gather all verifier metrics and create Plotly figure."""
-    from .app_config import get_database
-    
+    from .app_config import get_database, resolve_verifier_db_name
+
+    db_name = resolve_verifier_db_name(connection_string, db_name)
+
     try:
         db = get_database(connection_string, db_name)
         logger.info(f"Connected to verifier database: {db_name}")

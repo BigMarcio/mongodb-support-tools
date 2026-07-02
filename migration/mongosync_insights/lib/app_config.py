@@ -237,6 +237,8 @@ INTERNAL_DB_NAME = os.getenv('MI_INTERNAL_DB_NAME', "mongosync_reserved_for_inte
 INTERNAL_DB_NAME_NEW = "__mdb_internal_mongosync"
 VERIFIER_SRC_NAMESPACE = "__mdb_internal_mongosync_verifier_src"
 VERIFIER_DST_NAMESPACE = "__mdb_internal_mongosync_verifier_dst"
+VERIFIER_DB_NAME_LEGACY = "migration_verification_metadata"
+VERIFIER_DB_NAME_NEW = "__mdb_internal_migration_verifier"
 
 # Error patterns file
 ERROR_PATTERNS_FILE = os.getenv('MI_ERROR_PATTERNS_FILE', 
@@ -481,6 +483,67 @@ def validate_connection(connection_string):
         clear_connection_cache()
         raise
 
+_resolved_verifier_db_cache = {}
+_resolved_verifier_db_lock = threading.Lock()
+
+
+def _verifier_db_has_tasks(client, db_name):
+    """True when db_name exists and contains the migration-verifier tasks collection."""
+    if db_name not in client.list_database_names():
+        return False
+    return "verification_tasks" in client[db_name].list_collection_names()
+
+
+def resolve_verifier_db_name(connection_string, preferred_name=None):
+    """
+    Resolve the migration-verifier metadata database name.
+
+    Checks the preferred name first, then auto-detects between the new internal
+  name (__mdb_internal_migration_verifier) and the legacy name
+    (migration_verification_metadata). MI_VERIFIER_DB_NAME acts as a hard override.
+    """
+    env_override = (os.getenv("MI_VERIFIER_DB_NAME") or "").strip()
+    if env_override:
+        return env_override
+
+    preferred = (preferred_name or "").strip() or VERIFIER_DB_NAME_LEGACY
+    known_names = [VERIFIER_DB_NAME_NEW, VERIFIER_DB_NAME_LEGACY]
+    cache_key = (connection_string, preferred)
+
+    with _resolved_verifier_db_lock:
+        if cache_key in _resolved_verifier_db_cache:
+            return _resolved_verifier_db_cache[cache_key]
+
+    logger = logging.getLogger(__name__)
+    resolved = preferred
+    try:
+        client = get_mongo_client(connection_string)
+        if _verifier_db_has_tasks(client, preferred):
+            resolved = preferred
+        else:
+            for name in known_names:
+                if name != preferred and _verifier_db_has_tasks(client, name):
+                    resolved = name
+                    if preferred != name:
+                        logger.warning(
+                            "Verifier DB %r has no verification_tasks; using %r instead",
+                            preferred,
+                            resolved,
+                        )
+                    break
+    except Exception as e:
+        logger.warning(
+            "Could not auto-detect verifier DB name, using %r: %s",
+            preferred,
+            e,
+        )
+
+    with _resolved_verifier_db_lock:
+        _resolved_verifier_db_cache[cache_key] = resolved
+    logger.info("Resolved verifier DB name: %s (preferred: %s)", resolved, preferred)
+    return resolved
+
+
 def clear_connection_cache():
     """
     Clear the connection cache. Useful when connection strings change.
@@ -489,6 +552,8 @@ def clear_connection_cache():
     get_mongo_client.cache_clear()
     with _resolved_internal_db_lock:
         _resolved_internal_db_cache.clear()
+    with _resolved_verifier_db_lock:
+        _resolved_verifier_db_cache.clear()
     logger.info("MongoDB connection cache cleared")
 
 
