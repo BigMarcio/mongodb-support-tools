@@ -263,17 +263,34 @@ def get_persisted_namespace_statistics(db, generation):
 
 def get_generation_doc_progress(db, generation):
     """Sum namespace document stats into generation-level totals."""
-    ns_stats = get_persisted_namespace_statistics(db, generation)
-    docs_compared = 0
-    total_docs = 0
-    for ns in ns_stats:
-        docs_compared += ns.get("docsCompared") or 0
-        total_docs += ns.get("totalDocs") or 0
+    stats = get_generation_progress_stats(db, generation)
+    docs_compared = stats["docsCompared"]
+    total_docs = stats["totalDocs"]
     percent = (docs_compared / total_docs * 100) if total_docs > 0 else None
     return {
         "docsCompared": docs_compared,
         "totalDocs": total_docs,
         "docPercentComplete": round(percent, 1) if percent is not None else None,
+    }
+
+
+def get_generation_progress_stats(db, generation):
+    """Sum namespace document and partition stats for a generation."""
+    ns_stats = get_persisted_namespace_statistics(db, generation)
+    docs_compared = 0
+    total_docs = 0
+    partitions_done = 0
+    partitions_pending = 0
+    for ns in ns_stats:
+        docs_compared += ns.get("docsCompared") or 0
+        total_docs += ns.get("totalDocs") or 0
+        partitions_done += ns.get("partitionsDone") or 0
+        partitions_pending += (ns.get("partitionsAdded") or 0) + (ns.get("partitionsProcessing") or 0)
+    return {
+        "docsCompared": docs_compared,
+        "totalDocs": total_docs,
+        "partitionsDone": partitions_done,
+        "partitionsTotal": partitions_done + partitions_pending,
     }
 
 
@@ -446,6 +463,79 @@ def _doc_completion_pct(ns):
     return (ns.get("docsCompared") or 0) / total * 100
 
 
+def _percent(done, total):
+    if total == 0:
+        return None
+    return round(done / total * 100, 1)
+
+
+def get_verification_completeness(ns_doc_stats, task_summary, generation):
+    """Roll up verification completeness for the current generation."""
+    docs_compared = 0
+    total_docs = 0
+    bytes_compared = 0
+    total_bytes = 0
+    namespaces_complete = 0
+    partitions_done = 0
+    partitions_pending = 0
+
+    for ns in ns_doc_stats:
+        docs_compared += ns.get("docsCompared") or 0
+        total_docs += ns.get("totalDocs") or 0
+        bytes_compared += ns.get("bytesCompared") or 0
+        total_bytes += ns.get("totalBytes") or 0
+        p_done = ns.get("partitionsDone") or 0
+        p_pending = (ns.get("partitionsAdded") or 0) + (ns.get("partitionsProcessing") or 0)
+        partitions_done += p_done
+        partitions_pending += p_pending
+        if p_done > 0 and p_pending == 0:
+            namespaces_complete += 1
+
+    total_namespaces = len(ns_doc_stats)
+    partitions_total = partitions_done + partitions_pending
+
+    task_completed = task_summary.get("completed", 0)
+    task_failed = task_summary.get("failed", 0) + task_summary.get("mismatch", 0)
+    task_pending = task_summary.get("pending", 0) + task_summary.get("processing", 0)
+    task_total = task_completed + task_failed + task_pending
+
+    result = {
+        "generation": generation,
+        "generationName": get_generation_name(generation),
+        "isRecheckGeneration": generation > 0,
+        "documents": {
+            "compared": docs_compared,
+            "total": total_docs,
+            "percent": _percent(docs_compared, total_docs),
+        },
+        "namespaces": {
+            "complete": namespaces_complete,
+            "total": total_namespaces,
+            "percent": _percent(namespaces_complete, total_namespaces),
+        },
+        "partitions": {
+            "done": partitions_done,
+            "total": partitions_total,
+            "percent": _percent(partitions_done, partitions_total),
+        },
+        "tasks": {
+            "completed": task_completed,
+            "failed": task_failed,
+            "pending": task_pending,
+            "percentDone": _percent(task_completed + task_failed, task_total),
+        },
+    }
+
+    if generation == 0 and total_bytes > 0:
+        result["bytes"] = {
+            "compared": bytes_compared,
+            "total": total_bytes,
+            "percent": _percent(bytes_compared, total_bytes),
+        }
+
+    return result
+
+
 def build_verifier_monitor_payload(connection_string, db_name=None):
     """Build JSON payload for the Migration Verifier monitoring dashboard."""
     from .app_config import MI_MIGRATION_VERIFIER_DB_NAME, VERIFIER_GENERATION_LIMIT, get_database
@@ -520,6 +610,21 @@ def build_verifier_monitor_payload(connection_string, db_name=None):
         ]
         namespaces.sort(key=_doc_completion_pct)
 
+        task_summary_current = get_verification_summary(db, current_gen)
+        verification_completeness = get_verification_completeness(
+            ns_doc_stats, task_summary_current, current_gen,
+        )
+
+        for g in generations_to_show:
+            gen_num = g["num"]
+            if gen_num == current_gen:
+                g["docsCompared"] = verification_completeness["documents"]["compared"]
+                g["totalDocs"] = verification_completeness["documents"]["total"]
+                g["partitionsDone"] = verification_completeness["partitions"]["done"]
+                g["partitionsTotal"] = verification_completeness["partitions"]["total"]
+            else:
+                g.update(get_generation_progress_stats(db, gen_num))
+
         collection_mismatch_docs = get_collection_metadata_mismatches(db, current_gen)
         collection_mismatches = []
         for mm in collection_mismatch_docs:
@@ -530,48 +635,6 @@ def build_verifier_monitor_payload(connection_string, db_name=None):
                 "generation": get_generation_name(mm.get("generation")),
                 "namespace": namespace,
                 "details": formatted or "Mismatch detected (check logs for details)",
-            })
-
-        generation_details = []
-        for gen in generations_to_show:
-            gen_num = gen["num"]
-            gen_summary = get_verification_summary(db, gen_num)
-            task_completed = gen_summary.get("completed", 0)
-            task_failed = gen_summary.get("failed", 0) + gen_summary.get("mismatch", 0)
-            task_pending = gen_summary.get("pending", 0) + gen_summary.get("processing", 0)
-            task_total = task_completed + task_failed + task_pending
-            percent_complete = (task_completed / task_total * 100) if task_total > 0 else 0
-
-            doc_progress = get_generation_doc_progress(db, gen_num)
-
-            gen_failed_tasks = get_failed_tasks(db, gen_num, limit=100)
-            failed_rows = [
-                {
-                    "type": t.get("type", "N/A"),
-                    "sourceNs": _get_source_ns(t),
-                    "destNs": _get_dest_ns(t),
-                    "details": _get_mismatch_details(t),
-                }
-                for t in gen_failed_tasks
-            ]
-
-            generation_details.append({
-                "num": gen_num,
-                "name": gen["name"],
-                "isCurrent": gen["isCurrent"],
-                "isFinal": gen["isFinal"],
-                "completed": task_completed,
-                "failed": task_failed,
-                "pending": task_pending,
-                "total": task_total,
-                "taskCompleted": task_completed,
-                "taskFailed": task_failed,
-                "taskPending": task_pending,
-                "percentComplete": round(percent_complete, 1),
-                "docsCompared": doc_progress["docsCompared"],
-                "totalDocs": doc_progress["totalDocs"],
-                "docPercentComplete": doc_progress["docPercentComplete"],
-                "failedTasks": failed_rows,
             })
 
         current_gen_stats = None
@@ -586,8 +649,8 @@ def build_verifier_monitor_payload(connection_string, db_name=None):
         base["display"] = {
             "stateBadge": _derive_state_badge(current_gen_stats),
             "currentGeneration": current_gen,
+            "verificationCompleteness": verification_completeness,
             "generations": generations_to_show,
-            "generationDetails": generation_details,
             "namespaces": namespaces[:25],
             "collectionMismatches": collection_mismatches,
             "finalGenerationName": get_generation_name(current_gen),

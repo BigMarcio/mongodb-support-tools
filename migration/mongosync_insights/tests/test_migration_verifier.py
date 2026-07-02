@@ -13,8 +13,10 @@ from lib.migration_verifier import (
     get_generation_doc_progress,
     get_generation_history,
     get_generation_name,
+    get_generation_progress_stats,
     get_namespace_stats,
     get_persisted_namespace_statistics,
+    get_verification_completeness,
     get_verification_summary,
     plot_verifier_metrics,
 )
@@ -156,6 +158,103 @@ class TestGetGenerationDocProgress:
         assert progress["docPercentComplete"] == pytest.approx(33.3, abs=0.1)
 
 
+class TestGetGenerationProgressStats:
+    def test_sums_docs_and_partitions(self):
+        db = MagicMock()
+        with patch(
+            "lib.migration_verifier.get_persisted_namespace_statistics",
+            return_value=[
+                {
+                    "docsCompared": 40,
+                    "totalDocs": 100,
+                    "partitionsDone": 3,
+                    "partitionsAdded": 1,
+                    "partitionsProcessing": 0,
+                },
+                {
+                    "docsCompared": 10,
+                    "totalDocs": 50,
+                    "partitionsDone": 2,
+                    "partitionsAdded": 0,
+                    "partitionsProcessing": 1,
+                },
+            ],
+        ):
+            stats = get_generation_progress_stats(db, 0)
+        assert stats["docsCompared"] == 50
+        assert stats["totalDocs"] == 150
+        assert stats["partitionsDone"] == 5
+        assert stats["partitionsTotal"] == 7
+
+
+class TestGetVerificationCompleteness:
+    def test_documents_and_namespaces(self):
+        ns_doc_stats = [
+            {
+                "docsCompared": 40,
+                "totalDocs": 100,
+                "partitionsDone": 5,
+                "partitionsAdded": 0,
+                "partitionsProcessing": 0,
+                "bytesCompared": 1000,
+                "totalBytes": 2000,
+            },
+            {
+                "docsCompared": 10,
+                "totalDocs": 50,
+                "partitionsDone": 2,
+                "partitionsAdded": 1,
+                "partitionsProcessing": 0,
+                "bytesCompared": 500,
+                "totalBytes": 1000,
+            },
+        ]
+        task_summary = {
+            "completed": 8,
+            "failed": 1,
+            "mismatch": 0,
+            "pending": 2,
+            "processing": 1,
+        }
+        result = get_verification_completeness(ns_doc_stats, task_summary, generation=0)
+        assert result["documents"]["compared"] == 50
+        assert result["documents"]["total"] == 150
+        assert result["documents"]["percent"] == pytest.approx(33.3, abs=0.1)
+        assert result["namespaces"]["complete"] == 1
+        assert result["namespaces"]["total"] == 2
+        assert result["partitions"]["done"] == 7
+        assert result["partitions"]["total"] == 8
+        assert result["tasks"]["completed"] == 8
+        assert result["tasks"]["failed"] == 1
+        assert result["tasks"]["pending"] == 3
+        assert result["tasks"]["percentDone"] == pytest.approx(75.0)
+        assert result["bytes"]["compared"] == 1500
+        assert result["bytes"]["total"] == 3000
+
+    def test_namespace_complete_rule(self):
+        ns_doc_stats = [
+            {"partitionsDone": 0, "partitionsAdded": 1, "partitionsProcessing": 0},
+            {"partitionsDone": 3, "partitionsAdded": 0, "partitionsProcessing": 0},
+        ]
+        result = get_verification_completeness(ns_doc_stats, {}, generation=0)
+        assert result["namespaces"]["complete"] == 1
+
+    def test_bytes_omitted_for_recheck(self):
+        ns_doc_stats = [
+            {"bytesCompared": 100, "totalBytes": 200, "partitionsDone": 1},
+        ]
+        result = get_verification_completeness(ns_doc_stats, {}, generation=1)
+        assert "bytes" not in result
+        assert result["isRecheckGeneration"] is True
+
+    def test_bytes_included_for_gen0(self):
+        ns_doc_stats = [
+            {"bytesCompared": 100, "totalBytes": 200, "partitionsDone": 1},
+        ]
+        result = get_verification_completeness(ns_doc_stats, {}, generation=0)
+        assert result["bytes"]["percent"] == 50.0
+
+
 class TestGetGenerationHistory:
     def test_empty_when_no_current_generation(self):
         db = MagicMock()
@@ -202,6 +301,7 @@ class TestBuildVerifierMonitorPayload:
         assert "stateBadge" in result["display"]
         assert "generations" in result["display"]
         assert "currentGeneration" in result["display"]
+        assert "verificationCompleteness" in result["display"]
         assert "connectivity" in result
 
     @patch("lib.migration_verifier.get_generation_history", return_value=[])
@@ -217,11 +317,9 @@ class TestBuildVerifierMonitorPayload:
         mock_gen_history.assert_called_once()
         assert mock_gen_history.call_args.kwargs["limit"] == 10
 
-    @patch("lib.migration_verifier.get_generation_doc_progress")
     @patch("lib.migration_verifier.get_generation_history")
     @patch("lib.migration_verifier.get_verification_summary")
-    @patch("lib.migration_verifier.get_failed_tasks", return_value=[])
-    @patch("lib.migration_verifier.get_persisted_namespace_statistics", return_value=[])
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics")
     @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
     @patch("lib.migration_verifier.get_current_generation", return_value=0)
     @patch("lib.app_config.get_database")
@@ -231,10 +329,8 @@ class TestBuildVerifierMonitorPayload:
         mock_current_gen,
         mock_coll_mm,
         mock_ns_stats,
-        mock_failed,
         mock_summary,
         mock_history,
-        mock_doc_progress,
     ):
         mock_get_db.return_value = MagicMock()
         mock_history.return_value = [
@@ -244,9 +340,6 @@ class TestBuildVerifierMonitorPayload:
         mock_summary.return_value = {
             "completed": 8, "failed": 0, "mismatch": 0, "pending": 2, "processing": 0,
         }
-        mock_doc_progress.return_value = {
-            "docsCompared": 80, "totalDocs": 100, "docPercentComplete": 80.0,
-        }
         result = build_verifier_monitor_payload("mongodb://localhost:27017")
         gens = result["display"]["generations"]
         gen0 = next(g for g in gens if g["num"] == 0)
@@ -255,24 +348,20 @@ class TestBuildVerifierMonitorPayload:
         assert gen1["isCurrent"] is False
         assert "CURRENT" in gen0["name"]
 
-    @patch("lib.migration_verifier.get_generation_doc_progress")
     @patch("lib.migration_verifier.get_generation_history")
     @patch("lib.migration_verifier.get_verification_summary")
-    @patch("lib.migration_verifier.get_failed_tasks", return_value=[])
-    @patch("lib.migration_verifier.get_persisted_namespace_statistics", return_value=[])
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics")
     @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
     @patch("lib.migration_verifier.get_current_generation", return_value=0)
     @patch("lib.app_config.get_database")
-    def test_dual_progress_fields_in_generation_details(
+    def test_generations_overview_progress_fields(
         self,
         mock_get_db,
         mock_current_gen,
         mock_coll_mm,
         mock_ns_stats,
-        mock_failed,
         mock_summary,
         mock_history,
-        mock_doc_progress,
     ):
         mock_get_db.return_value = MagicMock()
         mock_history.return_value = [
@@ -281,15 +370,26 @@ class TestBuildVerifierMonitorPayload:
         mock_summary.return_value = {
             "completed": 2, "failed": 0, "mismatch": 0, "pending": 2, "processing": 0,
         }
-        mock_doc_progress.return_value = {
-            "docsCompared": 50, "totalDocs": 100, "docPercentComplete": 50.0,
-        }
+        mock_ns_stats.return_value = [
+            {
+                "_id": "db.coll",
+                "docsCompared": 50,
+                "totalDocs": 100,
+                "partitionsDone": 3,
+                "partitionsAdded": 1,
+                "partitionsProcessing": 0,
+            },
+        ]
         result = build_verifier_monitor_payload("mongodb://localhost:27017")
-        detail = result["display"]["generationDetails"][0]
-        assert detail["percentComplete"] == 50.0
-        assert detail["docPercentComplete"] == 50.0
-        assert detail["docsCompared"] == 50
-        assert detail["totalDocs"] == 100
+        gen = result["display"]["generations"][0]
+        completeness = result["display"]["verificationCompleteness"]
+        assert gen["docsCompared"] == 50
+        assert gen["totalDocs"] == 100
+        assert gen["partitionsDone"] == 3
+        assert gen["partitionsTotal"] == 4
+        assert completeness["documents"]["percent"] == 50.0
+        assert "generationDetails" not in result["display"]
+        assert "initialCheckCompleteness" not in result["display"]
 
 
 class TestPlotVerifierMetrics:

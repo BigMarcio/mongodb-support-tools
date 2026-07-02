@@ -11,8 +11,6 @@
         success: '✓',
     };
 
-    var generationExpanded = {};
-
     function el(tag, className, text) {
         var node = document.createElement(tag);
         if (className) node.className = className;
@@ -86,6 +84,26 @@
         }
     }
 
+    function appendLabeledProgress(parent, label, percent, countLabel) {
+        var row = el('div', 'lm-phase-row');
+        var text = el('span');
+        text.appendChild(document.createTextNode(label + ': '));
+        if (countLabel) {
+            text.appendChild(el('b', null, countLabel));
+            if (percent != null) {
+                text.appendChild(el('span', 'lm-muted', ' (' + percent.toFixed(1) + '%)'));
+            } else {
+                text.appendChild(el('span', 'lm-muted', ' (—)'));
+            }
+        } else {
+            var pctText = percent != null ? percent.toFixed(1) + '%' : '—';
+            text.appendChild(el('b', null, pctText));
+        }
+        row.appendChild(text);
+        parent.appendChild(row);
+        parent.appendChild(progressBar(percent, percent == null));
+    }
+
     function renderToolbar(display) {
         var toolbar = el('div', 'lm-toolbar');
         var textBlock = el('div', 'lm-toolbar-text');
@@ -114,6 +132,11 @@
         return toolbar;
     }
 
+    function formatComparedTotal(compared, total) {
+        if (!total) return '—';
+        return formatCount(compared) + ' / ' + formatCount(total);
+    }
+
     function renderGenerationsOverview(generations) {
         if (!generations || generations.length === 0) {
             return card('Generation Overview', null, [
@@ -121,10 +144,17 @@
             ]);
         }
 
+        var desc = 'Total, Completed, Failed, and Pending are verification task counts ' +
+            '(excluding the coordinator primary task). Documents and Partitions show ' +
+            'metadata progress (compared or finished vs total).';
+
         var table = el('table', 'lm-phase-times-table');
         var thead = el('thead');
         var headerRow = el('tr');
-        ['Generation', 'Name', 'Total', 'Completed', 'Failed', 'Pending', 'Start Time'].forEach(function (h) {
+        [
+            'Generation', 'Name', 'Total', 'Completed', 'Failed', 'Pending',
+            'Documents', 'Partitions', 'Start Time',
+        ].forEach(function (h) {
             headerRow.appendChild(el('th', null, h));
         });
         thead.appendChild(headerRow);
@@ -139,119 +169,86 @@
             tr.appendChild(el('td', null, formatCount(g.completed)));
             tr.appendChild(el('td', null, formatCount(g.failed)));
             tr.appendChild(el('td', null, formatCount(g.pending)));
+            tr.appendChild(el('td', null, formatComparedTotal(g.docsCompared, g.totalDocs)));
+            tr.appendChild(el('td', null, formatComparedTotal(g.partitionsDone, g.partitionsTotal)));
             tr.appendChild(el('td', null, g.startTime || '—'));
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
 
-        return card('Generation Overview', null, [table]);
+        return card('Generation Overview', desc, [table]);
     }
 
-    function renderFailedTasksTable(failedTasks) {
-        if (!failedTasks || failedTasks.length === 0) {
-            return banner('info', 'No failed or mismatched tasks.');
-        }
+    function renderCompletenessCard(completeness, options) {
+        if (!completeness) return null;
 
-        var table = el('table', 'lm-phase-times-table');
-        var thead = el('thead');
-        var headerRow = el('tr');
-        ['Type', 'Source NS', 'Dest NS', 'Mismatch Details'].forEach(function (h) {
-            headerRow.appendChild(el('th', null, h));
-        });
-        thead.appendChild(headerRow);
-        table.appendChild(thead);
-
-        var tbody = el('tbody');
-        failedTasks.forEach(function (row) {
-            var tr = el('tr');
-            tr.appendChild(el('td', null, row.type || '—'));
-            tr.appendChild(el('td', null, row.sourceNs || '—'));
-            tr.appendChild(el('td', null, row.destNs || '—'));
-            tr.appendChild(el('td', null, row.details || '—'));
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        return table;
-    }
-
-    function renderGenerationDetail(genDetail) {
-        var genKey = String(genDetail.num);
-        var defaultExpanded = genDetail.isCurrent || genDetail.isFinal || generationExpanded[genKey] === true;
-        if (generationExpanded[genKey] === undefined) {
-            generationExpanded[genKey] = defaultExpanded;
-        }
-
-        var block = el('div', 'lm-natural-order-block');
-        var toggle = el('button', 'lm-natural-order-toggle lm-muted');
-        toggle.type = 'button';
-        toggle.setAttribute('aria-expanded', generationExpanded[genKey] ? 'true' : 'false');
-
-        var chevron = el('span', 'lm-natural-order-chevron', generationExpanded[genKey] ? '▾' : '▸');
-        toggle.appendChild(chevron);
-        toggle.appendChild(document.createTextNode(genDetail.name || ('Generation ' + genDetail.num)));
-
-        var details = el(
-            'div',
-            'lm-natural-order-details' + (generationExpanded[genKey] ? ' is-open' : '')
-        );
-
-        function appendProgressRow(label, percent) {
-            var row = el('div', 'lm-phase-row');
-            var text = el('span');
-            text.appendChild(document.createTextNode(label + ': '));
-            var pctText = percent != null ? percent.toFixed(1) + '%' : '—';
-            text.appendChild(el('b', null, pctText));
-            row.appendChild(text);
-            details.appendChild(row);
-            details.appendChild(progressBar(percent, percent == null));
-        }
-
-        appendProgressRow('Tasks', genDetail.percentComplete);
-
-        var docPct = genDetail.docPercentComplete;
-        if (genDetail.totalDocs === 0) {
-            docPct = null;
-        }
-        appendProgressRow('Documents', docPct);
-
-        var metrics = el('div', 'lm-metrics');
-        [
-            { label: 'Completed', value: formatCount(genDetail.completed) },
-            { label: 'Failed', value: formatCount(genDetail.failed) },
-            { label: 'Pending', value: formatCount(genDetail.pending) },
-        ].forEach(function (m) {
-            metrics.appendChild(metricTile(m));
-        });
-        details.appendChild(metrics);
-        details.appendChild(renderFailedTasksTable(genDetail.failedTasks));
-
-        toggle.addEventListener('click', function () {
-            generationExpanded[genKey] = !generationExpanded[genKey];
-            toggle.setAttribute('aria-expanded', generationExpanded[genKey] ? 'true' : 'false');
-            chevron.textContent = generationExpanded[genKey] ? '▾' : '▸';
-            details.classList.toggle('is-open', generationExpanded[genKey]);
-        });
-
-        block.appendChild(toggle);
-        block.appendChild(details);
-        return block;
-    }
-
-    function renderGenerationDetails(generationDetails) {
-        if (!generationDetails || generationDetails.length === 0) {
-            return null;
+        var opts = options || {};
+        var title = opts.title || 'Verification completeness';
+        var desc = opts.desc;
+        if (!desc) {
+            desc = completeness.isRecheckGeneration
+                ? 'Recheck progress (documents scheduled for recheck, not full cluster size).'
+                : 'Initial check progress for the current generation.';
         }
 
         var body = el('div', 'lm-stack-tight');
-        generationDetails.forEach(function (genDetail) {
-            body.appendChild(renderGenerationDetail(genDetail));
-        });
 
-        return card(
-            'Generation Details',
-            'Expand a generation to view progress and failed tasks.',
-            [body]
+        var docs = completeness.documents || {};
+        appendLabeledProgress(
+            body,
+            'Documents',
+            docs.total > 0 ? docs.percent : null,
+            formatCount(docs.compared) + ' / ' + formatCount(docs.total)
         );
+
+        var nss = completeness.namespaces || {};
+        appendLabeledProgress(
+            body,
+            'Namespaces',
+            nss.total > 0 ? nss.percent : null,
+            formatCount(nss.complete) + ' / ' + formatCount(nss.total)
+        );
+
+        var parts = completeness.partitions || {};
+        appendLabeledProgress(
+            body,
+            'Partitions',
+            parts.total > 0 ? parts.percent : null,
+            formatCount(parts.done) + ' / ' + formatCount(parts.total)
+        );
+
+        if (completeness.bytes && completeness.bytes.total > 0) {
+            var bytes = completeness.bytes;
+            appendLabeledProgress(
+                body,
+                'Bytes',
+                bytes.percent,
+                formatCount(bytes.compared) + ' / ' + formatCount(bytes.total)
+            );
+        }
+
+        var tasks = completeness.tasks || {};
+        var metrics = el('div', 'lm-metrics');
+        [
+            { label: 'Tasks pending', value: formatCount(tasks.pending) },
+            { label: 'Tasks failed', value: formatCount(tasks.failed) },
+            { label: 'Tasks completed', value: formatCount(tasks.completed) },
+        ].forEach(function (m) {
+            metrics.appendChild(metricTile(m));
+        });
+        body.appendChild(metrics);
+
+        return card(title, desc, [body]);
+    }
+
+    function renderVerificationCompleteness(display) {
+        if (!display || !display.verificationCompleteness) return [];
+
+        var title = display.currentGeneration > 0
+            ? 'Current generation completeness'
+            : 'Verification completeness';
+        var card = renderCompletenessCard(display.verificationCompleteness, { title: title });
+        return card ? [card] : [];
     }
 
     function renderNamespaces(namespaces, display) {
@@ -369,10 +366,12 @@
         root.appendChild(renderToolbar(display));
 
         var stack = el('div', 'lm-stack lm-stack-after-toolbar');
-        stack.appendChild(renderGenerationsOverview(display.generations));
 
-        var genDetailsCard = renderGenerationDetails(display.generationDetails);
-        if (genDetailsCard) stack.appendChild(genDetailsCard);
+        renderVerificationCompleteness(display).forEach(function (completenessCard) {
+            stack.appendChild(completenessCard);
+        });
+
+        stack.appendChild(renderGenerationsOverview(display.generations));
 
         stack.appendChild(renderNamespaces(display.namespaces, display));
         stack.appendChild(renderCollectionMismatches(display));
