@@ -102,6 +102,6 @@ class TestPlotVerifierMetrics:
     def test_plot_renders_template(self, mock_gather, mock_render):
         mock_gather.return_value = {"generation": 0, "summary": {}}
         mock_render.return_value = "html"
-        result = plot_verifier_metrics(db_name="migration_verification_metadata")
+        result = plot_verifier_metrics()
         assert result == "html"
         mock_render.assert_called_once()

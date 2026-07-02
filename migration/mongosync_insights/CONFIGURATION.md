@@ -40,7 +40,10 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 |----------|---------|-------------|
 | `MI_CONNECTION_STRING` | _(empty)_ | MongoDB connection string (optional, can be provided via UI) |
 | `MI_VERIFIER_CONNECTION_STRING` | _(falls back to `MI_CONNECTION_STRING`)_ | MongoDB connection string for the migration verifier database. When omitted, the value of `MI_CONNECTION_STRING` is used. Set this when the verifier database lives on a different cluster. |
-| `MI_INTERNAL_DB_NAME` | _(auto-detected)_ | MongoDB internal database name. When not set, the app auto-detects between `__mdb_internal_mongosync` (new) and `mongosync_reserved_for_internal_use` (legacy). Set this variable to override auto-detection. |
+| `MI_MONGOSYNC_DB_NAME` | _(auto-detected)_ | Mongosync internal metadata database name. When not set, the app auto-detects between `__mdb_internal_mongosync` (new) and `mongosync_reserved_for_internal_use` (legacy). Set this variable to override auto-detection. |
+| `MI_MIGRATION_VERIFIER_DB_NAME` | `__mdb_internal_migration_verifier` | Standalone migration-verifier metadata database name. |
+| `MI_EMBEDDED_VERIFIER_SRC_DB_NAME` | `__mdb_internal_mongosync_verifier_src` | Embedded verifier source persistence database on the destination cluster. |
+| `MI_EMBEDDED_VERIFIER_DST_DB_NAME` | `__mdb_internal_mongosync_verifier_dst` | Embedded verifier destination persistence database on the destination cluster. |
 | `MI_POOL_SIZE` | `10` | MongoDB connection pool size |
 | `MI_TIMEOUT_MS` | `30000` | MongoDB connection timeout in milliseconds |
 
@@ -231,6 +234,9 @@ Pre-configure the connection string for the [migration-verifier](https://github.
 # Set verifier connection string (separate cluster from migration monitoring)
 export MI_VERIFIER_CONNECTION_STRING="mongodb+srv://user:pass@verifier-cluster.mongodb.net/"
 
+# Optional: override migration-verifier metadata database name (default: __mdb_internal_migration_verifier)
+export MI_MIGRATION_VERIFIER_DB_NAME="__mdb_internal_migration_verifier"
+
 # Or reuse the same connection string as migration monitoring
 export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 
@@ -238,7 +244,7 @@ export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 python3 mongosync_insights.py
 ```
 
-**Note**: When `MI_VERIFIER_CONNECTION_STRING` is not set, it falls back to `MI_CONNECTION_STRING`. Set it explicitly when the migration-verifier writes to a different cluster.
+**Note**: When `MI_VERIFIER_CONNECTION_STRING` is not set, it falls back to `MI_CONNECTION_STRING`. Set it explicitly when the migration-verifier writes to a different cluster. The verifier metadata database name is not configurable via the UI; use `MI_MIGRATION_VERIFIER_DB_NAME` to override the default.
 
 ### Example 8: Persistent Snapshots and Custom Log Viewer
 

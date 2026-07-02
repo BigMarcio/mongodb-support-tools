@@ -16,10 +16,8 @@ from lib.app_config import (
     SECURE_COOKIES,
     SESSION_TIMEOUT,
     VERIFIER_CONNECTION_STRING,
-    VERIFIER_DB_NAME_LEGACY,
     build_progress_endpoint_url,
     clear_connection_cache,
-    resolve_verifier_db_name,
     session_store,
     validate_connection,
     validate_progress_endpoint_url,
@@ -189,10 +187,6 @@ def verifier():
         if target_mongo_uri:
             target_mongo_uri = target_mongo_uri.strip() if target_mongo_uri.strip() else None
 
-    db_name = request.form.get("verifierDbName", VERIFIER_DB_NAME_LEGACY)
-    if db_name:
-        db_name = db_name.strip() if db_name.strip() else VERIFIER_DB_NAME_LEGACY
-
     if not target_mongo_uri:
         logger.error("No connection string provided for migration verifier")
         return render_template(
@@ -228,15 +222,12 @@ def verifier():
             error_message="An unexpected error occurred. Please try again.",
         )
 
-    resolved_db_name = resolve_verifier_db_name(target_mongo_uri, db_name)
     session_data = {
         "verifier_connection_string": target_mongo_uri,
-        "verifier_db_name": resolved_db_name,
-        "verifier_db_name_requested": db_name,
     }
     session_id = store_session_data(session_data)
 
-    response = make_response(plot_verifier_metrics(db_name=resolved_db_name))
+    response = make_response(plot_verifier_metrics())
 
     response.set_cookie(
         SESSION_COOKIE_NAME,
@@ -267,5 +258,4 @@ def get_verifier_data():
             }
         ), 400
 
-    db_name = (session_data or {}).get("verifier_db_name", VERIFIER_DB_NAME_LEGACY)
-    return jsonify(gather_verifier_metrics(connection_string, db_name))
+    return jsonify(gather_verifier_metrics(connection_string))

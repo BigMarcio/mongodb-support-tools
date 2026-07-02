@@ -13,7 +13,7 @@ class TestClearConnectionCache:
     def test_clear_connection_cache_clears_internal_db_and_client_cache(self):
         with app_config._resolved_internal_db_lock:
             app_config._resolved_internal_db_cache["mongodb://localhost:27017"] = (
-                app_config.INTERNAL_DB_NAME_NEW
+                app_config.MI_MONGOSYNC_DB_NAME_NEW
             )
 
         with patch.object(app_config.get_mongo_client, "cache_clear") as mock_cache_clear:
@@ -28,7 +28,7 @@ class TestClearConnectionCache:
         mock_get_mongo_client.side_effect = RuntimeError("connection failed")
         with app_config._resolved_internal_db_lock:
             app_config._resolved_internal_db_cache["mongodb://bad"] = (
-                app_config.INTERNAL_DB_NAME
+                app_config.MI_MONGOSYNC_DB_NAME
             )
 
         try:

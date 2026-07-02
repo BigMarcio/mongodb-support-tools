@@ -142,11 +142,12 @@ def get_generation_name(gen_num):
         return f"Recheck #{gen_num}"
 
 
-def gather_verifier_metrics(connection_string, db_name="migration_verification_metadata"):
+def gather_verifier_metrics(connection_string, db_name=None):
     """Gather all verifier metrics and create Plotly figure."""
-    from .app_config import get_database, resolve_verifier_db_name
+    from .app_config import MI_MIGRATION_VERIFIER_DB_NAME, get_database
 
-    db_name = resolve_verifier_db_name(connection_string, db_name)
+    if db_name is None:
+        db_name = MI_MIGRATION_VERIFIER_DB_NAME
 
     try:
         db = get_database(connection_string, db_name)
@@ -656,9 +657,12 @@ def gather_verifier_metrics(connection_string, db_name="migration_verification_m
         return {"error": f"Error gathering metrics: {str(e)}"}
 
 
-def plot_verifier_metrics(db_name="migration_verification_metadata"):
+def plot_verifier_metrics(db_name=None):
     """Render the verifier metrics template."""
-    from .app_config import REFRESH_TIME
+    from .app_config import MI_MIGRATION_VERIFIER_DB_NAME, REFRESH_TIME
+
+    if db_name is None:
+        db_name = MI_MIGRATION_VERIFIER_DB_NAME
     
     refresh_time = REFRESH_TIME
     refresh_time_ms = str(int(refresh_time) * 1000)

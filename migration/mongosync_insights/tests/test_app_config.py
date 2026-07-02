@@ -15,15 +15,13 @@ from lib.app_config import (
     load_error_patterns,
     normalize_progress_endpoint_url,
     parse_env_int,
-    resolve_internal_db_name,
-    resolve_verifier_db_name,
+    resolve_mongosync_db_name,
     validate_config,
     validate_connection,
     validate_progress_endpoint_url,
-    INTERNAL_DB_NAME,
-    INTERNAL_DB_NAME_NEW,
-    VERIFIER_DB_NAME_LEGACY,
-    VERIFIER_DB_NAME_NEW,
+    MI_MONGOSYNC_DB_NAME,
+    MI_MONGOSYNC_DB_NAME_NEW,
+    MI_MIGRATION_VERIFIER_DB_NAME,
 )
 
 
@@ -216,87 +214,41 @@ class TestInMemorySessionStore:
         assert store.get_session(sid) == {}
 
 
-class TestResolveInternalDbName:
+class TestResolveMongosyncDbName:
     def setup_method(self):
         app_config.clear_connection_cache()
 
     @patch("lib.app_config.get_mongo_client")
     def test_prefers_new_internal_db(self, mock_get_client):
         mock_get_client.return_value.list_database_names.return_value = [
-            INTERNAL_DB_NAME_NEW,
+            MI_MONGOSYNC_DB_NAME_NEW,
             "app",
         ]
-        assert resolve_internal_db_name("mongodb://localhost:27017") == INTERNAL_DB_NAME_NEW
+        assert resolve_mongosync_db_name("mongodb://localhost:27017") == MI_MONGOSYNC_DB_NAME_NEW
 
     @patch("lib.app_config.get_mongo_client")
     def test_falls_back_to_legacy(self, mock_get_client):
         mock_get_client.return_value.list_database_names.return_value = [
-            INTERNAL_DB_NAME,
+            MI_MONGOSYNC_DB_NAME,
         ]
-        assert resolve_internal_db_name("mongodb://localhost:27017") == INTERNAL_DB_NAME
+        assert resolve_mongosync_db_name("mongodb://localhost:27017") == MI_MONGOSYNC_DB_NAME
 
 
-class TestResolveVerifierDbName:
-    def setup_method(self):
-        app_config.clear_connection_cache()
+class TestMigrationVerifierDbName:
+    def test_default_db_name(self):
+        assert MI_MIGRATION_VERIFIER_DB_NAME == "__mdb_internal_migration_verifier"
 
-    @patch("lib.app_config.get_mongo_client")
-    def test_prefers_new_verifier_db_when_default_requested(self, mock_get_client):
-        client = mock_get_client.return_value
-        client.list_database_names.return_value = [VERIFIER_DB_NAME_NEW]
+    @patch.dict("os.environ", {"MI_MIGRATION_VERIFIER_DB_NAME": "custom_verifier_db"}, clear=False)
+    def test_env_override(self):
+        import importlib
 
-        def db_getitem(name):
-            db = MagicMock()
-            db.list_collection_names.return_value = (
-                ["verification_tasks"] if name == VERIFIER_DB_NAME_NEW else []
-            )
-            return db
+        import lib.app_config as config_module
 
-        client.__getitem__.side_effect = db_getitem
-        assert (
-            resolve_verifier_db_name("mongodb://localhost:27017", VERIFIER_DB_NAME_LEGACY)
-            == VERIFIER_DB_NAME_NEW
-        )
-
-    @patch("lib.app_config.get_mongo_client")
-    def test_falls_back_when_preferred_db_has_no_tasks(self, mock_get_client):
-        client = mock_get_client.return_value
-        client.list_database_names.return_value = [
-            "__mdb_internal_mongosync",
-            VERIFIER_DB_NAME_NEW,
-        ]
-
-        def db_getitem(name):
-            db = MagicMock()
-            if name == "__mdb_internal_mongosync":
-                db.list_collection_names.return_value = ["globalState"]
-            else:
-                db.list_collection_names.return_value = ["verification_tasks"]
-            return db
-
-        client.__getitem__.side_effect = db_getitem
-        assert (
-            resolve_verifier_db_name("mongodb://localhost:27017", "__mdb_internal_mongosync")
-            == VERIFIER_DB_NAME_NEW
-        )
-
-    @patch("lib.app_config.get_mongo_client")
-    def test_keeps_legacy_when_only_legacy_has_tasks(self, mock_get_client):
-        client = mock_get_client.return_value
-        client.list_database_names.return_value = [VERIFIER_DB_NAME_LEGACY]
-
-        def db_getitem(name):
-            db = MagicMock()
-            db.list_collection_names.return_value = (
-                ["verification_tasks"] if name == VERIFIER_DB_NAME_LEGACY else []
-            )
-            return db
-
-        client.__getitem__.side_effect = db_getitem
-        assert (
-            resolve_verifier_db_name("mongodb://localhost:27017", VERIFIER_DB_NAME_LEGACY)
-            == VERIFIER_DB_NAME_LEGACY
-        )
+        importlib.reload(config_module)
+        try:
+            assert config_module.MI_MIGRATION_VERIFIER_DB_NAME == "custom_verifier_db"
+        finally:
+            importlib.reload(app_config)
 
 
 class TestValidateConnection:

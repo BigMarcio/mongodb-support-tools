@@ -38,9 +38,6 @@
     <form id="verifierForm" method="post" action="{{ url_for('live.verifier') }}" enctype="multipart/form-data" autocomplete="off">
         <h2>Migration Verifier</h2>
         {{ verifier_connection_string_form | safe }}
-        <label for="verifierDbName">Verifier Database Name:</label>
-        <input type="text" id="verifierDbName" name="verifierDbName" size="47" autocomplete="off"
-            placeholder="auto-detect (__mdb_internal_migration_verifier)" value=""><br><br>
         <input type="submit" value="Monitor Verifier">
         <p>Click the "Monitor Verifier" button to monitor the <a href="https://github.com/mongodb-labs/migration-verifier" target="_blank">migration-verifier</a> tool progress.</p>
         <p><small><strong>Note:</strong> Connect to the MongoDB cluster where the migration-verifier writes its metadata (typically the destination cluster).</small></p>
