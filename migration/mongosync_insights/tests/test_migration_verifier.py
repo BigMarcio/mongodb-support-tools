@@ -6,11 +6,14 @@ from bson import ObjectId
 from pymongo.errors import PyMongoError
 
 from lib.migration_verifier import (
+    _derive_state_badge,
     _load_mismatches_for_tasks,
+    _serialize_failed_task,
     build_verifier_monitor_payload,
     collect_verifier_metadata_warnings,
     get_current_generation,
     get_failed_tasks,
+    get_failed_tasks_for_display,
     get_generation_doc_progress,
     get_generation_history,
     get_generation_name,
@@ -173,6 +176,79 @@ class TestGetFailedTasks:
         assert tasks[0]["mismatches"][0]["id"] == "doc1"
 
 
+class TestSerializeFailedTask:
+    def test_document_mismatch_with_details(self):
+        task = {
+            "type": "verifyDocuments",
+            "status": "mismatch",
+            "query_filter": {"namespace": "db.coll"},
+            "begin_time": "2026-07-03T10:00:00",
+            "mismatches": [{"id": "doc1", "field": "name", "details": "diff", "cluster": "dst"}],
+        }
+        row = _serialize_failed_task(task, generation=0)
+        assert row["namespace"] == "db.coll"
+        assert row["type"] == "verifyDocuments"
+        assert row["status"] == "mismatch"
+        assert "doc1" in row["details"]
+        assert row["beginTime"] == "2026-07-03T10:00"
+
+    def test_operational_failed_without_mismatches(self):
+        task = {
+            "type": "verifyDocuments",
+            "status": "failed",
+            "query_filter": {"namespace": "db.coll"},
+            "mismatches": [],
+        }
+        row = _serialize_failed_task(task, generation=1)
+        assert row["status"] == "failed"
+        assert "migration-verifier logs" in row["details"]
+
+
+class TestGetFailedTasksForDisplay:
+    def test_excludes_verify_collection_tasks(self):
+        db = MagicMock()
+        with patch(
+            "lib.migration_verifier.get_failed_tasks",
+            return_value=[
+                {"type": "verifyCollection", "status": "mismatch", "query_filter": {}},
+                {
+                    "type": "verifyDocuments",
+                    "status": "mismatch",
+                    "query_filter": {"namespace": "db.coll"},
+                    "mismatches": [],
+                },
+            ],
+        ):
+            rows = get_failed_tasks_for_display(db, 0)
+        assert len(rows) == 1
+        assert rows[0]["type"] == "verifyDocuments"
+
+    def test_sorts_by_begin_time_descending(self):
+        db = MagicMock()
+        with patch(
+            "lib.migration_verifier.get_failed_tasks",
+            return_value=[
+                {
+                    "type": "verifyDocuments",
+                    "status": "failed",
+                    "query_filter": {"namespace": "a"},
+                    "begin_time": "2026-07-01T10:00:00",
+                    "mismatches": [],
+                },
+                {
+                    "type": "verifyDocuments",
+                    "status": "failed",
+                    "query_filter": {"namespace": "b"},
+                    "begin_time": "2026-07-03T10:00:00",
+                    "mismatches": [],
+                },
+            ],
+        ):
+            rows = get_failed_tasks_for_display(db, 0)
+        assert len(rows) == 2
+        assert rows[0]["beginTime"] >= rows[1]["beginTime"]
+
+
 class TestGetNamespaceStats:
     def test_returns_namespace_rows(self):
         db = MagicMock()
@@ -331,6 +407,28 @@ class TestGetGenerationHistory:
         assert pipeline[0]["$match"]["type"] == {"$nin": ["primary"]}
 
 
+class TestDeriveStateBadge:
+    def test_generation_zero_always_in_progress(self):
+        badge = _derive_state_badge(0, {"failed": 5}, [{"namespace": "db.coll"}])
+        assert badge == {"label": "IN PROGRESS", "color": "blue"}
+
+    def test_pass_when_previous_gen_clean(self):
+        badge = _derive_state_badge(1, {"failed": 0}, [])
+        assert badge == {"label": "PASS", "color": "green"}
+
+    def test_mismatches_when_previous_gen_has_failed_tasks(self):
+        badge = _derive_state_badge(2, {"failed": 3}, [])
+        assert badge == {"label": "MISMATCHES", "color": "yellow"}
+
+    def test_mismatches_when_collection_mismatches_present(self):
+        badge = _derive_state_badge(1, {"failed": 0}, [{"namespace": "db.coll"}])
+        assert badge == {"label": "MISMATCHES", "color": "yellow"}
+
+    def test_no_data_when_previous_gen_missing(self):
+        badge = _derive_state_badge(1, None, [])
+        assert badge == {"label": "NO DATA", "color": "gray"}
+
+
 class TestBuildVerifierMonitorPayload:
     @patch("lib.app_config.get_database")
     def test_connection_error_returns_error_dict(self, mock_get_db):
@@ -356,7 +454,95 @@ class TestBuildVerifierMonitorPayload:
         assert "generations" in result["display"]
         assert "currentGeneration" in result["display"]
         assert "verificationCompleteness" in result["display"]
+        assert "generationLimit" in result["display"]
+        assert "failedTasks" in result["display"]
+        assert isinstance(result["display"]["failedTasks"], list)
+        assert result["display"]["previousGeneration"] is None
+        assert result["display"]["stateBadge"] == {"label": "IN PROGRESS", "color": "blue"}
         assert "connectivity" in result
+
+    @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
+    @patch("lib.migration_verifier.get_generation_history")
+    @patch("lib.migration_verifier.get_verification_summary")
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics", return_value=[])
+    @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
+    @patch("lib.migration_verifier.get_current_generation", return_value=1)
+    @patch("lib.app_config.get_database")
+    def test_state_badge_pass_from_previous_generation(
+        self,
+        mock_get_db,
+        mock_current_gen,
+        mock_coll_mm,
+        mock_ns_stats,
+        mock_summary,
+        mock_history,
+        mock_failed_tasks,
+    ):
+        mock_get_db.return_value = MagicMock()
+        mock_history.return_value = [
+            {"_id": 0, "total_tasks": 10, "completed": 10, "failed": 0, "pending": 0},
+            {"_id": 1, "total_tasks": 2, "completed": 0, "failed": 0, "pending": 2},
+        ]
+        mock_summary.return_value = {
+            "completed": 0, "failed": 0, "mismatch": 0, "pending": 2, "processing": 0,
+        }
+        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        assert result["display"]["stateBadge"] == {"label": "PASS", "color": "green"}
+
+    @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
+    @patch("lib.migration_verifier.get_generation_history")
+    @patch("lib.migration_verifier.get_verification_summary")
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics", return_value=[])
+    @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
+    @patch("lib.migration_verifier.get_current_generation", return_value=2)
+    @patch("lib.app_config.get_database")
+    def test_state_badge_mismatches_from_previous_generation(
+        self,
+        mock_get_db,
+        mock_current_gen,
+        mock_coll_mm,
+        mock_ns_stats,
+        mock_summary,
+        mock_history,
+        mock_failed_tasks,
+    ):
+        mock_get_db.return_value = MagicMock()
+        mock_history.return_value = [
+            {"_id": 0, "total_tasks": 10, "completed": 10, "failed": 0, "pending": 0},
+            {"_id": 1, "total_tasks": 5, "completed": 3, "failed": 2, "pending": 0},
+            {"_id": 2, "total_tasks": 1, "completed": 0, "failed": 0, "pending": 1},
+        ]
+        mock_summary.return_value = {
+            "completed": 0, "failed": 0, "mismatch": 0, "pending": 1, "processing": 0,
+        }
+        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        assert result["display"]["stateBadge"] == {"label": "MISMATCHES", "color": "yellow"}
+
+    @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
+    @patch("lib.migration_verifier.get_generation_history", return_value=[])
+    @patch("lib.migration_verifier.get_verification_summary")
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics", return_value=[])
+    @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
+    @patch("lib.migration_verifier.get_current_generation", return_value=151)
+    @patch("lib.app_config.get_database")
+    def test_failed_tasks_use_previous_generation(
+        self,
+        mock_get_db,
+        mock_current_gen,
+        mock_coll_mm,
+        mock_ns_stats,
+        mock_summary,
+        mock_history,
+        mock_failed_tasks,
+    ):
+        mock_get_db.return_value = MagicMock()
+        mock_summary.return_value = {
+            "completed": 0, "failed": 0, "mismatch": 0, "pending": 0, "processing": 0,
+        }
+        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        mock_failed_tasks.assert_called_once_with(mock_get_db.return_value, 150)
+        mock_coll_mm.assert_called_once_with(mock_get_db.return_value, 150)
+        assert result["display"]["previousGeneration"] == 150
 
     @patch("lib.migration_verifier.get_generation_history", return_value=[])
     @patch("lib.app_config.get_database")
@@ -367,9 +553,10 @@ class TestBuildVerifierMonitorPayload:
         db.verification_tasks.aggregate.return_value = []
         db.mismatches.find.return_value = []
         mock_get_db.return_value = db
-        build_verifier_monitor_payload("mongodb://localhost:27017")
+        result = build_verifier_monitor_payload("mongodb://localhost:27017")
         mock_gen_history.assert_called_once()
         assert mock_gen_history.call_args.kwargs["limit"] == 10
+        assert result["display"]["generationLimit"] == 10
 
     @patch("lib.migration_verifier.get_generation_history")
     @patch("lib.migration_verifier.get_verification_summary")

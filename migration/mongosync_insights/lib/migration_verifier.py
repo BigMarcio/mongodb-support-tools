@@ -453,22 +453,46 @@ def _get_mismatch_details(task):
     return task.get("status", "N/A")
 
 
-def _derive_state_badge(gen_stats):
-    if not gen_stats:
-        return {"label": "NO DATA", "color": "gray"}
+def _serialize_failed_task(task, generation):
+    """Build a JSON-safe row for the failed-tasks dashboard card."""
+    status = task.get("status", "")
+    if status == "failed" and not task.get("mismatches"):
+        details = "Task failed (check migration-verifier logs for details)"
+    else:
+        details = _get_mismatch_details(task)
+    return {
+        "namespace": _get_source_ns(task),
+        "type": task.get("type", ""),
+        "status": status,
+        "details": details,
+        "beginTime": _format_start_time(task.get("begin_time")),
+    }
 
-    failed = gen_stats.get("failed", 0)
-    pending = gen_stats.get("pending", 0)
-    completed = gen_stats.get("completed", 0)
-    total = gen_stats.get("total", 0)
 
-    if pending > 0:
+def get_failed_tasks_for_display(db, generation, limit=50):
+    """Collect failed/mismatch tasks for one generation (excludes collection metadata)."""
+    rows = []
+    tasks = get_failed_tasks(db, generation, limit=limit)
+    for task in tasks:
+        if task.get("type") == _VERIFY_COLLECTION:
+            continue
+        rows.append(_serialize_failed_task(task, generation))
+    rows.sort(key=lambda r: r.get("beginTime") or "", reverse=True)
+    return rows
+
+
+def _derive_state_badge(current_gen, previous_gen_stats, collection_mismatches):
+    if current_gen == 0:
         return {"label": "IN PROGRESS", "color": "blue"}
-    if failed > 0:
-        return {"label": "FAILED", "color": "red"}
-    if completed == total and total > 0:
-        return {"label": "PASSED", "color": "green"}
-    return {"label": "IN PROGRESS", "color": "blue"}
+    if not previous_gen_stats:
+        return {"label": "NO DATA", "color": "gray"}
+    has_mismatches = (
+        previous_gen_stats.get("failed", 0) > 0
+        or bool(collection_mismatches)
+    )
+    if has_mismatches:
+        return {"label": "MISMATCHES", "color": "yellow"}
+    return {"label": "PASS", "color": "green"}
 
 
 def _build_connectivity(connection_string, db_name):
@@ -664,20 +688,23 @@ def build_verifier_monitor_payload(connection_string, db_name=None):
 
         generations_to_show = generations_to_show[:gen_limit]
 
-        current_gen_row = next((g for g in generations_to_show if g["isCurrent"]), None)
+        previous_gen = current_gen - 1 if current_gen > 0 else None
 
         ns_doc_stats = get_persisted_namespace_statistics(db, current_gen)
-        namespaces = [
-            {
-                "name": ns["_id"] or "unknown",
-                "docsCompared": ns.get("docsCompared") or 0,
-                "totalDocs": ns.get("totalDocs") or 0,
-                "partitionsDone": ns.get("partitionsDone") or 0,
-                "partitionsPending": (ns.get("partitionsAdded") or 0) + (ns.get("partitionsProcessing") or 0),
-            }
-            for ns in ns_doc_stats
-        ]
-        namespaces.sort(key=_doc_completion_pct)
+        namespaces = []
+        if previous_gen is not None:
+            ns_doc_stats_previous = get_persisted_namespace_statistics(db, previous_gen)
+            namespaces = [
+                {
+                    "name": ns["_id"] or "unknown",
+                    "docsCompared": ns.get("docsCompared") or 0,
+                    "totalDocs": ns.get("totalDocs") or 0,
+                    "partitionsDone": ns.get("partitionsDone") or 0,
+                    "partitionsPending": (ns.get("partitionsAdded") or 0) + (ns.get("partitionsProcessing") or 0),
+                }
+                for ns in ns_doc_stats_previous
+            ]
+            namespaces.sort(key=_doc_completion_pct)
 
         task_summary_current = get_verification_summary(db, current_gen)
         verification_completeness = get_verification_completeness(
@@ -694,35 +721,40 @@ def build_verifier_monitor_payload(connection_string, db_name=None):
             else:
                 g.update(get_generation_progress_stats(db, gen_num))
 
-        collection_mismatch_docs = get_collection_metadata_mismatches(db, current_gen)
         collection_mismatches = []
-        for mm in collection_mismatch_docs:
-            detail = mm.get("detail", {})
-            namespace = detail.get("nameSpace") or detail.get("namespace") or "N/A"
-            formatted = _format_single_mismatch_detail(detail, _VERIFY_COLLECTION)
-            collection_mismatches.append({
-                "generation": get_generation_name(mm.get("generation")),
-                "namespace": namespace,
-                "details": formatted or "Mismatch detected (check logs for details)",
-            })
+        if previous_gen is not None:
+            collection_mismatch_docs = get_collection_metadata_mismatches(db, previous_gen)
+            for mm in collection_mismatch_docs:
+                detail = mm.get("detail", {})
+                namespace = detail.get("nameSpace") or detail.get("namespace") or "N/A"
+                formatted = _format_single_mismatch_detail(detail, _VERIFY_COLLECTION)
+                collection_mismatches.append({
+                    "namespace": namespace,
+                    "details": formatted or "Mismatch detected (check logs for details)",
+                })
 
-        current_gen_stats = None
-        if current_gen_row:
-            current_gen_stats = {
-                "failed": current_gen_row.get("failed", 0),
-                "pending": current_gen_row.get("pending", 0),
-                "completed": current_gen_row.get("completed", 0),
-                "total": current_gen_row.get("total", 0),
-            }
+        if previous_gen is not None:
+            failed_tasks = get_failed_tasks_for_display(db, previous_gen)
+        else:
+            failed_tasks = []
+
+        previous_gen_row = next(
+            (g for g in generations_to_show if g["num"] == previous_gen),
+            None,
+        )
 
         base["display"] = {
-            "stateBadge": _derive_state_badge(current_gen_stats),
+            "stateBadge": _derive_state_badge(
+                current_gen, previous_gen_row, collection_mismatches,
+            ),
             "currentGeneration": current_gen,
+            "generationLimit": gen_limit,
             "verificationCompleteness": verification_completeness,
             "generations": generations_to_show,
             "namespaces": namespaces[:25],
+            "previousGeneration": previous_gen,
+            "failedTasks": failed_tasks,
             "collectionMismatches": collection_mismatches,
-            "finalGenerationName": get_generation_name(current_gen),
         }
         return base
 

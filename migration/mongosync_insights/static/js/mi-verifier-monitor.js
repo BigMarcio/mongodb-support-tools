@@ -117,17 +117,6 @@
         }
         textBlock.appendChild(title);
 
-        var genLabel = display && display.currentGeneration != null
-            ? 'generation ' + display.currentGeneration
-            : 'the current generation';
-        var subtitle = el(
-            'p',
-            'lm-page-subtitle',
-            'Progress of the standalone migration-verifier tool. Pass/fail reflects ' +
-                genLabel + ' when all its tasks are finished.'
-        );
-        textBlock.appendChild(subtitle);
-
         toolbar.appendChild(textBlock);
         return toolbar;
     }
@@ -137,9 +126,19 @@
         return formatCount(compared) + ' / ' + formatCount(total);
     }
 
-    function renderGenerationsOverview(generations) {
+    function generationOverviewTitle(generationLimit) {
+        var title = 'Generation Overview';
+        if (generationLimit != null) {
+            title += ' (Last ' + generationLimit + ')';
+        }
+        return title;
+    }
+
+    function renderGenerationsOverview(generations, generationLimit) {
+        var title = generationOverviewTitle(generationLimit);
+
         if (!generations || generations.length === 0) {
-            return card('Generation Overview', null, [
+            return card(title, null, [
                 el('p', 'lm-muted', 'No verification generations found.'),
             ]);
         }
@@ -176,7 +175,61 @@
         });
         table.appendChild(tbody);
 
-        return card('Generation Overview', desc, [table]);
+        return card(title, desc, [table]);
+    }
+
+    function hasPreviousGeneration(display) {
+        return display && display.previousGeneration != null;
+    }
+
+    function previousGenerationUnavailableCard(title, desc) {
+        return card(title, desc, [
+            banner('info', 'No previous generation available (current is generation 0).'),
+        ]);
+    }
+
+    function renderFailedTasks(display) {
+        var failedTasks = display.failedTasks || [];
+        var desc = 'Document verification failures and operational task errors from the ' +
+            'previous generation (collection metadata mismatches are listed separately).';
+
+        if (!hasPreviousGeneration(display)) {
+            return previousGenerationUnavailableCard(
+                'Failed Tasks / Document Mismatches',
+                desc
+            );
+        }
+
+        if (failedTasks.length === 0) {
+            return card(
+                'Failed Tasks / Document Mismatches',
+                desc,
+                [banner('info', 'No failed document verification tasks in the previous generation.')]
+            );
+        }
+
+        var table = el('table', 'lm-phase-times-table');
+        var thead = el('thead');
+        var headerRow = el('tr');
+        ['Namespace', 'Type', 'Status', 'Details', 'Time'].forEach(function (h) {
+            headerRow.appendChild(el('th', null, h));
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        var tbody = el('tbody');
+        failedTasks.forEach(function (row) {
+            var tr = el('tr');
+            tr.appendChild(el('td', null, row.namespace || '—'));
+            tr.appendChild(el('td', null, row.type || '—'));
+            tr.appendChild(el('td', null, row.status || '—'));
+            tr.appendChild(el('td', null, row.details || '—'));
+            tr.appendChild(el('td', null, row.beginTime || '—'));
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+
+        return card('Failed Tasks / Document Mismatches', desc, [table]);
     }
 
     function renderCompletenessCard(completeness, options) {
@@ -252,14 +305,15 @@
     }
 
     function renderNamespaces(namespaces, display) {
-        var currentGen = display && display.currentGeneration != null
-            ? display.currentGeneration
-            : '?';
-        var desc = 'Current generation (gen ' + currentGen + ') document progress by namespace.';
+        var desc = 'Document progress by namespace for the previous generation.';
+
+        if (!hasPreviousGeneration(display)) {
+            return previousGenerationUnavailableCard('Namespace Progress', desc);
+        }
 
         if (!namespaces || namespaces.length === 0) {
             return card('Namespace Progress', desc, [
-                el('p', 'lm-muted', 'No namespace data available.'),
+                el('p', 'lm-muted', 'No namespace data available for the previous generation.'),
             ]);
         }
 
@@ -289,20 +343,24 @@
 
     function renderCollectionMismatches(display) {
         var mismatches = display.collectionMismatches || [];
-        var currentName = display.finalGenerationName || 'current generation';
+        var desc = 'Collection/index metadata mismatches from the previous generation.';
+
+        if (!hasPreviousGeneration(display)) {
+            return previousGenerationUnavailableCard('Collection Metadata', desc);
+        }
 
         if (mismatches.length === 0) {
             return card(
                 'Collection Metadata',
-                'Collection/index metadata mismatches from the current generation only.',
-                [banner('info', 'No collection metadata mismatches in ' + currentName + '.')]
+                desc,
+                [banner('info', 'No collection metadata mismatches in the previous generation.')]
             );
         }
 
         var table = el('table', 'lm-phase-times-table');
         var thead = el('thead');
         var headerRow = el('tr');
-        ['Generation', 'Namespace', 'Index/Metadata Issues'].forEach(function (h) {
+        ['Namespace', 'Index/Metadata Issues'].forEach(function (h) {
             headerRow.appendChild(el('th', null, h));
         });
         thead.appendChild(headerRow);
@@ -311,18 +369,13 @@
         var tbody = el('tbody');
         mismatches.forEach(function (row) {
             var tr = el('tr');
-            tr.appendChild(el('td', null, row.generation || '—'));
             tr.appendChild(el('td', null, row.namespace || '—'));
             tr.appendChild(el('td', null, row.details || '—'));
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
 
-        return card(
-            'Collection Metadata',
-            'Collection/index metadata mismatches from the current generation only.',
-            [table]
-        );
+        return card('Collection Metadata', desc, [table]);
     }
 
     function renderConnectivity(conn) {
@@ -389,9 +442,15 @@
             stack.appendChild(completenessCard);
         });
 
-        stack.appendChild(renderGenerationsOverview(display.generations));
+        stack.appendChild(renderGenerationsOverview(
+            display.generations,
+            display.generationLimit
+        ));
 
         stack.appendChild(renderNamespaces(display.namespaces, display));
+
+        stack.appendChild(renderFailedTasks(display));
+
         stack.appendChild(renderCollectionMismatches(display));
 
         var connCard = renderConnectivity(payload.connectivity);
