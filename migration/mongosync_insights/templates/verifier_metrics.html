@@ -41,6 +41,7 @@ async function fetchVerifierMonitorData() {
         loading.style.display = 'none';
         root.style.display = 'block';
         miRenderVerifierMonitor(root, {
+            warnings: [],
             connectivity: null,
             display: null,
             error: 'Error loading data: ' + err.message

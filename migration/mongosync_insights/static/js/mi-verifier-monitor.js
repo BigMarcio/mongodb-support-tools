@@ -334,6 +334,20 @@
         return card(conn.title || 'Connectivity', null, [body]);
     }
 
+    function renderWarningsCard(warnings) {
+        if (!warnings || warnings.length === 0) return null;
+        var tight = el('div', 'lm-stack-tight');
+        warnings.forEach(function (w) {
+            tight.appendChild(banner('warning', w));
+        });
+        return card('Warnings', null, [tight]);
+    }
+
+    function appendWarnings(parent, warnings) {
+        var warnCard = renderWarningsCard(warnings);
+        if (warnCard) parent.appendChild(warnCard);
+    }
+
     function renderVerifierMonitor(root, payload) {
         if (!root) return;
         root.replaceChildren();
@@ -341,6 +355,7 @@
         if (payload.error && !payload.display) {
             var shell = el('div', 'lm-stack');
             shell.appendChild(banner('danger', payload.error));
+            appendWarnings(shell, payload.warnings);
             var errConn = renderConnectivity(payload.connectivity);
             if (errConn) shell.appendChild(errConn);
             root.appendChild(shell);
@@ -355,6 +370,7 @@
                     payload.error || 'No verifier data available.'
                 )
             );
+            appendWarnings(infoShell, payload.warnings);
             var infoConn = renderConnectivity(payload.connectivity);
             if (infoConn) infoShell.appendChild(infoConn);
             root.appendChild(infoShell);
@@ -366,6 +382,8 @@
         root.appendChild(renderToolbar(display));
 
         var stack = el('div', 'lm-stack lm-stack-after-toolbar');
+
+        appendWarnings(stack, payload.warnings);
 
         renderVerificationCompleteness(display).forEach(function (completenessCard) {
             stack.appendChild(completenessCard);

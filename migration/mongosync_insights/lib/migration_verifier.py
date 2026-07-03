@@ -27,14 +27,39 @@ def _base_task_match(generation):
     }
 
 
+def _field_from_doc(doc, *keys):
+    """Return the first present field from a BSON document (case variants).
+
+    migration-verifier uses the Go mongo-driver v2 default struct encoding, which
+    lowercases the entire field name (e.g. MetadataVersion -> metadataversion).
+    """
+    if not doc:
+        return None
+    for key in keys:
+        if key in doc:
+            return doc[key]
+    lower_index = {k.lower(): k for k in doc if k != "_id"}
+    for key in keys:
+        actual = lower_index.get(key.lower())
+        if actual is not None:
+            return doc[actual]
+    return None
+
+
+def _read_generation_doc(db):
+    """Read the single generation metadata document."""
+    return db.generation.find_one({})
+
+
 def get_current_generation(db):
     """Read authoritative generation from the generation collection.
 
     Falls back to max generation in verification_tasks for older metadata.
     """
-    doc = db.generation.find_one({}, {"Generation": 1})
-    if doc is not None and "Generation" in doc:
-        return doc["Generation"]
+    doc = _read_generation_doc(db)
+    gen = _field_from_doc(doc, "generation", "Generation")
+    if gen is not None:
+        return gen
 
     latest = db.verification_tasks.find_one(
         {},
@@ -536,6 +561,37 @@ def get_verification_completeness(ns_doc_stats, task_summary, generation):
     return result
 
 
+def collect_verifier_metadata_warnings(db):
+    """Return user-visible warnings when verifier metadata version does not match MI."""
+    from .app_config import VERIFIER_METADATA_VERSION
+
+    doc = _read_generation_doc(db)
+    if doc is None:
+        return []
+
+    version = _field_from_doc(doc, "metadataVersion", "MetadataVersion")
+    if version is None:
+        message = (
+            "Verifier metadata has no metadataVersion field; this layout may predate "
+            "migration-verifier metadata versioning. Dashboard fields may be incomplete "
+            "or misinterpreted."
+        )
+        logger.warning(message)
+        return [message]
+
+    if version != VERIFIER_METADATA_VERSION:
+        message = (
+            f"Verifier metadata version mismatch: database has {version}, but "
+            f"Mongosync Insights expects {VERIFIER_METADATA_VERSION}. Upgrade "
+            "migration-verifier or update VERIFIER_METADATA_VERSION in app_config.py "
+            "when using a newer Mongosync Insights release."
+        )
+        logger.warning(message)
+        return [message]
+
+    return []
+
+
 def build_verifier_monitor_payload(connection_string, db_name=None):
     """Build JSON payload for the Migration Verifier monitoring dashboard."""
     from .app_config import MI_MIGRATION_VERIFIER_DB_NAME, VERIFIER_GENERATION_LIMIT, get_database
@@ -545,6 +601,7 @@ def build_verifier_monitor_payload(connection_string, db_name=None):
 
     base = {
         "error": None,
+        "warnings": [],
         "connectivity": _build_connectivity(connection_string, db_name),
         "display": None,
     }
@@ -554,12 +611,24 @@ def build_verifier_monitor_payload(connection_string, db_name=None):
         logger.info("Connected to verifier database: %s", db_name)
     except PyMongoError as e:
         logger.error("Failed to connect to verifier database: %s", e)
-        return {"error": str(e), "connectivity": base["connectivity"], "display": None}
+        return {
+            "error": str(e),
+            "warnings": [],
+            "connectivity": base["connectivity"],
+            "display": None,
+        }
     except Exception as e:
         logger.error("Unexpected error connecting to verifier database: %s", e)
-        return {"error": f"Connection error: {str(e)}", "connectivity": base["connectivity"], "display": None}
+        return {
+            "error": f"Connection error: {str(e)}",
+            "warnings": [],
+            "connectivity": base["connectivity"],
+            "display": None,
+        }
 
     try:
+        base["warnings"] = collect_verifier_metadata_warnings(db)
+
         gen_limit = VERIFIER_GENERATION_LIMIT
         current_gen = get_current_generation(db)
         if current_gen is None:
@@ -663,6 +732,7 @@ def build_verifier_monitor_payload(connection_string, db_name=None):
         logger.error(traceback.format_exc())
         return {
             "error": f"Error gathering metrics: {str(e)}",
+            "warnings": base.get("warnings", []),
             "connectivity": base["connectivity"],
             "display": None,
         }

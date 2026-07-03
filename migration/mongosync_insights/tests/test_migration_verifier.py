@@ -8,6 +8,7 @@ from pymongo.errors import PyMongoError
 from lib.migration_verifier import (
     _load_mismatches_for_tasks,
     build_verifier_monitor_payload,
+    collect_verifier_metadata_warnings,
     get_current_generation,
     get_failed_tasks,
     get_generation_doc_progress,
@@ -38,9 +39,14 @@ class TestGetGenerationName:
 class TestGetCurrentGeneration:
     def test_reads_generation_collection(self):
         db = MagicMock()
-        db.generation.find_one.return_value = {"Generation": 2}
+        db.generation.find_one.return_value = {"Generation": 2, "metadataVersion": 7}
         assert get_current_generation(db) == 2
-        db.generation.find_one.assert_called_once()
+        db.generation.find_one.assert_called_once_with({})
+
+    def test_reads_lowercase_generation_field(self):
+        db = MagicMock()
+        db.generation.find_one.return_value = {"generation": 1, "metadataVersion": 7}
+        assert get_current_generation(db) == 1
 
     def test_fallback_to_max_task_generation(self):
         db = MagicMock()
@@ -53,6 +59,53 @@ class TestGetCurrentGeneration:
         db.generation.find_one.return_value = None
         db.verification_tasks.find_one.return_value = None
         assert get_current_generation(db) is None
+
+
+class TestCollectVerifierMetadataWarnings:
+    def test_no_warning_when_generation_doc_missing(self):
+        db = MagicMock()
+        db.generation.find_one.return_value = None
+        assert collect_verifier_metadata_warnings(db) == []
+
+    def test_no_warning_when_version_matches(self):
+        db = MagicMock()
+        db.generation.find_one.return_value = {"metadataVersion": 7, "generation": 1}
+        assert collect_verifier_metadata_warnings(db) == []
+
+    def test_warns_on_version_mismatch(self, caplog):
+        db = MagicMock()
+        db.generation.find_one.return_value = {"metadataVersion": 6, "generation": 1}
+        with caplog.at_level("WARNING"):
+            warnings = collect_verifier_metadata_warnings(db)
+        assert len(warnings) == 1
+        assert "mismatch" in warnings[0].lower()
+        assert "6" in warnings[0]
+        assert "7" in warnings[0]
+        assert any("mismatch" in r.message.lower() for r in caplog.records)
+
+    def test_warns_when_metadata_version_missing(self, caplog):
+        db = MagicMock()
+        db.generation.find_one.return_value = {"generation": 1}
+        with caplog.at_level("WARNING"):
+            warnings = collect_verifier_metadata_warnings(db)
+        assert len(warnings) == 1
+        assert "metadataVersion" in warnings[0]
+        assert any("metadataVersion" in r.message for r in caplog.records)
+
+    def test_accepts_metadata_version_casing_variant(self):
+        db = MagicMock()
+        db.generation.find_one.return_value = {"MetadataVersion": 7, "Generation": 0}
+        assert collect_verifier_metadata_warnings(db) == []
+
+    def test_accepts_go_driver_lowercase_metadata_version_key(self):
+        db = MagicMock()
+        db.generation.find_one.return_value = {
+            "generation": 1,
+            "metadataversion": 7,
+            "sourcechangereaderopt": "changeStream",
+            "destinationchangereaderopt": "changeStream",
+        }
+        assert collect_verifier_metadata_warnings(db) == []
 
 
 class TestGetVerificationSummary:
@@ -290,13 +343,14 @@ class TestBuildVerifierMonitorPayload:
     @patch("lib.app_config.get_database")
     def test_success_returns_display_payload(self, mock_get_db):
         db = MagicMock()
-        db.generation.find_one.return_value = {"Generation": 0}
+        db.generation.find_one.return_value = {"Generation": 0, "metadataVersion": 7}
         db.verification_tasks.aggregate.return_value = []
         db.mismatches.find.return_value = []
         mock_get_db.return_value = db
         with patch("lib.migration_verifier.get_generation_history", return_value=[]):
             result = build_verifier_monitor_payload("mongodb://localhost:27017")
         assert result.get("error") is None
+        assert result["warnings"] == []
         assert result["display"] is not None
         assert "stateBadge" in result["display"]
         assert "generations" in result["display"]
@@ -309,7 +363,7 @@ class TestBuildVerifierMonitorPayload:
     @patch("lib.app_config.VERIFIER_GENERATION_LIMIT", 10)
     def test_uses_configured_generation_limit(self, mock_get_db, mock_gen_history):
         db = MagicMock()
-        db.generation.find_one.return_value = {"Generation": 0}
+        db.generation.find_one.return_value = {"Generation": 0, "metadataVersion": 7}
         db.verification_tasks.aggregate.return_value = []
         db.mismatches.find.return_value = []
         mock_get_db.return_value = db
@@ -390,6 +444,18 @@ class TestBuildVerifierMonitorPayload:
         assert completeness["documents"]["percent"] == 50.0
         assert "generationDetails" not in result["display"]
         assert "initialCheckCompleteness" not in result["display"]
+
+    @patch("lib.migration_verifier.get_generation_history", return_value=[])
+    @patch("lib.app_config.get_database")
+    def test_payload_includes_warnings_on_version_mismatch(self, mock_get_db, mock_history):
+        db = MagicMock()
+        db.generation.find_one.return_value = {"metadataVersion": 6, "generation": 0}
+        db.verification_tasks.aggregate.return_value = []
+        db.mismatches.find.return_value = []
+        mock_get_db.return_value = db
+        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        assert len(result["warnings"]) == 1
+        assert "mismatch" in result["warnings"][0].lower()
 
 
 class TestPlotVerifierMetrics:

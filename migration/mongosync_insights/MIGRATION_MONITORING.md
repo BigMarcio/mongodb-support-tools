@@ -100,6 +100,8 @@ The dashboard uses the same Atlas-style card UI as Migration Monitoring: status 
 
 **Progress semantics:** Task progress counts `verification_tasks` by status (excluding the coordinator `primary` task). Document progress uses the same aggregation as migration-verifier’s `/progress` API (`docsCompared` / `totalDocs` from `found_source_documents_count` and `documents_count`). The **current generation** is read from the `generation` collection (not the highest generation number in `verification_tasks`, which can include pre-inserted recheck tasks). The pass/fail badge reflects the current generation when all its tasks are finished; migration-verifier does not persist writes-off state in the metadata database.
 
+**Metadata version:** MI compares the `metadataVersion` field on the `generation` document against `VERIFIER_METADATA_VERSION` in `app_config.py` (currently **7**). This constant is not overridable via environment variables — update it in `app_config.py` when migration-verifier bumps `verifierMetadataVersion`. When the version is missing or does not match, MI logs a warning and shows a **Warnings** card on the dashboard (same pattern as Migration Monitoring).
+
 ![Migration Verifier dashboard](images/migration_verifier_dashboard.png)
 
 ## Related documentation

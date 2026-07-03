@@ -56,7 +56,7 @@ PORT = parse_env_int('MI_PORT', 3030, min_value=1, max_value=65535)
 
 # Application constants
 APP_NAME = "Mongosync Insights"
-APP_VERSION = "0.9.1.9"
+APP_VERSION = "0.9.1.11"
 
 DEVELOPER_CREDITS = {
     "copyright": "\u00a9 MongoDB Inc.",
@@ -247,6 +247,9 @@ MI_EMBEDDED_VERIFIER_DST_DB_NAME = os.getenv(
 VERIFIER_GENERATION_LIMIT = parse_env_int(
     "MI_VERIFIER_GENERATION_LIMIT", 5, min_value=1, max_value=20
 )
+# Keep in sync with migration-verifier internal/verifier/metadata.go (verifierMetadataVersion).
+# Not configurable via environment — change only here when MV bumps the schema version.
+VERIFIER_METADATA_VERSION = 7
 
 # Error patterns file
 ERROR_PATTERNS_FILE = os.getenv('MI_ERROR_PATTERNS_FILE', 
