@@ -179,6 +179,7 @@ VERIFIER_CONNECTION_STRING = os.getenv('MI_VERIFIER_CONNECTION_STRING', '') or C
 
 PROGRESS_API_PATH = "/api/v1/progress"
 DEFAULT_PROGRESS_PORT = 27182
+DEFAULT_VERIFIER_PROGRESS_PORT = 27020
 PROGRESS_PORT_MIN = 1
 PROGRESS_PORT_MAX = 65535
 
@@ -199,7 +200,7 @@ def _parse_progress_port(port_str: str) -> int:
     return port_num
 
 
-def build_progress_endpoint_url(host, port=None):
+def _build_progress_endpoint_url(host, port=None, *, default_port):
     """
     Build canonical progress endpoint URL from host and port.
 
@@ -210,8 +211,20 @@ def build_progress_endpoint_url(host, port=None):
     if not host:
         return None
     port_str = str(port).strip() if port is not None else ""
-    port_num = DEFAULT_PROGRESS_PORT if not port_str else _parse_progress_port(port_str)
+    port_num = default_port if not port_str else _parse_progress_port(port_str)
     return f"{host}:{port_num}{PROGRESS_API_PATH}"
+
+
+def build_progress_endpoint_url(host, port=None):
+    """Build Mongosync progress endpoint URL (default port 27182)."""
+    return _build_progress_endpoint_url(host, port, default_port=DEFAULT_PROGRESS_PORT)
+
+
+def build_verifier_progress_endpoint_url(host, port=None):
+    """Build migration-verifier progress endpoint URL (default port 27020)."""
+    return _build_progress_endpoint_url(
+        host, port, default_port=DEFAULT_VERIFIER_PROGRESS_PORT
+    )
 
 
 def normalize_progress_endpoint_url(raw):
@@ -232,6 +245,13 @@ PROGRESS_ENDPOINT_URL = (
     else ""
 )
 
+_raw_verifier_progress_endpoint = os.getenv("MI_VERIFIER_PROGRESS_ENDPOINT_URL", "")
+VERIFIER_PROGRESS_ENDPOINT_URL = (
+    normalize_progress_endpoint_url(_raw_verifier_progress_endpoint)
+    if _raw_verifier_progress_endpoint.strip()
+    else ""
+)
+
 # MongoDB settings
 MI_MONGOSYNC_DB_NAME = os.getenv("MI_MONGOSYNC_DB_NAME", "mongosync_reserved_for_internal_use")
 MI_MONGOSYNC_DB_NAME_NEW = "__mdb_internal_mongosync"
@@ -246,6 +266,9 @@ MI_EMBEDDED_VERIFIER_DST_DB_NAME = os.getenv(
 )
 VERIFIER_GENERATION_LIMIT = parse_env_int(
     "MI_VERIFIER_GENERATION_LIMIT", 5, min_value=1, max_value=20
+)
+VERIFIER_FAILED_TASKS_LIMIT = parse_env_int(
+    "MI_VERIFIER_FAILED_TASKS_LIMIT", 20, min_value=1, max_value=100
 )
 # Keep in sync with migration-verifier internal/verifier/metadata.go (verifierMetadataVersion).
 # Not configurable via environment — change only here when MV bumps the schema version.
@@ -322,6 +345,15 @@ def validate_config():
     if PROGRESS_ENDPOINT_URL and not validate_progress_endpoint_url(PROGRESS_ENDPOINT_URL):
         raise ValueError(
             f"Invalid MI_PROGRESS_ENDPOINT_URL: {_raw_progress_endpoint!r}. "
+            "Use host:port or host:port/api/v1/progress with port between 1 and 65535."
+        )
+
+    if (
+        VERIFIER_PROGRESS_ENDPOINT_URL
+        and not validate_progress_endpoint_url(VERIFIER_PROGRESS_ENDPOINT_URL)
+    ):
+        raise ValueError(
+            f"Invalid MI_VERIFIER_PROGRESS_ENDPOINT_URL: {_raw_verifier_progress_endpoint!r}. "
             "Use host:port or host:port/api/v1/progress with port between 1 and 65535."
         )
 

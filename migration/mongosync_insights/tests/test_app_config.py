@@ -10,6 +10,7 @@ from lib import app_config
 from lib.app_config import (
     InMemorySessionStore,
     build_progress_endpoint_url,
+    build_verifier_progress_endpoint_url,
     classify_file_type,
     is_multi_file_archive,
     load_error_patterns,
@@ -23,6 +24,7 @@ from lib.app_config import (
     MI_MONGOSYNC_DB_NAME_NEW,
     MI_MIGRATION_VERIFIER_DB_NAME,
     VERIFIER_GENERATION_LIMIT,
+    VERIFIER_FAILED_TASKS_LIMIT,
 )
 
 
@@ -138,6 +140,34 @@ class TestProgressEndpointUrl:
     def test_validate_accepts_normalized_output(self):
         url = normalize_progress_endpoint_url("localhost:27182")
         assert validate_progress_endpoint_url(url) is True
+
+
+class TestVerifierProgressEndpointUrl:
+    def test_build_empty_host_returns_none(self):
+        assert build_verifier_progress_endpoint_url("", "27020") is None
+
+    def test_build_default_port(self):
+        assert (
+            build_verifier_progress_endpoint_url("myhost", None)
+            == "myhost:27020/api/v1/progress"
+        )
+
+    def test_build_custom_port(self):
+        assert (
+            build_verifier_progress_endpoint_url("myhost", "9999")
+            == "myhost:9999/api/v1/progress"
+        )
+
+    @patch.object(app_config, "VERIFIER_PROGRESS_ENDPOINT_URL", "host:70000/api/v1/progress")
+    @patch.object(app_config, "_raw_verifier_progress_endpoint", "host:70000")
+    @patch.object(app_config, "LOG_LEVEL", "INFO")
+    @patch.object(app_config, "PROGRESS_ENDPOINT_URL", "")
+    @patch("lib.app_config.os.access", return_value=True)
+    @patch("lib.app_config.Path")
+    def test_rejects_invalid_verifier_progress_endpoint_url(self, mock_path, mock_access):
+        mock_path.return_value.parent.exists.return_value = True
+        with pytest.raises(ValueError, match="MI_VERIFIER_PROGRESS_ENDPOINT_URL"):
+            validate_config()
 
 
 class TestClassifyFileType:
@@ -265,6 +295,23 @@ class TestVerifierGenerationLimit:
         importlib.reload(config_module)
         try:
             assert config_module.VERIFIER_GENERATION_LIMIT == 10
+        finally:
+            importlib.reload(app_config)
+
+
+class TestVerifierFailedTasksLimit:
+    def test_default_failed_tasks_limit(self):
+        assert VERIFIER_FAILED_TASKS_LIMIT == 20
+
+    @patch.dict("os.environ", {"MI_VERIFIER_FAILED_TASKS_LIMIT": "50"}, clear=False)
+    def test_env_override(self):
+        import importlib
+
+        import lib.app_config as config_module
+
+        importlib.reload(config_module)
+        try:
+            assert config_module.VERIFIER_FAILED_TASKS_LIMIT == 50
         finally:
             importlib.reload(app_config)
 

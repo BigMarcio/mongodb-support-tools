@@ -671,3 +671,78 @@
 [data-theme="dark"] .lm-filter-migration-toggle:hover {
     color: var(--lm-text-primary);
 }
+
+/* Migration Verifier progress card — tighter vertical rhythm */
+.lm-card-title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    color: var(--lm-text-primary);
+}
+
+.lm-verifier-progress-card-body {
+    margin-top: 10px;
+}
+
+.lm-verifier-progress-body.lm-stack-tight {
+    gap: 6px;
+}
+
+.lm-verifier-progress-body .lm-phase-row {
+    margin-bottom: 2px;
+}
+
+.lm-verifier-metrics {
+    margin-top: 8px;
+    gap: 10px;
+}
+
+.lm-verifier-metrics .lm-mvalue {
+    font-size: 18px;
+}
+
+.lm-verifier-section-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--lm-text-primary);
+    margin: 2px 0 0;
+}
+
+.lm-verifier-change-stream {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.lm-verifier-change-stream .lm-verifier-metrics {
+    margin-top: 4px;
+}
+
+.lm-verifier-events-line {
+    font-size: 12px;
+    margin: 0;
+    line-height: 1.35;
+}
+
+.lm-verifier-recheck-block {
+    margin-top: 4px;
+}
+
+.lm-verifier-recheck-block .lm-kv {
+    padding: 4px 0;
+}
+
+.lm-verifier-gen0-block {
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--lm-card-border);
+}
+
+.lm-verifier-gen0-details {
+    margin-top: 6px;
+}

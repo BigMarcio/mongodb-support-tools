@@ -37,10 +37,27 @@
 
     <form id="verifierForm" method="post" action="{{ url_for('live.verifier') }}" enctype="multipart/form-data" autocomplete="off">
         <h2>Migration Verifier</h2>
-        {{ verifier_connection_string_form | safe }}
+        {% if verifier_progress_endpoint_configured %}
+        <p><b>Migration Verifier progress endpoint (primary): </b>{{ verifier_progress_endpoint_url }}</p>
+        {% else %}
+        <label for="verifierProgressHost">Migration Verifier progress endpoint:</label>
+        <div class="progress-endpoint-row">
+            <input type="text" id="verifierProgressHost" name="verifierProgressHost" autocomplete="off"
+                placeholder="localhost" class="progress-host-input">
+            <input type="text" id="verifierProgressPort" name="verifierProgressPort" autocomplete="off"
+                value="27020" placeholder="27020" class="progress-port-input" size="5" maxlength="5">
+        </div><br>
+        {% endif %}
+        {% if verifier_connection_string_configured %}
+        <p><b>Verifier metadata database (optional): </b>{{ verifier_connection_string_display }}</p>
+        {% else %}
+        <label for="verifierConnectionString">Verifier MongoDB connection string (optional):</label>
+        <input type="text" id="verifierConnectionString" name="verifierConnectionString" size="47" autocomplete="off"
+            placeholder="mongodb+srv://usr:pwd@cluster0.mongodb.net/"><br><br>
+        {% endif %}
         <input type="submit" value="Monitor Verifier">
-        <p>Click the "Monitor Verifier" button to monitor the <a href="https://github.com/mongodb-labs/migration-verifier" target="_blank">migration-verifier</a> tool progress.</p>
-        <p><small><strong>Note:</strong> Connect to the MongoDB cluster where the migration-verifier writes its metadata (typically the destination cluster).</small></p>
+        <p>Click <strong>Monitor Verifier</strong> to start real-time monitoring. Provide the progress endpoint, the connection string, or both.</p>
+        <p><small><strong>Note:</strong> The <strong>Migration Verifier progress endpoint</strong> is the main source for live verification progress. The <strong>MongoDB connection string</strong> is optional and enables metadata cards (generations, namespace progress, mismatches).</small></p>
         <p class="verifier-note">
             <strong>Note:</strong> If verifying a migration done via mongosync, check if the
             <a href="https://www.mongodb.com/docs/cluster-to-cluster-sync/current/reference/verification/embedded/" target="_blank">Embedded Verifier</a>
@@ -93,11 +110,38 @@ function validateMetadataForm() {
 
 function validateVerifierForm() {
     var connField = document.getElementById('verifierConnectionString');
-    var connConfigured = connField === null || connField.value.trim() !== '';
+    var hostField = document.getElementById('verifierProgressHost');
+    var portField = document.getElementById('verifierProgressPort');
 
-    if (!connConfigured) {
-        alert("Please provide a MongoDB Connection String for the migration verifier database.");
+    var connConfigured = connField === null || connField.value.trim() !== '';
+    var hostConfigured = hostField === null || hostField.value.trim() !== '';
+
+    if (!connConfigured && !hostConfigured) {
+        alert("Please provide at least one of the following: Migration Verifier progress endpoint or MongoDB connection string (or both).");
         return false;
+    }
+
+    if (hostField && hostConfigured) {
+        var hostPattern = /^[\w\.\-]+$/;
+        if (!hostPattern.test(hostField.value.trim())) {
+            alert("Invalid progress endpoint host. Use a hostname or IP address (e.g., localhost).");
+            return false;
+        }
+        if (portField) {
+            var portValue = portField.value.trim();
+            if (portValue) {
+                var portPattern = /^\d+$/;
+                if (!portPattern.test(portValue)) {
+                    alert("Invalid progress endpoint port. Enter digits only (default 27020).");
+                    return false;
+                }
+                var portNum = parseInt(portValue, 10);
+                if (portNum < 1 || portNum > 65535) {
+                    alert("Invalid progress endpoint port. Must be between 1 and 65535.");
+                    return false;
+                }
+            }
+        }
     }
 
     return true;

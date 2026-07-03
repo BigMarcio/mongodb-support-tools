@@ -4,6 +4,7 @@ Provides monitoring for MongoDB migration-verifier tool.
 https://github.com/mongodb-labs/migration-verifier
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import render_template
 from pymongo.errors import PyMongoError
@@ -132,13 +133,21 @@ def get_verification_summary(db, generation):
     return summary
 
 
-def get_failed_tasks(db, generation, limit=50):
+def get_failed_tasks(db, generation, limit=None, document_only=False):
     """Get failed verification tasks with details including mismatch info."""
+    if limit is None:
+        from .app_config import VERIFIER_FAILED_TASKS_LIMIT
+        limit = VERIFIER_FAILED_TASKS_LIMIT
+
+    match = {
+        **_base_task_match(generation),
+        "status": {"$in": _TASK_STATUSES_FAILED},
+    }
+    if document_only:
+        match["type"] = {"$ne": _VERIFY_COLLECTION}
+
     pipeline = [
-        {"$match": {
-            **_base_task_match(generation),
-            "status": {"$in": _TASK_STATUSES_FAILED},
-        }},
+        {"$match": match},
         {"$sort": {"begin_time": -1}},
         {"$limit": limit},
         {"$project": {
@@ -178,15 +187,11 @@ def get_namespace_stats(db, generation):
     return list(db.verification_tasks.aggregate(pipeline, allowDiskUse=True))
 
 
-def _namespace_stats_pipeline(generation):
-    """Port of migration-verifier GetPersistedNamespaceStatistics aggregation."""
+def _namespace_stats_add_fields_stage():
+    """Shared $addFields stage for namespace statistics aggregations."""
     finished_statuses = ["completed", "failed"]
-    return [
-        {"$match": {
-            "type": {"$in": [_VERIFY_DOCUMENTS, _VERIFY_COLLECTION]},
-            "generation": generation,
-        }},
-        {"$addFields": {
+    return {
+        "$addFields": {
             "partitionAdded": {
                 "$cond": [
                     {"$and": [
@@ -259,9 +264,14 @@ def _namespace_stats_pipeline(generation):
                     0,
                 ],
             },
-        }},
-        {"$group": {
-            "_id": "$query_filter.namespace",
+        },
+    }
+
+
+def _namespace_stats_group_stage(group_id):
+    return {
+        "$group": {
+            "_id": group_id,
             "docsCompared": {"$sum": "$docsCompared"},
             "totalDocs": {"$sum": "$totalDocs"},
             "bytesCompared": {"$sum": "$bytesCompared"},
@@ -269,16 +279,80 @@ def _namespace_stats_pipeline(generation):
             "partitionsAdded": {"$sum": "$partitionAdded"},
             "partitionsProcessing": {"$sum": "$partitionProcessing"},
             "partitionsDone": {"$sum": "$partitionDone"},
-        }},
-        {"$sort": {"_id": 1}},
+        },
+    }
+
+
+def _namespace_stats_pipeline(generation=None, generations=None):
+    """Port of migration-verifier GetPersistedNamespaceStatistics aggregation."""
+    if generations is not None:
+        unique_gens = sorted({g for g in generations if g is not None})
+        if not unique_gens:
+            return []
+        match_stage = {
+            "type": {"$in": [_VERIFY_DOCUMENTS, _VERIFY_COLLECTION]},
+            "generation": {"$in": unique_gens},
+        }
+        group_id = {
+            "generation": "$generation",
+            "namespace": "$query_filter.namespace",
+        }
+        sort_stage = {"$sort": {"_id.generation": 1, "_id.namespace": 1}}
+    else:
+        match_stage = {
+            "type": {"$in": [_VERIFY_DOCUMENTS, _VERIFY_COLLECTION]},
+            "generation": generation,
+        }
+        group_id = "$query_filter.namespace"
+        sort_stage = {"$sort": {"_id": 1}}
+
+    return [
+        {"$match": match_stage},
+        _namespace_stats_add_fields_stage(),
+        _namespace_stats_group_stage(group_id),
+        sort_stage,
     ]
+
+
+def _split_batch_namespace_statistics(rows):
+    """Group batched namespace stats rows by generation number."""
+    by_generation = {}
+    for row in rows:
+        group_key = row.get("_id") or {}
+        generation = group_key.get("generation")
+        if generation is None:
+            continue
+        by_generation.setdefault(generation, []).append({
+            "_id": group_key.get("namespace"),
+            "docsCompared": row.get("docsCompared") or 0,
+            "totalDocs": row.get("totalDocs") or 0,
+            "bytesCompared": row.get("bytesCompared") or 0,
+            "totalBytes": row.get("totalBytes") or 0,
+            "partitionsAdded": row.get("partitionsAdded") or 0,
+            "partitionsProcessing": row.get("partitionsProcessing") or 0,
+            "partitionsDone": row.get("partitionsDone") or 0,
+        })
+    return by_generation
+
+
+def get_persisted_namespace_statistics_batch(db, generations):
+    """Namespace statistics for multiple generations in one aggregation."""
+    pipeline = _namespace_stats_pipeline(generations=generations)
+    if not pipeline:
+        return {}
+    try:
+        rows = list(db.verification_tasks.aggregate(pipeline, allowDiskUse=True))
+        return _split_batch_namespace_statistics(rows)
+    except Exception as e:
+        logger.warning("Failed to get batched namespace statistics: %s", e)
+        return {}
 
 
 def get_persisted_namespace_statistics(db, generation):
     """Document-level namespace progress (aligned with migration-verifier /progress)."""
     try:
         return list(db.verification_tasks.aggregate(
-            _namespace_stats_pipeline(generation),
+            _namespace_stats_pipeline(generation=generation),
             allowDiskUse=True,
         ))
     except Exception as e:
@@ -299,9 +373,7 @@ def get_generation_doc_progress(db, generation):
     }
 
 
-def get_generation_progress_stats(db, generation):
-    """Sum namespace document and partition stats for a generation."""
-    ns_stats = get_persisted_namespace_statistics(db, generation)
+def _sum_namespace_stats_list(ns_stats):
     docs_compared = 0
     total_docs = 0
     partitions_done = 0
@@ -319,9 +391,17 @@ def get_generation_progress_stats(db, generation):
     }
 
 
-def get_generation_history(db, limit=4):
+def get_generation_progress_stats(db, generation, ns_stats=None):
+    """Sum namespace document and partition stats for a generation."""
+    if ns_stats is None:
+        ns_stats = get_persisted_namespace_statistics(db, generation)
+    return _sum_namespace_stats_list(ns_stats)
+
+
+def get_generation_history(db, limit=4, current_gen=None):
     """Get history of latest generations with their stats."""
-    current_gen = get_current_generation(db)
+    if current_gen is None:
+        current_gen = get_current_generation(db)
     if current_gen is None:
         return []
 
@@ -469,16 +549,18 @@ def _serialize_failed_task(task, generation):
     }
 
 
-def get_failed_tasks_for_display(db, generation, limit=50):
-    """Collect failed/mismatch tasks for one generation (excludes collection metadata)."""
+def get_failed_tasks_for_display(db, generation, limit=None):
+    """Collect failed/mismatch document tasks for one generation."""
+    if limit is None:
+        from .app_config import VERIFIER_FAILED_TASKS_LIMIT
+        limit = VERIFIER_FAILED_TASKS_LIMIT
+
     rows = []
-    tasks = get_failed_tasks(db, generation, limit=limit)
+    tasks = get_failed_tasks(db, generation, limit=limit, document_only=True)
     for task in tasks:
-        if task.get("type") == _VERIFY_COLLECTION:
-            continue
         rows.append(_serialize_failed_task(task, generation))
     rows.sort(key=lambda r: r.get("beginTime") or "", reverse=True)
-    return rows
+    return rows[:limit]
 
 
 def _derive_state_badge(current_gen, previous_gen_stats, collection_mismatches):
@@ -495,14 +577,452 @@ def _derive_state_badge(current_gen, previous_gen_stats, collection_mismatches):
     return {"label": "PASS", "color": "green"}
 
 
-def _build_connectivity(connection_string, db_name):
+def _build_connectivity(connection_string=None, db_name=None, endpoint_url=None):
+    rows = []
+    if endpoint_url:
+        rows.append({"label": "Progress endpoint", "value": endpoint_url})
+    if db_name:
+        rows.append({"label": "Verifier database", "value": db_name})
+    if connection_string:
+        rows.append({
+            "label": "Connection string",
+            "value": sanitize_for_display(connection_string),
+        })
     return {
         "title": "Connectivity",
-        "rows": [
-            {"label": "Verifier database", "value": db_name},
-            {"label": "Connection string", "value": sanitize_for_display(connection_string)},
-        ],
+        "rows": rows,
     }
+
+
+def _safe_int(value, default=0):
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value):
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _unwrap_option(value):
+    """Unwrap migration-verifier option fields (scalar or null)."""
+    if value is None:
+        return None
+    if isinstance(value, dict) and len(value) == 0:
+        return None
+    return value
+
+
+def _format_bson_timestamp(ts):
+    if not ts:
+        return None
+    if isinstance(ts, dict):
+        inner = ts.get("$timestamp") or ts
+        t_val = inner.get("t")
+        i_val = inner.get("i")
+        if t_val is not None:
+            if i_val is not None:
+                return f"{{t: {t_val}, i: {i_val}}}"
+            return str(t_val)
+    return str(ts)
+
+
+def _phase_badge_from_progress(phase):
+    phase_lower = (phase or "").strip().lower()
+    mapping = {
+        "idle": ("IDLE", "gray"),
+        "check": ("CHECK", "blue"),
+        "recheck": ("RECHECK", "yellow"),
+    }
+    label, color = mapping.get(phase_lower, (phase_lower.upper() or "—", "gray"))
+    return {"label": label, "color": color}
+
+
+def _serialize_generation_stats(stats):
+    if not stats:
+        return None
+    compared = _safe_int(stats.get("docsCompared"))
+    total = _safe_int(stats.get("totalDocs"))
+    bytes_compared = _safe_int(stats.get("srcBytesCompared"))
+    total_bytes = _safe_int(stats.get("totalSrcBytes"))
+    result = {
+        "docsCompared": compared,
+        "totalDocs": total,
+        "docsPercent": _percent(compared, total),
+        "totalNamespaces": _safe_int(stats.get("totalNamespaces")),
+    }
+    if total_bytes > 0:
+        result["srcBytesCompared"] = bytes_compared
+        result["totalSrcBytes"] = total_bytes
+        result["bytesPercent"] = _percent(bytes_compared, total_bytes)
+    return result
+
+
+def _serialize_change_stats(stats, label):
+    if not stats:
+        return None
+    event_counts = stats.get("eventCounts") or {}
+    lag = _unwrap_option(stats.get("lagSecs"))
+    eps = _unwrap_option(stats.get("eventsPerSecond"))
+    return {
+        "label": label,
+        "eventsPerSecond": _safe_float(eps),
+        "lagSecs": _safe_int(lag) if lag is not None else None,
+        "bufferSaturation": _safe_float(stats.get("bufferSaturation")),
+        "eventCounts": {
+            "insert": _safe_int(event_counts.get("insert")),
+            "update": _safe_int(event_counts.get("update")),
+            "replace": _safe_int(event_counts.get("replace")),
+            "delete": _safe_int(event_counts.get("delete")),
+        },
+    }
+
+
+def _serialize_longest_mismatch(mismatch):
+    if not mismatch:
+        return None
+    return {
+        "type": mismatch.get("type"),
+        "namespace": mismatch.get("namespace"),
+        "id": mismatch.get("_id"),
+        "field": _unwrap_option(mismatch.get("field")),
+        "detail": _unwrap_option(mismatch.get("detail")),
+        "durationSecs": _safe_float(mismatch.get("durationSecs")),
+    }
+
+
+def build_verifier_progress_display(progress):
+    """Map migration-verifier /progress fields to dashboard display object."""
+    if not progress:
+        return None
+
+    phase = (progress.get("phase") or "").strip().lower()
+    gen_stats = progress.get("generationStats") or {}
+    verification_status = progress.get("verificationStatus") or {}
+    gen0_stats = _unwrap_option(progress.get("gen0Stats"))
+
+    compared = _safe_int(gen_stats.get("docsCompared"))
+    total_docs = _safe_int(gen_stats.get("totalDocs"))
+    bytes_compared = _safe_int(gen_stats.get("srcBytesCompared"))
+    total_bytes = _safe_int(gen_stats.get("totalSrcBytes"))
+
+    phase_descriptions = {
+        "idle": "Verification is idle (not actively checking or rechecking).",
+        "check": "Initial document check (generation 0) is in progress.",
+        "recheck": "Recheck generation is in progress.",
+    }
+
+    error_val = progress.get("error")
+    error_str = None
+    if error_val is not None and error_val != "":
+        error_str = str(error_val)
+
+    return {
+        "phase": phase,
+        "phaseLabel": phase.upper() if phase else "—",
+        "phaseBadge": _phase_badge_from_progress(phase),
+        "phaseDescription": phase_descriptions.get(phase),
+        "generation": _safe_int(progress.get("generation")),
+        "documents": {
+            "compared": compared,
+            "total": total_docs,
+            "percent": _percent(compared, total_docs),
+        },
+        "bytes": {
+            "compared": bytes_compared,
+            "total": total_bytes,
+            "percent": _percent(bytes_compared, total_bytes) if total_bytes > 0 else None,
+        },
+        "totalNamespaces": _safe_int(gen_stats.get("totalNamespaces")),
+        "tasks": {
+            "total": _safe_int(verification_status.get("totalTasks")),
+            "added": _safe_int(verification_status.get("addedTasks")),
+            "processing": _safe_int(verification_status.get("processingTasks")),
+            "failed": _safe_int(verification_status.get("failedTasks")),
+            "completed": _safe_int(verification_status.get("completedTasks")),
+            "metadataMismatch": _safe_int(verification_status.get("metadataMismatchTasks")),
+        },
+        "docsComparedPerSecond": _safe_float(progress.get("docsComparedPerSecond")),
+        "srcBytesComparedPerSecond": _safe_float(progress.get("srcBytesComparedPerSecond")),
+        "srcChangeStats": _serialize_change_stats(progress.get("srcChangeStats"), "Source"),
+        "dstChangeStats": _serialize_change_stats(progress.get("dstChangeStats"), "Destination"),
+        "srcLastRecheckedTS": _format_bson_timestamp(progress.get("srcLastRecheckedTS")),
+        "dstLastRecheckedTS": _format_bson_timestamp(progress.get("dstLastRecheckedTS")),
+        "recentRecheckSecs": [
+            round(float(x), 2)
+            for x in (progress.get("recentRecheckSecs") or [])
+            if x is not None
+        ],
+        "totalRechecksDone": _safe_int(progress.get("totalRechecksDone")),
+        "gen0Stats": _serialize_generation_stats(gen0_stats),
+        "longestDocMismatch": _serialize_longest_mismatch(
+            _unwrap_option(progress.get("longestDocMismatch"))
+        ),
+        "error": error_str,
+    }
+
+
+def _fetch_verifier_progress(endpoint_url):
+    from .live_monitoring import ProgressFetchError, fetch_progress
+
+    progress, _warnings = fetch_progress(endpoint_url)
+    return build_verifier_progress_display(progress)
+
+
+def _build_metadata_display(db, db_name):
+    """Build metadata-driven display dict from verifier database."""
+    from .app_config import VERIFIER_FAILED_TASKS_LIMIT, VERIFIER_GENERATION_LIMIT
+
+    gen_limit = VERIFIER_GENERATION_LIMIT
+    current_gen = get_current_generation(db)
+    if current_gen is None:
+        current_gen = 0
+
+    previous_gen = current_gen - 1 if current_gen > 0 else None
+    gen_range = list(range(max(0, current_gen - gen_limit + 1), current_gen + 1))
+
+    max_workers = 4 if previous_gen is not None else 3
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            "history": executor.submit(
+                get_generation_history, db, gen_limit, current_gen,
+            ),
+            "ns_batch": executor.submit(
+                get_persisted_namespace_statistics_batch, db, gen_range,
+            ),
+            "summary": executor.submit(
+                get_verification_summary, db, current_gen,
+            ),
+        }
+        if previous_gen is not None:
+            futures["coll_mm"] = executor.submit(
+                get_collection_metadata_mismatches, db, previous_gen,
+            )
+            futures["failed"] = executor.submit(
+                get_failed_tasks_for_display, db, previous_gen,
+            )
+
+        gen_history = futures["history"].result()
+        ns_by_generation = futures["ns_batch"].result()
+        task_summary_current = futures["summary"].result()
+        if previous_gen is not None:
+            collection_mismatch_docs = futures["coll_mm"].result()
+            failed_tasks = futures["failed"].result()
+        else:
+            collection_mismatch_docs = []
+            failed_tasks = []
+
+    generations_to_show = []
+    for g in gen_history:
+        gen_num = g["_id"]
+        if gen_num is not None:
+            generations_to_show.append({
+                "num": gen_num,
+                "name": get_generation_name(gen_num),
+                "total": g["total_tasks"],
+                "completed": g["completed"],
+                "failed": g["failed"],
+                "pending": g.get("pending", 0),
+                "startTime": _format_start_time(g.get("first_task_time", "N/A")),
+            })
+
+    generations_to_show.sort(
+        key=lambda x: x["num"] if x["num"] is not None else -1,
+        reverse=True,
+    )
+
+    for g in generations_to_show:
+        is_current = g["num"] == current_gen
+        g["isCurrent"] = is_current
+        g["isFinal"] = is_current
+        if is_current:
+            g["name"] = f"★ {g['name']} (CURRENT)"
+
+    generations_to_show = generations_to_show[:gen_limit]
+
+    ns_doc_stats = ns_by_generation.get(current_gen, [])
+    namespaces = []
+    if previous_gen is not None:
+        ns_doc_stats_previous = ns_by_generation.get(previous_gen, [])
+        namespaces = [
+            {
+                "name": ns["_id"] or "unknown",
+                "docsCompared": ns.get("docsCompared") or 0,
+                "totalDocs": ns.get("totalDocs") or 0,
+                "partitionsDone": ns.get("partitionsDone") or 0,
+                "partitionsPending": (ns.get("partitionsAdded") or 0) + (ns.get("partitionsProcessing") or 0),
+            }
+            for ns in ns_doc_stats_previous
+        ]
+        namespaces.sort(key=_doc_completion_pct)
+
+    verification_completeness = get_verification_completeness(
+        ns_doc_stats, task_summary_current, current_gen,
+    )
+
+    for g in generations_to_show:
+        gen_num = g["num"]
+        if gen_num == current_gen:
+            g["docsCompared"] = verification_completeness["documents"]["compared"]
+            g["totalDocs"] = verification_completeness["documents"]["total"]
+            g["partitionsDone"] = verification_completeness["partitions"]["done"]
+            g["partitionsTotal"] = verification_completeness["partitions"]["total"]
+        else:
+            g.update(get_generation_progress_stats(
+                db, gen_num, ns_stats=ns_by_generation.get(gen_num, []),
+            ))
+
+    collection_mismatches = []
+    for mm in collection_mismatch_docs:
+        detail = mm.get("detail", {})
+        namespace = detail.get("nameSpace") or detail.get("namespace") or "N/A"
+        formatted = _format_single_mismatch_detail(detail, _VERIFY_COLLECTION)
+        collection_mismatches.append({
+            "namespace": namespace,
+            "details": formatted or "Mismatch detected (check logs for details)",
+        })
+
+    previous_gen_row = next(
+        (g for g in generations_to_show if g["num"] == previous_gen),
+        None,
+    )
+
+    return {
+        "metadataAvailable": True,
+        "stateBadge": _derive_state_badge(
+            current_gen, previous_gen_row, collection_mismatches,
+        ),
+        "currentGeneration": current_gen,
+        "generationLimit": gen_limit,
+        "failedTasksLimit": VERIFIER_FAILED_TASKS_LIMIT,
+        "verificationCompleteness": verification_completeness,
+        "generations": generations_to_show,
+        "namespaces": namespaces[:25],
+        "previousGeneration": previous_gen,
+        "failedTasks": failed_tasks,
+        "collectionMismatches": collection_mismatches,
+    }
+
+
+def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoint_url=None):
+    """Build JSON payload for the Migration Verifier monitoring dashboard."""
+    from .app_config import MI_MIGRATION_VERIFIER_DB_NAME, get_database
+    from .live_monitoring import ProgressFetchError
+
+    if db_name is None:
+        db_name = MI_MIGRATION_VERIFIER_DB_NAME
+
+    base = {
+        "error": None,
+        "warnings": [],
+        "connectivity": _build_connectivity(
+            connection_string, db_name if connection_string else None, endpoint_url,
+        ),
+        "display": None,
+    }
+
+    verification_progress = None
+    if endpoint_url:
+        try:
+            verification_progress = _fetch_verifier_progress(endpoint_url)
+        except ProgressFetchError as e:
+            logger.warning("Verifier progress endpoint fetch failed: %s", e)
+            base["warnings"].append(f"Verifier progress endpoint is not responding: {e}")
+
+    if not connection_string:
+        display = {}
+        if verification_progress:
+            display["verificationProgress"] = verification_progress
+            display["stateBadge"] = _derive_state_badge_from_progress(verification_progress)
+            display["metadataAvailable"] = False
+        base["display"] = display or None
+        if not display and not base["warnings"]:
+            base["error"] = (
+                "No verifier data available. Configure a progress endpoint or "
+                "connection string."
+            )
+        return base
+
+    try:
+        db = get_database(connection_string, db_name)
+        logger.info("Connected to verifier database: %s", db_name)
+    except PyMongoError as e:
+        logger.error("Failed to connect to verifier database: %s", e)
+        if verification_progress:
+            base["display"] = {
+                "verificationProgress": verification_progress,
+                "stateBadge": _derive_state_badge_from_progress(verification_progress),
+                "metadataAvailable": False,
+            }
+            return base
+        return {
+            "error": str(e),
+            "warnings": base["warnings"],
+            "connectivity": base["connectivity"],
+            "display": None,
+        }
+    except Exception as e:
+        logger.error("Unexpected error connecting to verifier database: %s", e)
+        if verification_progress:
+            base["display"] = {
+                "verificationProgress": verification_progress,
+                "stateBadge": _derive_state_badge_from_progress(verification_progress),
+                "metadataAvailable": False,
+            }
+            return base
+        return {
+            "error": f"Connection error: {str(e)}",
+            "warnings": base["warnings"],
+            "connectivity": base["connectivity"],
+            "display": None,
+        }
+
+    try:
+        base["warnings"].extend(collect_verifier_metadata_warnings(db))
+        display = _build_metadata_display(db, db_name)
+        if verification_progress:
+            display["verificationProgress"] = verification_progress
+        base["display"] = display
+        return base
+
+    except Exception as e:
+        logger.error("Error gathering verifier metrics: %s", e)
+        import traceback
+        logger.error(traceback.format_exc())
+        if verification_progress:
+            return {
+                "error": f"Error gathering metrics: {str(e)}",
+                "warnings": base.get("warnings", []),
+                "connectivity": base["connectivity"],
+                "display": {
+                    "verificationProgress": verification_progress,
+                    "stateBadge": _derive_state_badge_from_progress(verification_progress),
+                    "metadataAvailable": False,
+                },
+            }
+        return {
+            "error": f"Error gathering metrics: {str(e)}",
+            "warnings": base.get("warnings", []),
+            "connectivity": base["connectivity"],
+            "display": None,
+        }
+
+
+def _derive_state_badge_from_progress(progress_display):
+    """Toolbar badge when only the progress endpoint is available (no metadata)."""
+    if not progress_display:
+        return {"label": "NO DATA", "color": "gray"}
+    if progress_display.get("generation", 0) == 0:
+        return {"label": "IN PROGRESS", "color": "blue"}
+    return {"label": "NO DATA", "color": "gray"}
 
 
 def _doc_completion_pct(ns):
@@ -614,160 +1134,6 @@ def collect_verifier_metadata_warnings(db):
         return [message]
 
     return []
-
-
-def build_verifier_monitor_payload(connection_string, db_name=None):
-    """Build JSON payload for the Migration Verifier monitoring dashboard."""
-    from .app_config import MI_MIGRATION_VERIFIER_DB_NAME, VERIFIER_GENERATION_LIMIT, get_database
-
-    if db_name is None:
-        db_name = MI_MIGRATION_VERIFIER_DB_NAME
-
-    base = {
-        "error": None,
-        "warnings": [],
-        "connectivity": _build_connectivity(connection_string, db_name),
-        "display": None,
-    }
-
-    try:
-        db = get_database(connection_string, db_name)
-        logger.info("Connected to verifier database: %s", db_name)
-    except PyMongoError as e:
-        logger.error("Failed to connect to verifier database: %s", e)
-        return {
-            "error": str(e),
-            "warnings": [],
-            "connectivity": base["connectivity"],
-            "display": None,
-        }
-    except Exception as e:
-        logger.error("Unexpected error connecting to verifier database: %s", e)
-        return {
-            "error": f"Connection error: {str(e)}",
-            "warnings": [],
-            "connectivity": base["connectivity"],
-            "display": None,
-        }
-
-    try:
-        base["warnings"] = collect_verifier_metadata_warnings(db)
-
-        gen_limit = VERIFIER_GENERATION_LIMIT
-        current_gen = get_current_generation(db)
-        if current_gen is None:
-            current_gen = 0
-
-        gen_history = get_generation_history(db, limit=gen_limit)
-
-        generations_to_show = []
-        for g in gen_history:
-            gen_num = g["_id"]
-            if gen_num is not None:
-                generations_to_show.append({
-                    "num": gen_num,
-                    "name": get_generation_name(gen_num),
-                    "total": g["total_tasks"],
-                    "completed": g["completed"],
-                    "failed": g["failed"],
-                    "pending": g.get("pending", 0),
-                    "startTime": _format_start_time(g.get("first_task_time", "N/A")),
-                })
-
-        generations_to_show.sort(
-            key=lambda x: x["num"] if x["num"] is not None else -1,
-            reverse=True,
-        )
-
-        for g in generations_to_show:
-            is_current = g["num"] == current_gen
-            g["isCurrent"] = is_current
-            g["isFinal"] = is_current  # backward compat for older clients
-            if is_current:
-                g["name"] = f"★ {g['name']} (CURRENT)"
-
-        generations_to_show = generations_to_show[:gen_limit]
-
-        previous_gen = current_gen - 1 if current_gen > 0 else None
-
-        ns_doc_stats = get_persisted_namespace_statistics(db, current_gen)
-        namespaces = []
-        if previous_gen is not None:
-            ns_doc_stats_previous = get_persisted_namespace_statistics(db, previous_gen)
-            namespaces = [
-                {
-                    "name": ns["_id"] or "unknown",
-                    "docsCompared": ns.get("docsCompared") or 0,
-                    "totalDocs": ns.get("totalDocs") or 0,
-                    "partitionsDone": ns.get("partitionsDone") or 0,
-                    "partitionsPending": (ns.get("partitionsAdded") or 0) + (ns.get("partitionsProcessing") or 0),
-                }
-                for ns in ns_doc_stats_previous
-            ]
-            namespaces.sort(key=_doc_completion_pct)
-
-        task_summary_current = get_verification_summary(db, current_gen)
-        verification_completeness = get_verification_completeness(
-            ns_doc_stats, task_summary_current, current_gen,
-        )
-
-        for g in generations_to_show:
-            gen_num = g["num"]
-            if gen_num == current_gen:
-                g["docsCompared"] = verification_completeness["documents"]["compared"]
-                g["totalDocs"] = verification_completeness["documents"]["total"]
-                g["partitionsDone"] = verification_completeness["partitions"]["done"]
-                g["partitionsTotal"] = verification_completeness["partitions"]["total"]
-            else:
-                g.update(get_generation_progress_stats(db, gen_num))
-
-        collection_mismatches = []
-        if previous_gen is not None:
-            collection_mismatch_docs = get_collection_metadata_mismatches(db, previous_gen)
-            for mm in collection_mismatch_docs:
-                detail = mm.get("detail", {})
-                namespace = detail.get("nameSpace") or detail.get("namespace") or "N/A"
-                formatted = _format_single_mismatch_detail(detail, _VERIFY_COLLECTION)
-                collection_mismatches.append({
-                    "namespace": namespace,
-                    "details": formatted or "Mismatch detected (check logs for details)",
-                })
-
-        if previous_gen is not None:
-            failed_tasks = get_failed_tasks_for_display(db, previous_gen)
-        else:
-            failed_tasks = []
-
-        previous_gen_row = next(
-            (g for g in generations_to_show if g["num"] == previous_gen),
-            None,
-        )
-
-        base["display"] = {
-            "stateBadge": _derive_state_badge(
-                current_gen, previous_gen_row, collection_mismatches,
-            ),
-            "currentGeneration": current_gen,
-            "generationLimit": gen_limit,
-            "verificationCompleteness": verification_completeness,
-            "generations": generations_to_show,
-            "namespaces": namespaces[:25],
-            "previousGeneration": previous_gen,
-            "failedTasks": failed_tasks,
-            "collectionMismatches": collection_mismatches,
-        }
-        return base
-
-    except Exception as e:
-        logger.error("Error gathering verifier metrics: %s", e)
-        import traceback
-        logger.error(traceback.format_exc())
-        return {
-            "error": f"Error gathering metrics: {str(e)}",
-            "warnings": base.get("warnings", []),
-            "connectivity": base["connectivity"],
-            "display": None,
-        }
 
 
 def plot_verifier_metrics(db_name=None):

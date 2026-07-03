@@ -10,6 +10,7 @@ from lib.migration_verifier import (
     _load_mismatches_for_tasks,
     _serialize_failed_task,
     build_verifier_monitor_payload,
+    build_verifier_progress_display,
     collect_verifier_metadata_warnings,
     get_current_generation,
     get_failed_tasks,
@@ -20,6 +21,7 @@ from lib.migration_verifier import (
     get_generation_progress_stats,
     get_namespace_stats,
     get_persisted_namespace_statistics,
+    get_persisted_namespace_statistics_batch,
     get_verification_completeness,
     get_verification_summary,
     plot_verifier_metrics,
@@ -165,6 +167,14 @@ class TestGetFailedTasks:
         tasks = get_failed_tasks(db, generation=1)
         assert len(tasks) == 1
 
+    def test_document_only_excludes_collection_tasks(self):
+        db = MagicMock()
+        db.verification_tasks.aggregate.return_value = []
+        db.mismatches.find.return_value = []
+        get_failed_tasks(db, generation=1, document_only=True)
+        pipeline = db.verification_tasks.aggregate.call_args[0][0]
+        assert pipeline[0]["$match"]["type"] == {"$ne": "verifyCollection"}
+
     def test_attaches_mismatches_list(self):
         task_id = ObjectId()
         db = MagicMock()
@@ -210,7 +220,6 @@ class TestGetFailedTasksForDisplay:
         with patch(
             "lib.migration_verifier.get_failed_tasks",
             return_value=[
-                {"type": "verifyCollection", "status": "mismatch", "query_filter": {}},
                 {
                     "type": "verifyDocuments",
                     "status": "mismatch",
@@ -218,10 +227,27 @@ class TestGetFailedTasksForDisplay:
                     "mismatches": [],
                 },
             ],
-        ):
+        ) as mock_get_failed:
             rows = get_failed_tasks_for_display(db, 0)
+        mock_get_failed.assert_called_once_with(db, 0, limit=20, document_only=True)
         assert len(rows) == 1
         assert rows[0]["type"] == "verifyDocuments"
+
+    def test_respects_limit(self):
+        db = MagicMock()
+        tasks = [
+            {
+                "type": "verifyDocuments",
+                "status": "failed",
+                "query_filter": {"namespace": f"db.c{i}"},
+                "begin_time": f"2026-07-0{i}T10:00:00",
+                "mismatches": [],
+            }
+            for i in range(1, 6)
+        ]
+        with patch("lib.migration_verifier.get_failed_tasks", return_value=tasks):
+            rows = get_failed_tasks_for_display(db, 0, limit=3)
+        assert len(rows) == 3
 
     def test_sorts_by_begin_time_descending(self):
         db = MagicMock()
@@ -271,6 +297,31 @@ class TestGetPersistedNamespaceStatistics:
         assert pipeline[0]["$match"]["generation"] == 0
 
 
+class TestGetPersistedNamespaceStatisticsBatch:
+    def test_uses_generation_in_match(self):
+        db = MagicMock()
+        db.verification_tasks.aggregate.return_value = [
+            {
+                "_id": {"generation": 0, "namespace": "db.coll"},
+                "docsCompared": 5,
+                "totalDocs": 10,
+            },
+            {
+                "_id": {"generation": 1, "namespace": "db.coll"},
+                "docsCompared": 3,
+                "totalDocs": 10,
+            },
+        ]
+        result = get_persisted_namespace_statistics_batch(db, [0, 1])
+        pipeline = db.verification_tasks.aggregate.call_args[0][0]
+        assert pipeline[0]["$match"]["generation"] == {"$in": [0, 1]}
+        assert result[0][0]["docsCompared"] == 5
+        assert result[1][0]["docsCompared"] == 3
+
+    def test_empty_generations_returns_empty_dict(self):
+        assert get_persisted_namespace_statistics_batch(MagicMock(), []) == {}
+
+
 class TestGetGenerationDocProgress:
     def test_sums_namespace_stats(self):
         db = MagicMock()
@@ -314,6 +365,20 @@ class TestGetGenerationProgressStats:
         assert stats["totalDocs"] == 150
         assert stats["partitionsDone"] == 5
         assert stats["partitionsTotal"] == 7
+
+    def test_accepts_prefetched_ns_stats(self):
+        db = MagicMock()
+        stats = get_generation_progress_stats(db, 0, ns_stats=[
+            {
+                "docsCompared": 40,
+                "totalDocs": 100,
+                "partitionsDone": 3,
+                "partitionsAdded": 1,
+                "partitionsProcessing": 0,
+            },
+        ])
+        assert stats["docsCompared"] == 40
+        db.verification_tasks.aggregate.assert_not_called()
 
 
 class TestGetVerificationCompleteness:
@@ -406,6 +471,13 @@ class TestGetGenerationHistory:
         pipeline = db.verification_tasks.aggregate.call_args[0][0]
         assert pipeline[0]["$match"]["type"] == {"$nin": ["primary"]}
 
+    def test_accepts_current_gen_without_lookup(self):
+        db = MagicMock()
+        db.verification_tasks.aggregate.return_value = []
+        with patch("lib.migration_verifier.get_current_generation") as mock_current:
+            get_generation_history(db, limit=2, current_gen=3)
+        mock_current.assert_not_called()
+
 
 class TestDeriveStateBadge:
     def test_generation_zero_always_in_progress(self):
@@ -455,8 +527,10 @@ class TestBuildVerifierMonitorPayload:
         assert "currentGeneration" in result["display"]
         assert "verificationCompleteness" in result["display"]
         assert "generationLimit" in result["display"]
+        assert result["display"]["metadataAvailable"] is True
         assert "failedTasks" in result["display"]
         assert isinstance(result["display"]["failedTasks"], list)
+        assert result["display"]["failedTasksLimit"] == 20
         assert result["display"]["previousGeneration"] is None
         assert result["display"]["stateBadge"] == {"label": "IN PROGRESS", "color": "blue"}
         assert "connectivity" in result
@@ -464,7 +538,7 @@ class TestBuildVerifierMonitorPayload:
     @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
     @patch("lib.migration_verifier.get_generation_history")
     @patch("lib.migration_verifier.get_verification_summary")
-    @patch("lib.migration_verifier.get_persisted_namespace_statistics", return_value=[])
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics_batch", return_value={})
     @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
     @patch("lib.migration_verifier.get_current_generation", return_value=1)
     @patch("lib.app_config.get_database")
@@ -492,7 +566,7 @@ class TestBuildVerifierMonitorPayload:
     @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
     @patch("lib.migration_verifier.get_generation_history")
     @patch("lib.migration_verifier.get_verification_summary")
-    @patch("lib.migration_verifier.get_persisted_namespace_statistics", return_value=[])
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics_batch", return_value={})
     @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
     @patch("lib.migration_verifier.get_current_generation", return_value=2)
     @patch("lib.app_config.get_database")
@@ -521,7 +595,7 @@ class TestBuildVerifierMonitorPayload:
     @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
     @patch("lib.migration_verifier.get_generation_history", return_value=[])
     @patch("lib.migration_verifier.get_verification_summary")
-    @patch("lib.migration_verifier.get_persisted_namespace_statistics", return_value=[])
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics_batch", return_value={})
     @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
     @patch("lib.migration_verifier.get_current_generation", return_value=151)
     @patch("lib.app_config.get_database")
@@ -555,12 +629,12 @@ class TestBuildVerifierMonitorPayload:
         mock_get_db.return_value = db
         result = build_verifier_monitor_payload("mongodb://localhost:27017")
         mock_gen_history.assert_called_once()
-        assert mock_gen_history.call_args.kwargs["limit"] == 10
+        assert mock_gen_history.call_args[0][1] == 10
         assert result["display"]["generationLimit"] == 10
 
     @patch("lib.migration_verifier.get_generation_history")
     @patch("lib.migration_verifier.get_verification_summary")
-    @patch("lib.migration_verifier.get_persisted_namespace_statistics")
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics_batch")
     @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
     @patch("lib.migration_verifier.get_current_generation", return_value=0)
     @patch("lib.app_config.get_database")
@@ -569,11 +643,12 @@ class TestBuildVerifierMonitorPayload:
         mock_get_db,
         mock_current_gen,
         mock_coll_mm,
-        mock_ns_stats,
+        mock_ns_batch,
         mock_summary,
         mock_history,
     ):
         mock_get_db.return_value = MagicMock()
+        mock_ns_batch.return_value = {}
         mock_history.return_value = [
             {"_id": 0, "total_tasks": 10, "completed": 8, "failed": 0, "pending": 2},
             {"_id": 1, "total_tasks": 1, "completed": 0, "failed": 0, "pending": 1},
@@ -591,7 +666,7 @@ class TestBuildVerifierMonitorPayload:
 
     @patch("lib.migration_verifier.get_generation_history")
     @patch("lib.migration_verifier.get_verification_summary")
-    @patch("lib.migration_verifier.get_persisted_namespace_statistics")
+    @patch("lib.migration_verifier.get_persisted_namespace_statistics_batch")
     @patch("lib.migration_verifier.get_collection_metadata_mismatches", return_value=[])
     @patch("lib.migration_verifier.get_current_generation", return_value=0)
     @patch("lib.app_config.get_database")
@@ -600,7 +675,7 @@ class TestBuildVerifierMonitorPayload:
         mock_get_db,
         mock_current_gen,
         mock_coll_mm,
-        mock_ns_stats,
+        mock_ns_batch,
         mock_summary,
         mock_history,
     ):
@@ -611,16 +686,18 @@ class TestBuildVerifierMonitorPayload:
         mock_summary.return_value = {
             "completed": 2, "failed": 0, "mismatch": 0, "pending": 2, "processing": 0,
         }
-        mock_ns_stats.return_value = [
-            {
-                "_id": "db.coll",
-                "docsCompared": 50,
-                "totalDocs": 100,
-                "partitionsDone": 3,
-                "partitionsAdded": 1,
-                "partitionsProcessing": 0,
-            },
-        ]
+        mock_ns_batch.return_value = {
+            0: [
+                {
+                    "_id": "db.coll",
+                    "docsCompared": 50,
+                    "totalDocs": 100,
+                    "partitionsDone": 3,
+                    "partitionsAdded": 1,
+                    "partitionsProcessing": 0,
+                },
+            ],
+        }
         result = build_verifier_monitor_payload("mongodb://localhost:27017")
         gen = result["display"]["generations"][0]
         completeness = result["display"]["verificationCompleteness"]
@@ -643,6 +720,110 @@ class TestBuildVerifierMonitorPayload:
         result = build_verifier_monitor_payload("mongodb://localhost:27017")
         assert len(result["warnings"]) == 1
         assert "mismatch" in result["warnings"][0].lower()
+
+
+SAMPLE_MV_PROGRESS = {
+    "phase": "recheck",
+    "generation": 2,
+    "generationStats": {
+        "docsCompared": 100,
+        "totalDocs": 200,
+        "srcBytesCompared": 1024,
+        "totalSrcBytes": 2048,
+        "totalNamespaces": 5,
+    },
+    "verificationStatus": {
+        "totalTasks": 10,
+        "addedTasks": 2,
+        "processingTasks": 1,
+        "failedTasks": 0,
+        "completedTasks": 7,
+        "metadataMismatchTasks": 0,
+    },
+    "srcChangeStats": {
+        "eventsPerSecond": 100.5,
+        "lagSecs": 0,
+        "bufferSaturation": 0.1,
+        "eventCounts": {"insert": 1, "update": 2, "replace": 0, "delete": 0},
+    },
+    "dstChangeStats": {
+        "eventsPerSecond": 50.0,
+        "lagSecs": 1,
+        "bufferSaturation": 0.2,
+        "eventCounts": {"insert": 1, "update": 1, "replace": 0, "delete": 0},
+    },
+    "docsComparedPerSecond": 500.0,
+    "srcBytesComparedPerSecond": 10000.0,
+    "recentRecheckSecs": [10.5, 20.0],
+    "totalRechecksDone": 42,
+    "error": None,
+}
+
+
+class TestBuildVerifierProgressDisplay:
+    def test_maps_core_fields(self):
+        display = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        assert display["phase"] == "recheck"
+        assert display["generation"] == 2
+        assert display["phaseBadge"]["label"] == "RECHECK"
+        assert display["documents"]["compared"] == 100
+        assert display["documents"]["total"] == 200
+        assert display["documents"]["percent"] == 50.0
+        assert display["bytes"]["percent"] == 50.0
+        assert display["tasks"]["completed"] == 7
+        assert display["srcChangeStats"]["lagSecs"] == 0
+        assert display["recentRecheckSecs"] == [10.5, 20.0]
+        assert display["totalRechecksDone"] == 42
+
+    def test_empty_progress_returns_none(self):
+        assert build_verifier_progress_display(None) is None
+        assert build_verifier_progress_display({}) is None
+
+
+class TestVerifierProgressEndpointPayload:
+    @patch("lib.migration_verifier._fetch_verifier_progress")
+    def test_endpoint_only_payload(self, mock_fetch):
+        mock_fetch.return_value = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        result = build_verifier_monitor_payload(
+            connection_string=None,
+            endpoint_url="localhost:27020/api/v1/progress",
+        )
+        assert result["display"]["verificationProgress"]["phase"] == "recheck"
+        assert result["display"]["stateBadge"]["label"] == "NO DATA"
+        assert result["display"]["metadataAvailable"] is False
+        assert result["connectivity"]["rows"][0]["label"] == "Progress endpoint"
+
+    @patch("lib.migration_verifier._fetch_verifier_progress")
+    def test_fetch_failure_adds_warning(self, mock_fetch):
+        from lib.live_monitoring import ProgressFetchError
+
+        mock_fetch.side_effect = ProgressFetchError("connection error", kind="connection")
+        result = build_verifier_monitor_payload(
+            connection_string=None,
+            endpoint_url="localhost:27020/api/v1/progress",
+        )
+        assert any("not responding" in w for w in result["warnings"])
+        assert result["display"] is None
+
+    @patch("lib.migration_verifier._fetch_verifier_progress")
+    @patch("lib.migration_verifier.get_generation_history", return_value=[])
+    @patch("lib.app_config.get_database")
+    def test_both_endpoint_and_metadata(self, mock_get_db, mock_history, mock_fetch):
+        db = MagicMock()
+        db.generation.find_one.return_value = {"metadataVersion": 7, "generation": 0}
+        db.verification_tasks.aggregate.return_value = []
+        db.mismatches.find.return_value = []
+        mock_get_db.return_value = db
+        mock_fetch.return_value = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+
+        result = build_verifier_monitor_payload(
+            "mongodb://localhost:27017",
+            endpoint_url="localhost:27020/api/v1/progress",
+        )
+        assert result["display"]["verificationProgress"]["phase"] == "recheck"
+        assert result["display"]["stateBadge"]["label"] == "IN PROGRESS"
+        assert result["display"]["metadataAvailable"] is True
+        assert "generations" in result["display"]
 
 
 class TestPlotVerifierMetrics:

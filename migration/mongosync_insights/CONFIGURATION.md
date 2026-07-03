@@ -45,6 +45,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_MONGOSYNC_DB_NAME` | _(auto-detected)_ | Mongosync internal metadata database name. When not set, the app auto-detects between `__mdb_internal_mongosync` (new) and `mongosync_reserved_for_internal_use` (legacy). Set this variable to override auto-detection. |
 | `MI_MIGRATION_VERIFIER_DB_NAME` | `__mdb_internal_migration_verifier` | Standalone migration-verifier metadata database name. |
 | `MI_VERIFIER_GENERATION_LIMIT` | `5` | Maximum generations shown on the Migration Verifier dashboard (1–20). |
+| `MI_VERIFIER_FAILED_TASKS_LIMIT` | `20` | Maximum failed document tasks shown on the **Failed Tasks / Document Mismatches** card (1–100). |
 | `MI_EMBEDDED_VERIFIER_SRC_DB_NAME` | `__mdb_internal_mongosync_verifier_src` | Embedded verifier source persistence database on the destination cluster. |
 | `MI_EMBEDDED_VERIFIER_DST_DB_NAME` | `__mdb_internal_mongosync_verifier_dst` | Embedded verifier destination persistence database on the destination cluster. |
 | `MI_POOL_SIZE` | `10` | MongoDB connection pool size |
@@ -57,6 +58,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_REFRESH_TIME` | `10` | Migration monitoring dashboard refresh interval in seconds |
 | `MI_INDEX_BUILD_REFRESH_TIME` | `60` | Minimum interval in seconds between destination `list_indexes` scans used for approximate metadata index-building progress (counter reads still run every poll). See [MIGRATION_MONITORING.md](MIGRATION_MONITORING.md). |
 | `MI_PROGRESS_ENDPOINT_URL` | _(empty)_ | Mongosync progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27182**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration monitoring home page. Leave host empty in the UI to skip the endpoint. |
+| `MI_VERIFIER_PROGRESS_ENDPOINT_URL` | _(empty)_ | Migration Verifier progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27020**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration Verifier form. Leave host empty in the UI to skip the endpoint. |
 
 ### File Upload Settings
 
@@ -231,9 +233,12 @@ python3 mongosync_insights.py
 
 ### Example 7: Migration Verifier Monitoring
 
-Pre-configure the connection string for the [migration-verifier](https://github.com/mongodb-labs/migration-verifier) database:
+Pre-configure the migration-verifier progress endpoint and/or connection string:
 
 ```bash
+# Set migration-verifier progress endpoint (host:port or full path; /api/v1/progress is appended if omitted)
+export MI_VERIFIER_PROGRESS_ENDPOINT_URL="localhost:27020"
+
 # Set verifier connection string (separate cluster from migration monitoring)
 export MI_VERIFIER_CONNECTION_STRING="mongodb+srv://user:pass@verifier-cluster.mongodb.net/"
 
@@ -243,6 +248,9 @@ export MI_MIGRATION_VERIFIER_DB_NAME="__mdb_internal_migration_verifier"
 # Optional: number of generations shown on the verifier dashboard (default: 5, range: 1–20)
 export MI_VERIFIER_GENERATION_LIMIT=10
 
+# Cap failed document tasks shown on the dashboard (default 20)
+export MI_VERIFIER_FAILED_TASKS_LIMIT=20
+
 # Or reuse the same connection string as migration monitoring
 export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 
@@ -250,7 +258,7 @@ export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 python3 mongosync_insights.py
 ```
 
-**Note**: When `MI_VERIFIER_CONNECTION_STRING` is not set, it falls back to `MI_CONNECTION_STRING`. Set it explicitly when the migration-verifier writes to a different cluster. The verifier metadata database name is not configurable via the UI; use `MI_MIGRATION_VERIFIER_DB_NAME` to override the default.
+**Note**: When `MI_VERIFIER_CONNECTION_STRING` is not set, it falls back to `MI_CONNECTION_STRING`. Set it explicitly when the migration-verifier writes to a different cluster. The verifier metadata database name is not configurable via the UI; use `MI_MIGRATION_VERIFIER_DB_NAME` to override the default. Provide at least one of the progress endpoint or connection string (via env or UI).
 
 ### Example 8: Persistent Snapshots and Custom Log Viewer
 

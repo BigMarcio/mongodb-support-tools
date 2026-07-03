@@ -84,15 +84,52 @@ Migration Monitoring includes two separate verifier workflows:
 | Feature | Where | Data source |
 |---------|-------|-------------|
 | **Embedded Verifier** card | Migration Monitoring dashboard | Progress endpoint and/or mongosync verifier persistence on the destination (`MI_EMBEDDED_VERIFIER_SRC_DB_NAME` / `MI_EMBEDDED_VERIFIER_DST_DB_NAME`, default `__mdb_internal_mongosync_verifier_src` / `_dst`). Requires mongosync **verifier persistence** (`enableVerifierPersistence`). |
-| **Migration Verifier** form | Same `/live/` page, second card | External [migration-verifier](https://github.com/mongodb-labs/migration-verifier) tool metadata database (`MI_VERIFIER_CONNECTION_STRING`, `MI_MIGRATION_VERIFIER_DB_NAME`). |
+| **Migration Verifier** form | Same `/live/` page, second card | External [migration-verifier](https://github.com/mongodb-labs/migration-verifier) tool HTTP `/api/v1/progress` endpoint (`MI_VERIFIER_PROGRESS_ENDPOINT_URL`) and/or metadata database (`MI_VERIFIER_CONNECTION_STRING`, `MI_MIGRATION_VERIFIER_DB_NAME`). |
 
 When metadata is used for embedded verifier progress, the card notes that progress is **approximate**.
 
 ## Migration Verifier monitoring
 
-The second form on `/live/` monitors the standalone migration-verifier tool (not mongosync embedded verifier). Configure via `MI_VERIFIER_CONNECTION_STRING` or the UI; it falls back to `MI_CONNECTION_STRING` when unset. Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_migration_verifier`). For **migration-verifier** version compatibility, see [README.md — Migration Verifier compatibility](README.md#migration-verifier-compatibility) (tested with **0.2.2**).
+The second form on `/live/` monitors the standalone migration-verifier tool (not mongosync embedded verifier). Provide **one or both** of:
 
-The dashboard uses the same Atlas-style card UI as Migration Monitoring: status badge, **verification completeness** summary (documents, namespaces, partitions, and tasks for the current generation), generation overview, namespace document progress for the current generation, and collection metadata mismatches (current generation only). The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20).
+| Input | Purpose | Env variable |
+|-------|---------|--------------|
+| **Migration Verifier progress endpoint** | Poll migration-verifier's HTTP progress API (`/api/v1/progress`) for live phase, generation stats, change-stream lag, and task counts | `MI_VERIFIER_PROGRESS_ENDPOINT_URL` |
+| **MongoDB connection string** | Read verifier metadata for generation history, namespace progress, and mismatches | `MI_VERIFIER_CONNECTION_STRING` (falls back to `MI_CONNECTION_STRING`) |
+
+At least one must be configured to start a session.
+
+### Progress endpoint (UI)
+
+When not set via `MI_VERIFIER_PROGRESS_ENDPOINT_URL`, the form asks for:
+
+- **Host** — hostname or IP (e.g. `localhost`). Leave **empty** to skip the progress endpoint and use metadata-only monitoring.
+- **Port** — defaults to **27020** (migration-verifier's default API port).
+
+The path `/api/v1/progress` is fixed and appended automatically; do not enter it in the UI.
+
+### Progress endpoint (environment)
+
+```bash
+export MI_VERIFIER_PROGRESS_ENDPOINT_URL="localhost:27020"
+# or
+export MI_VERIFIER_PROGRESS_ENDPOINT_URL="localhost:27020/api/v1/progress"
+```
+
+Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_migration_verifier`). For **migration-verifier** version compatibility, see [README.md — Migration Verifier compatibility](README.md#migration-verifier-compatibility) (tested with **0.2.2**).
+
+### Data source priority
+
+When **both** the progress endpoint and connection string are configured:
+
+1. **Progress endpoint** drives the **Verification Progress** card and toolbar phase badge (live in-memory state from migration-verifier).
+2. **Metadata database** fills generation overview, namespace progress, failed tasks, and collection metadata mismatch cards.
+
+If the progress endpoint fails to respond, the dashboard still loads metadata when a connection string is available, and shows a progress-endpoint warning.
+
+The dashboard uses the same Atlas-style card UI as Migration Monitoring. The **Verification Progress** card is shown first when the progress endpoint is configured; it summarizes phase, generation, document/byte progress, task counts, throughput, change-stream stats, recheck optimes, and related fields from `/api/v1/progress`.
+
+Additional cards (when metadata is configured): status badge, **verification completeness** summary (documents, namespaces, partitions, and tasks for the current generation), generation overview, namespace document progress for the previous generation, failed document tasks, and collection metadata mismatches. The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20). The **Failed Tasks / Document Mismatches** card shows up to 20 rows by default (`MI_VERIFIER_FAILED_TASKS_LIMIT`, range 1–100).
 
 **Verification completeness:** The top card rolls up current-generation progress from verifier metadata: document scan progress (`docsCompared` / `totalDocs`), namespaces with all partitions finished, partition queue depth, and task counts (pending / failed / completed). For generation 0 it may also show byte progress. For recheck generations (gen 1+), document totals reflect documents scheduled for recheck, not full cluster size.
 

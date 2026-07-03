@@ -68,6 +68,18 @@
         return section;
     }
 
+    function cardWithTitleElement(titleEl, desc, bodyChildren, bodyClassName) {
+        var section = el('section', 'lm-card');
+        if (titleEl) section.appendChild(titleEl);
+        if (desc) section.appendChild(el('p', 'lm-card-desc', desc));
+        var body = el('div', 'lm-card-body' + (bodyClassName ? ' ' + bodyClassName : ''));
+        (bodyChildren || []).forEach(function (c) {
+            if (c) body.appendChild(c);
+        });
+        section.appendChild(body);
+        return section;
+    }
+
     function kvRow(label, value) {
         var rowEl = el('div', 'lm-kv');
         rowEl.appendChild(el('span', 'lm-k', label));
@@ -110,6 +122,15 @@
 
         var title = el('h1', 'lm-page-title');
         title.appendChild(document.createTextNode('Migration Verifier Monitoring'));
+        if (display && display.verificationProgress && display.verificationProgress.phaseBadge) {
+            title.appendChild(
+                badge(
+                    display.verificationProgress.phaseBadge.label,
+                    display.verificationProgress.phaseBadge.color,
+                    true
+                )
+            );
+        }
         if (display && display.stateBadge) {
             title.appendChild(
                 badge(display.stateBadge.label, display.stateBadge.color, true)
@@ -124,6 +145,217 @@
     function formatComparedTotal(compared, total) {
         if (!total) return '—';
         return formatCount(compared) + ' / ' + formatCount(total);
+    }
+
+    function formatRate(value, suffix) {
+        if (value == null || value === '') return '—';
+        try {
+            var n = Number(value);
+            if (!isFinite(n)) return '—';
+            return n.toLocaleString('en-US', { maximumFractionDigits: 1 }) + (suffix || '');
+        } catch (e) {
+            return String(value);
+        }
+    }
+
+    function formatLagSecs(seconds) {
+        if (seconds == null || seconds === '') return '—';
+        var n = Number(seconds);
+        if (!isFinite(n) || n < 0) return '—';
+        if (n < 60) return n + 's';
+        var m = Math.floor(n / 60);
+        var s = n % 60;
+        return m + 'm ' + s + 's';
+    }
+
+    var gen0DetailsExpanded = false;
+
+    function renderChangeStatsSection(changeStats) {
+        if (!changeStats) return null;
+        var block = el('div', 'lm-verifier-change-stream');
+        block.appendChild(el('div', 'lm-verifier-section-label', changeStats.label + ' change stream'));
+
+        var metrics = el('div', 'lm-metrics lm-verifier-metrics');
+        [
+            { label: 'Lag', value: formatLagSecs(changeStats.lagSecs) },
+            { label: 'Events/sec', value: formatRate(changeStats.eventsPerSecond) },
+            {
+                label: 'Buffer saturation',
+                value: changeStats.bufferSaturation != null
+                    ? (Number(changeStats.bufferSaturation) * 100).toFixed(1) + '%'
+                    : '—',
+            },
+        ].forEach(function (m) {
+            metrics.appendChild(metricTile(m));
+        });
+        block.appendChild(metrics);
+
+        var counts = changeStats.eventCounts || {};
+        var countsRow = el('div', 'lm-muted lm-verifier-events-line');
+        countsRow.textContent =
+            'Events: insert ' + formatCount(counts.insert) +
+            ', update ' + formatCount(counts.update) +
+            ', replace ' + formatCount(counts.replace) +
+            ', delete ' + formatCount(counts.delete);
+        block.appendChild(countsRow);
+        return block;
+    }
+
+    function renderGen0StatsBlock(progress) {
+        if (!progress.gen0Stats) return null;
+
+        var gen0 = progress.gen0Stats;
+        var hiddenByDefault = progress.generation != null && progress.generation !== 0;
+        var isOpen = gen0DetailsExpanded || !hiddenByDefault;
+
+        var block = el('div', 'lm-verifier-gen0-block');
+        var toggle = el('button', 'lm-phase-times-toggle lm-muted');
+        toggle.type = 'button';
+        toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+
+        var chevron = el('span', 'lm-phase-times-chevron', isOpen ? '▾' : '▸');
+        toggle.appendChild(chevron);
+        toggle.appendChild(document.createTextNode('Initial check (generation 0)'));
+
+        var details = el('div', 'lm-phase-times-details lm-verifier-gen0-details' + (isOpen ? ' is-open' : ''));
+        appendLabeledProgress(
+            details,
+            'Documents',
+            gen0.totalDocs > 0 ? gen0.docsPercent : null,
+            formatComparedTotal(gen0.docsCompared, gen0.totalDocs)
+        );
+        if (gen0.totalSrcBytes > 0) {
+            appendLabeledProgress(
+                details,
+                'Source bytes',
+                gen0.bytesPercent,
+                formatComparedTotal(gen0.srcBytesCompared, gen0.totalSrcBytes)
+            );
+        }
+
+        toggle.addEventListener('click', function () {
+            gen0DetailsExpanded = !gen0DetailsExpanded;
+            toggle.setAttribute('aria-expanded', gen0DetailsExpanded ? 'true' : 'false');
+            chevron.textContent = gen0DetailsExpanded ? '▾' : '▸';
+            details.classList.toggle('is-open', gen0DetailsExpanded);
+        });
+
+        block.appendChild(toggle);
+        block.appendChild(details);
+        return block;
+    }
+
+    function renderVerificationProgressCard(progress) {
+        if (!progress) return null;
+
+        var body = el('div', 'lm-stack-tight lm-verifier-progress-body');
+
+        if (progress.generation != null) {
+            body.appendChild(
+                el('div', 'lm-verifier-section-label', 'Generation ' + progress.generation)
+            );
+        }
+
+        var docs = progress.documents || {};
+        appendLabeledProgress(
+            body,
+            'Documents',
+            docs.total > 0 ? docs.percent : null,
+            formatComparedTotal(docs.compared, docs.total)
+        );
+
+        var bytes = progress.bytes || {};
+        if (bytes.total > 0) {
+            appendLabeledProgress(
+                body,
+                'Source bytes',
+                bytes.percent,
+                formatComparedTotal(bytes.compared, bytes.total)
+            );
+        }
+
+        var metrics = el('div', 'lm-metrics lm-verifier-metrics');
+        var tasks = progress.tasks || {};
+        [
+            { label: 'Namespaces', value: formatCount(progress.totalNamespaces) },
+            { label: 'Tasks total', value: formatCount(tasks.total) },
+            { label: 'Tasks pending', value: formatCount(tasks.added) },
+            { label: 'Tasks processing', value: formatCount(tasks.processing) },
+            { label: 'Tasks failed', value: formatCount(tasks.failed) },
+            { label: 'Tasks completed', value: formatCount(tasks.completed) },
+            { label: 'Metadata mismatches', value: formatCount(tasks.metadataMismatch) },
+            { label: 'Docs/sec', value: formatRate(progress.docsComparedPerSecond) },
+            { label: 'Bytes/sec', value: formatRate(progress.srcBytesComparedPerSecond) },
+        ].forEach(function (m) {
+            metrics.appendChild(metricTile(m));
+        });
+        body.appendChild(metrics);
+
+        var srcChange = renderChangeStatsSection(progress.srcChangeStats);
+        if (srcChange) body.appendChild(srcChange);
+        var dstChange = renderChangeStatsSection(progress.dstChangeStats);
+        if (dstChange) body.appendChild(dstChange);
+
+        if (
+            progress.srcLastRecheckedTS ||
+            progress.dstLastRecheckedTS ||
+            progress.totalRechecksDone > 0 ||
+            (progress.recentRecheckSecs && progress.recentRecheckSecs.length > 0)
+        ) {
+            var recheckBlock = el('div', 'lm-verifier-recheck-block');
+            recheckBlock.appendChild(el('div', 'lm-verifier-section-label', 'Recheck'));
+            if (progress.srcLastRecheckedTS) {
+                recheckBlock.appendChild(
+                    kvRow('Source last rechecked', progress.srcLastRecheckedTS)
+                );
+            }
+            if (progress.dstLastRecheckedTS) {
+                recheckBlock.appendChild(
+                    kvRow('Destination last rechecked', progress.dstLastRecheckedTS)
+                );
+            }
+            if (progress.totalRechecksDone > 0) {
+                recheckBlock.appendChild(
+                    kvRow('Total rechecks done', formatCount(progress.totalRechecksDone))
+                );
+            }
+            if (progress.recentRecheckSecs && progress.recentRecheckSecs.length > 0) {
+                recheckBlock.appendChild(
+                    kvRow(
+                        'Recent recheck durations (s)',
+                        progress.recentRecheckSecs.join(', ')
+                    )
+                );
+            }
+            body.appendChild(recheckBlock);
+        }
+
+        var gen0Block = renderGen0StatsBlock(progress);
+        if (gen0Block) body.appendChild(gen0Block);
+
+        if (progress.longestDocMismatch) {
+            var mm = progress.longestDocMismatch;
+            var detail = mm.namespace || '—';
+            if (mm.type) detail += ' (' + mm.type + ')';
+            if (mm.durationSecs != null) {
+                detail += ' — ' + mm.durationSecs.toFixed(1) + 's';
+            }
+            body.appendChild(banner('warning', 'Longest-lived mismatch: ' + detail));
+        }
+
+        if (progress.error) {
+            body.appendChild(banner('danger', 'Verifier error: ' + progress.error));
+        }
+
+        var title = el('h2', 'lm-card-title-row');
+        title.appendChild(document.createTextNode('Verification Progress'));
+
+        return cardWithTitleElement(
+            title,
+            progress.phaseDescription || null,
+            [body],
+            'lm-verifier-progress-card-body'
+        );
     }
 
     function generationOverviewTitle(generationLimit) {
@@ -178,6 +410,10 @@
         return card(title, desc, [table]);
     }
 
+    function hasMetadata(display) {
+        return display && display.metadataAvailable === true;
+    }
+
     function hasPreviousGeneration(display) {
         return display && display.previousGeneration != null;
     }
@@ -190,8 +426,12 @@
 
     function renderFailedTasks(display) {
         var failedTasks = display.failedTasks || [];
+        var limit = display.failedTasksLimit;
         var desc = 'Document verification failures and operational task errors from the ' +
             'previous generation (collection metadata mismatches are listed separately).';
+        if (limit) {
+            desc += ' Showing up to ' + limit + ' most recent rows.';
+        }
 
         if (!hasPreviousGeneration(display)) {
             return previousGenerationUnavailableCard(
@@ -436,22 +676,29 @@
 
         var stack = el('div', 'lm-stack lm-stack-after-toolbar');
 
+        var progressCard = renderVerificationProgressCard(display.verificationProgress);
+        if (progressCard) {
+            stack.appendChild(progressCard);
+        }
+
         appendWarnings(stack, payload.warnings);
 
-        renderVerificationCompleteness(display).forEach(function (completenessCard) {
-            stack.appendChild(completenessCard);
-        });
+        if (hasMetadata(display)) {
+            renderVerificationCompleteness(display).forEach(function (completenessCard) {
+                stack.appendChild(completenessCard);
+            });
 
-        stack.appendChild(renderGenerationsOverview(
-            display.generations,
-            display.generationLimit
-        ));
+            stack.appendChild(renderGenerationsOverview(
+                display.generations,
+                display.generationLimit
+            ));
 
-        stack.appendChild(renderNamespaces(display.namespaces, display));
+            stack.appendChild(renderNamespaces(display.namespaces, display));
 
-        stack.appendChild(renderFailedTasks(display));
+            stack.appendChild(renderFailedTasks(display));
 
-        stack.appendChild(renderCollectionMismatches(display));
+            stack.appendChild(renderCollectionMismatches(display));
+        }
 
         var connCard = renderConnectivity(payload.connectivity);
         if (connCard) stack.appendChild(connCard);
