@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+from lib.app_config import PROGRESS_FETCH_TIMEOUT_SECS, VERIFIER_FETCH_TIMEOUT_SECS
 from lib.live_monitoring import (
     ProgressFetchError,
     _build_connectivity,
@@ -13,6 +14,7 @@ from lib.live_monitoring import (
     _derive_state_badge,
     _state_badge_color,
     fetch_progress,
+    fetch_summary,
     progress_monitor_no_config_response,
 )
 
@@ -26,6 +28,10 @@ class TestFetchProgress:
         progress, warnings = fetch_progress("host:27182/api/v1/progress")
         assert progress["state"] == "RUNNING"
         assert warnings == ["w1"]
+        mock_get.assert_called_once_with(
+            "http://host:27182/api/v1/progress",
+            timeout=PROGRESS_FETCH_TIMEOUT_SECS,
+        )
 
     @patch("lib.live_monitoring.requests.get")
     def test_timeout_raises(self, mock_get):
@@ -62,6 +68,56 @@ class TestFetchProgress:
         with pytest.raises(ProgressFetchError) as exc:
             fetch_progress("host:27182/api/v1/progress")
         assert exc.value.kind == "json"
+
+
+class TestFetchSummary:
+    @patch("lib.live_monitoring.requests.get")
+    def test_success(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "docMismatches": {"total": 1},
+            "nsMismatches": [],
+        }
+        mock_get.return_value = mock_resp
+        summary = fetch_summary("host:27020/api/v1/summary")
+        assert summary["docMismatches"]["total"] == 1
+        mock_get.assert_called_once_with(
+            "http://host:27020/api/v1/summary",
+            params=None,
+            timeout=VERIFIER_FETCH_TIMEOUT_SECS,
+        )
+
+    @patch("lib.live_monitoring.requests.get")
+    def test_min_duration_query_param(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"docMismatches": {"total": 0}, "nsMismatches": []}
+        mock_get.return_value = mock_resp
+        fetch_summary("host:27020/api/v1/summary", min_duration_secs=60)
+        mock_get.assert_called_once_with(
+            "http://host:27020/api/v1/summary",
+            params={"minDurationSecs": 60},
+            timeout=VERIFIER_FETCH_TIMEOUT_SECS,
+        )
+
+    @patch("lib.live_monitoring.requests.get")
+    def test_api_error_raises(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"error": "verifier busy"}
+        mock_get.return_value = mock_resp
+        with pytest.raises(ProgressFetchError, match="verifier busy") as exc:
+            fetch_summary("host:27020/api/v1/summary")
+        assert exc.value.kind == "api"
+
+    @patch("lib.live_monitoring.requests.get")
+    def test_http_error_raises(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            response=MagicMock(status_code=503)
+        )
+        mock_get.return_value = mock_resp
+        with pytest.raises(ProgressFetchError) as exc:
+            fetch_summary("host:27020/api/v1/summary")
+        assert exc.value.kind == "http"
 
 
 class TestStateBadge:

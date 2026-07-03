@@ -164,8 +164,16 @@
         if (!isFinite(n) || n < 0) return '—';
         if (n < 60) return n + 's';
         var m = Math.floor(n / 60);
-        var s = n % 60;
+        var s = Math.round(n % 60);
         return m + 'm ' + s + 's';
+    }
+
+    function formatCheckEta(seconds) {
+        if (seconds == null || seconds === '') return null;
+        var n = Number(seconds);
+        if (!isFinite(n) || n < 0) return null;
+        if (n === 0) return 'Complete';
+        return formatLagSecs(n);
     }
 
     var gen0DetailsExpanded = false;
@@ -254,6 +262,13 @@
             body.appendChild(
                 el('div', 'lm-verifier-section-label', 'Generation ' + progress.generation)
             );
+        }
+
+        if (progress.estCheckSecsRemaining != null) {
+            var etaText = formatCheckEta(progress.estCheckSecsRemaining);
+            if (etaText) {
+                body.appendChild(kvRow('Initial check ETA', etaText));
+            }
         }
 
         var docs = progress.documents || {};
@@ -534,8 +549,14 @@
         return card(title, desc, [body]);
     }
 
+    function shouldShowVerificationCompleteness(display) {
+        if (!display || !display.verificationCompleteness) return false;
+        if (display.verificationProgress && hasMetadata(display)) return false;
+        return true;
+    }
+
     function renderVerificationCompleteness(display) {
-        if (!display || !display.verificationCompleteness) return [];
+        if (!shouldShowVerificationCompleteness(display)) return [];
 
         var title = display.currentGeneration > 0
             ? 'Current generation completeness'
@@ -616,6 +637,106 @@
         table.appendChild(tbody);
 
         return card('Collection Metadata', desc, [table]);
+    }
+
+    function renderDocMismatchSummary(summary) {
+        if (!summary) return null;
+
+        var docMm = summary.docMismatches || {};
+        var desc = 'Live document mismatch tallies from the verifier /summary endpoint.';
+        if (summary.minDurationSecs > 0) {
+            desc += ' Counts exclude mismatches shorter than ' +
+                summary.minDurationSecs + ' seconds.';
+        }
+
+        var body = el('div', 'lm-stack-tight');
+        if (summary.notes && summary.notes.length > 0) {
+            summary.notes.forEach(function (note) {
+                body.appendChild(banner('info', note));
+            });
+        }
+
+        body.appendChild(kvRow('Total document mismatches', formatCount(docMm.total)));
+
+        var byType = docMm.byType || {};
+        var typeMetrics = el('div', 'lm-metrics lm-verifier-metrics');
+        [
+            { label: 'Missing on destination', value: formatCount(byType.missingOnDst || 0) },
+            { label: 'Extra on destination', value: formatCount(byType.extraOnDst || 0) },
+            { label: 'Content mismatch', value: formatCount(byType.content || 0) },
+        ].forEach(function (m) {
+            typeMetrics.appendChild(metricTile(m));
+        });
+        body.appendChild(typeMetrics);
+
+        var byNs = docMm.byNamespace || {};
+        var nsKeys = Object.keys(byNs).sort(function (a, b) {
+            return (byNs[b] || 0) - (byNs[a] || 0);
+        });
+        if (nsKeys.length > 0) {
+            var table = el('table', 'lm-phase-times-table');
+            var thead = el('thead');
+            var headerRow = el('tr');
+            ['Namespace', 'Mismatches'].forEach(function (h) {
+                headerRow.appendChild(el('th', null, h));
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            var tbody = el('tbody');
+            nsKeys.slice(0, 10).forEach(function (ns) {
+                var tr = el('tr');
+                tr.appendChild(el('td', null, ns));
+                tr.appendChild(el('td', null, formatCount(byNs[ns])));
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            body.appendChild(table);
+        }
+
+        return card('Document Mismatch Summary', desc, [body]);
+    }
+
+    function renderEndpointNsMismatches(summary) {
+        if (!summary) return null;
+
+        var mismatches = summary.nsMismatches || [];
+        var limit = summary.nsMismatchesLimit;
+        var desc = 'Live namespace/index/schema mismatches from the verifier /summary endpoint.';
+        if (limit) {
+            desc += ' Showing up to ' + limit + ' rows.';
+        }
+
+        if (mismatches.length === 0) {
+            return card(
+                'Namespace Mismatches (live)',
+                desc,
+                [banner('info', 'No namespace mismatches reported by the verifier.')]
+            );
+        }
+
+        var table = el('table', 'lm-phase-times-table');
+        var thead = el('thead');
+        var headerRow = el('tr');
+        ['Namespace', 'Aspect', 'Type', 'Details'].forEach(function (h) {
+            headerRow.appendChild(el('th', null, h));
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        var tbody = el('tbody');
+        mismatches.forEach(function (row) {
+            var tr = el('tr');
+            tr.appendChild(el('td', null, row.namespace || '—'));
+            tr.appendChild(el('td', null, row.aspect || '—'));
+            tr.appendChild(el('td', null, row.type || '—'));
+            var details = row.detail || row.component || '—';
+            tr.appendChild(el('td', null, details));
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+
+        return card('Namespace Mismatches (live)', desc, [table]);
     }
 
     function renderConnectivity(conn) {
@@ -699,6 +820,12 @@
 
             stack.appendChild(renderCollectionMismatches(display));
         }
+
+        var summaryCard = renderDocMismatchSummary(display.verificationSummary);
+        if (summaryCard) stack.appendChild(summaryCard);
+
+        var nsSummaryCard = renderEndpointNsMismatches(display.verificationSummary);
+        if (nsSummaryCard) stack.appendChild(nsSummaryCard);
 
         var connCard = renderConnectivity(payload.connectivity);
         if (connCard) stack.appendChild(connCard);

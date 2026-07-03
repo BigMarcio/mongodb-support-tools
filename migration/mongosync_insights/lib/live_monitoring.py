@@ -5,6 +5,7 @@ import logging
 
 import requests
 
+from .app_config import PROGRESS_FETCH_TIMEOUT_SECS, VERIFIER_FETCH_TIMEOUT_SECS
 from .connection_validator import sanitize_for_display
 from .live_metadata_status import (
     MetadataFetchError,
@@ -24,8 +25,6 @@ from .utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-_PROGRESS_FETCH_TIMEOUT = 10
 
 
 class ProgressFetchError(Exception):
@@ -49,7 +48,7 @@ def fetch_progress(endpoint_url):
     url = f"http://{endpoint_url}"
     logger.info("Fetching progress from endpoint: %s", url)
     try:
-        response = requests.get(url, timeout=_PROGRESS_FETCH_TIMEOUT)
+        response = requests.get(url, timeout=PROGRESS_FETCH_TIMEOUT_SECS)
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.Timeout as e:
@@ -78,6 +77,57 @@ def fetch_progress(endpoint_url):
     if not isinstance(warnings, list):
         warnings = []
     return progress, warnings
+
+
+def fetch_summary(endpoint_url, *, min_duration_secs=0):
+    """
+    GET migration-verifier summary JSON from host:port/api/v1/summary.
+
+    Returns:
+        dict: summary response (top-level BSON ext JSON)
+
+    Raises:
+        ProgressFetchError: on timeout, connection, HTTP, JSON, or API errors.
+    """
+    url = f"http://{endpoint_url}"
+    params = {}
+    if min_duration_secs and min_duration_secs > 0:
+        params["minDurationSecs"] = min_duration_secs
+    logger.info("Fetching summary from endpoint: %s", url)
+    try:
+        response = requests.get(
+            url, params=params or None, timeout=VERIFIER_FETCH_TIMEOUT_SECS,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.Timeout as e:
+        raise ProgressFetchError(
+            "Timeout — could not reach the summary endpoint.", kind="timeout"
+        ) from e
+    except requests.exceptions.ConnectionError as e:
+        raise ProgressFetchError(
+            "Connection error — could not reach the summary endpoint.", kind="connection"
+        ) from e
+    except requests.exceptions.HTTPError as e:
+        raise ProgressFetchError(
+            f"HTTP error from summary endpoint ({e.response.status_code}).", kind="http"
+        ) from e
+    except requests.exceptions.RequestException as e:
+        raise ProgressFetchError(
+            f"Request failed: {e}", kind="request"
+        ) from e
+    except json.JSONDecodeError as e:
+        raise ProgressFetchError(
+            "Invalid JSON response from summary endpoint.", kind="json"
+        ) from e
+
+    if not isinstance(data, dict):
+        raise ProgressFetchError(
+            "Invalid JSON response from summary endpoint.", kind="json"
+        )
+    if data.get("error"):
+        raise ProgressFetchError(str(data["error"]), kind="api")
+    return data
 
 
 def _state_badge_color(state_upper):

@@ -123,13 +123,16 @@ Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_m
 When **both** the progress endpoint and connection string are configured:
 
 1. **Progress endpoint** drives the **Verification Progress** card and toolbar phase badge (live in-memory state from migration-verifier).
-2. **Metadata database** fills generation overview, namespace progress, failed tasks, and collection metadata mismatch cards.
+2. The same endpoint host also serves **`/api/v1/summary`**, polled in parallel with `/progress` for mismatch tallies, live namespace mismatches, and initial-check ETA.
+3. **Metadata database** fills generation overview, namespace progress, failed tasks, and collection metadata mismatch cards.
 
 If the progress endpoint fails to respond, the dashboard still loads metadata when a connection string is available, and shows a progress-endpoint warning.
 
-The dashboard uses the same Atlas-style card UI as Migration Monitoring. The **Verification Progress** card is shown first when the progress endpoint is configured; it summarizes phase, generation, document/byte progress, task counts, throughput, change-stream stats, recheck optimes, and related fields from `/api/v1/progress`.
+The dashboard uses the same Atlas-style card UI as Migration Monitoring. The **Verification Progress** card is shown first when the progress endpoint is configured; it summarizes phase, generation, document/byte progress, task counts, throughput, change-stream stats, recheck optimes, initial-check ETA (from `/summary`), and related fields from `/api/v1/progress`.
 
-Additional cards (when metadata is configured): status badge, **verification completeness** summary (documents, namespaces, partitions, and tasks for the current generation), generation overview, namespace document progress for the previous generation, failed document tasks, and collection metadata mismatches. The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20). The **Failed Tasks / Document Mismatches** card shows up to 20 rows by default (`MI_VERIFIER_FAILED_TASKS_LIMIT`, range 1–100).
+When the progress endpoint is configured, MI also polls **`/api/v1/summary`** and shows **Document Mismatch Summary** (totals by type and namespace) and **Namespace Mismatches (live)** cards. These appear alongside metadata cards when both sources are configured. Configure `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` to filter out short-lived document mismatches in summary counts. HTTP timeouts: `MI_PROGRESS_FETCH_TIMEOUT_SECS` (default 10s) for `/progress`; `MI_VERIFIER_FETCH_TIMEOUT_SECS` (default 60s) for `/summary`.
+
+Additional cards (when metadata is configured): status badge, **verification completeness** summary (documents, namespaces, partitions, and tasks for the current generation; omitted when a progress endpoint is also configured — use the **Verification Progress** card instead), generation overview, namespace document progress for the previous generation, failed document tasks, and collection metadata mismatches. The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20). The **Failed Tasks / Document Mismatches** card shows up to 20 rows by default (`MI_VERIFIER_FAILED_TASKS_LIMIT`, range 1–100).
 
 **Verification completeness:** The top card rolls up current-generation progress from verifier metadata: document scan progress (`docsCompared` / `totalDocs`), namespaces with all partitions finished, partition queue depth, and task counts (pending / failed / completed). For generation 0 it may also show byte progress. For recheck generations (gen 1+), document totals reflect documents scheduled for recheck, not full cluster size.
 

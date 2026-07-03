@@ -5,12 +5,15 @@ import pytest
 from bson import ObjectId
 from pymongo.errors import PyMongoError
 
+from lib.app_config import VERIFIER_FAILED_TASKS_LIMIT
 from lib.migration_verifier import (
     _derive_state_badge,
+    _derive_state_badge_from_summary,
     _load_mismatches_for_tasks,
     _serialize_failed_task,
     build_verifier_monitor_payload,
     build_verifier_progress_display,
+    build_verifier_summary_display,
     collect_verifier_metadata_warnings,
     get_current_generation,
     get_failed_tasks,
@@ -229,7 +232,9 @@ class TestGetFailedTasksForDisplay:
             ],
         ) as mock_get_failed:
             rows = get_failed_tasks_for_display(db, 0)
-        mock_get_failed.assert_called_once_with(db, 0, limit=20, document_only=True)
+        mock_get_failed.assert_called_once_with(
+            db, 0, limit=VERIFIER_FAILED_TASKS_LIMIT, document_only=True,
+        )
         assert len(rows) == 1
         assert rows[0]["type"] == "verifyDocuments"
 
@@ -530,7 +535,7 @@ class TestBuildVerifierMonitorPayload:
         assert result["display"]["metadataAvailable"] is True
         assert "failedTasks" in result["display"]
         assert isinstance(result["display"]["failedTasks"], list)
-        assert result["display"]["failedTasksLimit"] == 20
+        assert result["display"]["failedTasksLimit"] == VERIFIER_FAILED_TASKS_LIMIT
         assert result["display"]["previousGeneration"] is None
         assert result["display"]["stateBadge"] == {"label": "IN PROGRESS", "color": "blue"}
         assert "connectivity" in result
@@ -780,20 +785,89 @@ class TestBuildVerifierProgressDisplay:
         assert build_verifier_progress_display({}) is None
 
 
+class TestBuildVerifierSummaryDisplay:
+    def test_maps_core_fields(self):
+        display = build_verifier_summary_display({
+            "estCheckSecsRemaining": 120.5,
+            "docMismatches": {
+                "total": 3,
+                "byType": {"content": 2, "missingOnDst": 1},
+                "byNamespace": {"db.coll": 3},
+            },
+            "nsMismatches": [
+                {
+                    "type": "content",
+                    "namespace": "db.coll",
+                    "aspect": "index",
+                    "detail": "diff",
+                },
+            ],
+            "notes": ["Filtering document mismatches by minimum duration (60 seconds)"],
+        }, min_duration_secs=60, ns_limit=5)
+        assert display["estCheckSecsRemaining"] == pytest.approx(120.5)
+        assert display["docMismatches"]["total"] == 3
+        assert display["docMismatches"]["byType"]["content"] == 2
+        assert display["nsMismatches"][0]["aspect"] == "index"
+        assert display["minDurationSecs"] == 60
+        assert len(display["notes"]) == 1
+
+    def test_empty_summary_returns_none(self):
+        assert build_verifier_summary_display(None) is None
+
+
+class TestDeriveStateBadgeFromSummary:
+    def test_generation_zero_in_progress(self):
+        progress = {"generation": 0}
+        summary = {"docMismatches": {"total": 5}, "nsMismatches": [{}]}
+        badge = _derive_state_badge_from_summary(summary, progress)
+        assert badge == {"label": "IN PROGRESS", "color": "blue"}
+
+    def test_pass_when_no_mismatches(self):
+        progress = {"generation": 2}
+        summary = {"docMismatches": {"total": 0}, "nsMismatches": []}
+        badge = _derive_state_badge_from_summary(summary, progress)
+        assert badge == {"label": "PASS", "color": "green"}
+
+    def test_mismatches_when_doc_or_ns_present(self):
+        progress = {"generation": 1}
+        summary = {"docMismatches": {"total": 1}, "nsMismatches": []}
+        assert _derive_state_badge_from_summary(summary, progress)["label"] == "MISMATCHES"
+
+
 class TestVerifierProgressEndpointPayload:
-    @patch("lib.migration_verifier._fetch_verifier_progress")
+    @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
     def test_endpoint_only_payload(self, mock_fetch):
-        mock_fetch.return_value = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        summary = build_verifier_summary_display({
+            "docMismatches": {"total": 0, "byType": {}, "byNamespace": {}},
+            "nsMismatches": [],
+        })
+        mock_fetch.return_value = (progress, summary, [])
         result = build_verifier_monitor_payload(
             connection_string=None,
             endpoint_url="localhost:27020/api/v1/progress",
         )
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
-        assert result["display"]["stateBadge"]["label"] == "NO DATA"
+        assert result["display"]["verificationSummary"]["docMismatches"]["total"] == 0
+        assert result["display"]["stateBadge"]["label"] == "PASS"
         assert result["display"]["metadataAvailable"] is False
         assert result["connectivity"]["rows"][0]["label"] == "Progress endpoint"
 
-    @patch("lib.migration_verifier._fetch_verifier_progress")
+    @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
+    def test_endpoint_only_mismatches_badge(self, mock_fetch):
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        summary = build_verifier_summary_display({
+            "docMismatches": {"total": 2, "byType": {"content": 2}, "byNamespace": {}},
+            "nsMismatches": [],
+        })
+        mock_fetch.return_value = (progress, summary, [])
+        result = build_verifier_monitor_payload(
+            connection_string=None,
+            endpoint_url="localhost:27020/api/v1/progress",
+        )
+        assert result["display"]["stateBadge"]["label"] == "MISMATCHES"
+
+    @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
     def test_fetch_failure_adds_warning(self, mock_fetch):
         from lib.live_monitoring import ProgressFetchError
 
@@ -805,7 +879,23 @@ class TestVerifierProgressEndpointPayload:
         assert any("not responding" in w for w in result["warnings"])
         assert result["display"] is None
 
-    @patch("lib.migration_verifier._fetch_verifier_progress")
+    @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
+    def test_summary_failure_still_shows_progress(self, mock_fetch):
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        mock_fetch.return_value = (
+            progress,
+            None,
+            ["Verifier summary endpoint is not responding: timeout"],
+        )
+        result = build_verifier_monitor_payload(
+            connection_string=None,
+            endpoint_url="localhost:27020/api/v1/progress",
+        )
+        assert result["display"]["verificationProgress"]["phase"] == "recheck"
+        assert "verificationSummary" not in result["display"]
+        assert any("summary" in w.lower() for w in result["warnings"])
+
+    @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
     @patch("lib.migration_verifier.get_generation_history", return_value=[])
     @patch("lib.app_config.get_database")
     def test_both_endpoint_and_metadata(self, mock_get_db, mock_history, mock_fetch):
@@ -814,16 +904,23 @@ class TestVerifierProgressEndpointPayload:
         db.verification_tasks.aggregate.return_value = []
         db.mismatches.find.return_value = []
         mock_get_db.return_value = db
-        mock_fetch.return_value = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        summary = build_verifier_summary_display({
+            "docMismatches": {"total": 1, "byType": {}, "byNamespace": {}},
+            "nsMismatches": [],
+        })
+        mock_fetch.return_value = (progress, summary, [])
 
         result = build_verifier_monitor_payload(
             "mongodb://localhost:27017",
             endpoint_url="localhost:27020/api/v1/progress",
         )
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
+        assert result["display"]["verificationSummary"]["docMismatches"]["total"] == 1
         assert result["display"]["stateBadge"]["label"] == "IN PROGRESS"
         assert result["display"]["metadataAvailable"] is True
         assert "generations" in result["display"]
+        assert "verificationCompleteness" not in result["display"]
 
 
 class TestPlotVerifierMetrics:

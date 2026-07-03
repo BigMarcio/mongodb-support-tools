@@ -46,6 +46,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_MIGRATION_VERIFIER_DB_NAME` | `__mdb_internal_migration_verifier` | Standalone migration-verifier metadata database name. |
 | `MI_VERIFIER_GENERATION_LIMIT` | `5` | Maximum generations shown on the Migration Verifier dashboard (1–20). |
 | `MI_VERIFIER_FAILED_TASKS_LIMIT` | `20` | Maximum failed document tasks shown on the **Failed Tasks / Document Mismatches** card (1–100). |
+| `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` | `0` | Minimum document-mismatch duration (seconds) passed to migration-verifier `/api/v1/summary` (`minDurationSecs` query param). `0` = no filter. |
 | `MI_EMBEDDED_VERIFIER_SRC_DB_NAME` | `__mdb_internal_mongosync_verifier_src` | Embedded verifier source persistence database on the destination cluster. |
 | `MI_EMBEDDED_VERIFIER_DST_DB_NAME` | `__mdb_internal_mongosync_verifier_dst` | Embedded verifier destination persistence database on the destination cluster. |
 | `MI_POOL_SIZE` | `10` | MongoDB connection pool size |
@@ -56,6 +57,8 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MI_REFRESH_TIME` | `10` | Migration monitoring dashboard refresh interval in seconds |
+| `MI_PROGRESS_FETCH_TIMEOUT_SECS` | `10` | HTTP timeout in seconds for mongosync and migration-verifier `/api/v1/progress` polling |
+| `MI_VERIFIER_FETCH_TIMEOUT_SECS` | `60` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` and other non-progress verifier HTTP endpoints |
 | `MI_INDEX_BUILD_REFRESH_TIME` | `60` | Minimum interval in seconds between destination `list_indexes` scans used for approximate metadata index-building progress (counter reads still run every poll). See [MIGRATION_MONITORING.md](MIGRATION_MONITORING.md). |
 | `MI_PROGRESS_ENDPOINT_URL` | _(empty)_ | Mongosync progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27182**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration monitoring home page. Leave host empty in the UI to skip the endpoint. |
 | `MI_VERIFIER_PROGRESS_ENDPOINT_URL` | _(empty)_ | Migration Verifier progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27020**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration Verifier form. Leave host empty in the UI to skip the endpoint. |
@@ -250,6 +253,13 @@ export MI_VERIFIER_GENERATION_LIMIT=10
 
 # Cap failed document tasks shown on the dashboard (default 20)
 export MI_VERIFIER_FAILED_TASKS_LIMIT=20
+
+# Optional: ignore short-lived doc mismatches in /summary (0 = no filter)
+export MI_VERIFIER_SUMMARY_MIN_DURATION_SECS=0
+
+# HTTP timeouts for verifier endpoint polling (seconds)
+export MI_PROGRESS_FETCH_TIMEOUT_SECS=10
+export MI_VERIFIER_FETCH_TIMEOUT_SECS=60
 
 # Or reuse the same connection string as migration monitoring
 export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"

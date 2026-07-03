@@ -174,10 +174,17 @@ SSL_KEY_PATH = os.getenv('MI_SSL_KEY', '/etc/letsencrypt/live/your-domain/privke
 # Live monitoring settings
 REFRESH_TIME = parse_env_int('MI_REFRESH_TIME', 10, min_value=1)
 INDEX_BUILD_REFRESH_TIME = parse_env_int('MI_INDEX_BUILD_REFRESH_TIME', 60, min_value=1)
+PROGRESS_FETCH_TIMEOUT_SECS = parse_env_int(
+    'MI_PROGRESS_FETCH_TIMEOUT_SECS', 10, min_value=1,
+)
+VERIFIER_FETCH_TIMEOUT_SECS = parse_env_int(
+    'MI_VERIFIER_FETCH_TIMEOUT_SECS', 120, min_value=1,
+)
 CONNECTION_STRING = os.getenv('MI_CONNECTION_STRING', '')
 VERIFIER_CONNECTION_STRING = os.getenv('MI_VERIFIER_CONNECTION_STRING', '') or CONNECTION_STRING
 
 PROGRESS_API_PATH = "/api/v1/progress"
+VERIFIER_SUMMARY_API_PATH = "/api/v1/summary"
 DEFAULT_PROGRESS_PORT = 27182
 DEFAULT_VERIFIER_PROGRESS_PORT = 27020
 PROGRESS_PORT_MIN = 1
@@ -227,6 +234,20 @@ def build_verifier_progress_endpoint_url(host, port=None):
     )
 
 
+def build_verifier_summary_endpoint_url(progress_endpoint_url):
+    """Derive migration-verifier /summary URL from a progress endpoint URL."""
+    raw = (progress_endpoint_url or "").strip().rstrip("/")
+    if not raw:
+        return None
+    if raw.endswith(PROGRESS_API_PATH):
+        return raw[: -len(PROGRESS_API_PATH)] + VERIFIER_SUMMARY_API_PATH
+    if re.match(r"^[\w\.\-]+:\d+$", raw):
+        return f"{raw}{VERIFIER_SUMMARY_API_PATH}"
+    if raw.endswith(VERIFIER_SUMMARY_API_PATH):
+        return raw
+    return raw
+
+
 def normalize_progress_endpoint_url(raw):
     """Normalize user/env input to host:port/api/v1/progress (no scheme)."""
     s = (raw or "").strip().rstrip("/")
@@ -269,6 +290,9 @@ VERIFIER_GENERATION_LIMIT = parse_env_int(
 )
 VERIFIER_FAILED_TASKS_LIMIT = parse_env_int(
     "MI_VERIFIER_FAILED_TASKS_LIMIT", 20, min_value=1, max_value=100
+)
+VERIFIER_SUMMARY_MIN_DURATION_SECS = parse_env_int(
+    "MI_VERIFIER_SUMMARY_MIN_DURATION_SECS", 0, min_value=0, max_value=86400
 )
 # Keep in sync with migration-verifier internal/verifier/metadata.go (verifierMetadataVersion).
 # Not configurable via environment — change only here when MV bumps the schema version.

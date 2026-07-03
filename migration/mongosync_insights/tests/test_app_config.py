@@ -11,6 +11,7 @@ from lib.app_config import (
     InMemorySessionStore,
     build_progress_endpoint_url,
     build_verifier_progress_endpoint_url,
+    build_verifier_summary_endpoint_url,
     classify_file_type,
     is_multi_file_archive,
     load_error_patterns,
@@ -25,6 +26,9 @@ from lib.app_config import (
     MI_MIGRATION_VERIFIER_DB_NAME,
     VERIFIER_GENERATION_LIMIT,
     VERIFIER_FAILED_TASKS_LIMIT,
+    VERIFIER_SUMMARY_MIN_DURATION_SECS,
+    PROGRESS_FETCH_TIMEOUT_SECS,
+    VERIFIER_FETCH_TIMEOUT_SECS,
 )
 
 
@@ -170,6 +174,70 @@ class TestVerifierProgressEndpointUrl:
             validate_config()
 
 
+class TestVerifierSummaryEndpointUrl:
+    def test_from_progress_url(self):
+        assert (
+            build_verifier_summary_endpoint_url("localhost:27020/api/v1/progress")
+            == "localhost:27020/api/v1/summary"
+        )
+
+    def test_from_host_port_only(self):
+        assert (
+            build_verifier_summary_endpoint_url("localhost:27020")
+            == "localhost:27020/api/v1/summary"
+        )
+
+    def test_already_summary_url(self):
+        url = "localhost:27020/api/v1/summary"
+        assert build_verifier_summary_endpoint_url(url) == url
+
+    def test_empty_returns_none(self):
+        assert build_verifier_summary_endpoint_url("") is None
+
+
+class TestVerifierSummaryMinDuration:
+    def test_default(self):
+        assert VERIFIER_SUMMARY_MIN_DURATION_SECS == 0
+
+    def test_env_override(self):
+        import importlib
+
+        import lib.app_config as config_module
+
+        with patch.dict("os.environ", {"MI_VERIFIER_SUMMARY_MIN_DURATION_SECS": "60"}, clear=False):
+            importlib.reload(config_module)
+            assert config_module.VERIFIER_SUMMARY_MIN_DURATION_SECS == 60
+        importlib.reload(app_config)
+
+
+class TestFetchTimeouts:
+    def test_default_progress_fetch_timeout(self):
+        assert PROGRESS_FETCH_TIMEOUT_SECS == 10
+
+    def test_default_verifier_fetch_timeout(self):
+        assert VERIFIER_FETCH_TIMEOUT_SECS == 60
+
+    def test_progress_fetch_timeout_env_override(self):
+        import importlib
+
+        import lib.app_config as config_module
+
+        with patch.dict("os.environ", {"MI_PROGRESS_FETCH_TIMEOUT_SECS": "30"}, clear=False):
+            importlib.reload(config_module)
+            assert config_module.PROGRESS_FETCH_TIMEOUT_SECS == 30
+        importlib.reload(app_config)
+
+    def test_verifier_fetch_timeout_env_override(self):
+        import importlib
+
+        import lib.app_config as config_module
+
+        with patch.dict("os.environ", {"MI_VERIFIER_FETCH_TIMEOUT_SECS": "120"}, clear=False):
+            importlib.reload(config_module)
+            assert config_module.VERIFIER_FETCH_TIMEOUT_SECS == 120
+        importlib.reload(app_config)
+
+
 class TestClassifyFileType:
     @pytest.mark.parametrize("filename,expected", [
         ("mongosync_metrics.log", "metrics"),
@@ -303,17 +371,15 @@ class TestVerifierFailedTasksLimit:
     def test_default_failed_tasks_limit(self):
         assert VERIFIER_FAILED_TASKS_LIMIT == 20
 
-    @patch.dict("os.environ", {"MI_VERIFIER_FAILED_TASKS_LIMIT": "50"}, clear=False)
     def test_env_override(self):
         import importlib
 
         import lib.app_config as config_module
 
-        importlib.reload(config_module)
-        try:
+        with patch.dict("os.environ", {"MI_VERIFIER_FAILED_TASKS_LIMIT": "50"}, clear=False):
+            importlib.reload(config_module)
             assert config_module.VERIFIER_FAILED_TASKS_LIMIT == 50
-        finally:
-            importlib.reload(app_config)
+        importlib.reload(app_config)
 
 
 class TestValidateConnection:

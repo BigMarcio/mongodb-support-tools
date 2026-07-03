@@ -771,13 +771,157 @@ def build_verifier_progress_display(progress):
 
 
 def _fetch_verifier_progress(endpoint_url):
-    from .live_monitoring import ProgressFetchError, fetch_progress
+    from .live_monitoring import fetch_progress
 
     progress, _warnings = fetch_progress(endpoint_url)
     return build_verifier_progress_display(progress)
 
 
-def _build_metadata_display(db, db_name):
+def _serialize_ns_mismatch_row(row):
+    if not row:
+        return None
+    return {
+        "type": row.get("type"),
+        "namespace": row.get("namespace"),
+        "aspect": row.get("aspect"),
+        "component": _unwrap_option(row.get("component")),
+        "detail": _unwrap_option(row.get("detail")),
+    }
+
+
+def build_verifier_summary_display(summary, *, min_duration_secs=0, ns_limit=None):
+    """Map migration-verifier /summary fields to dashboard display object."""
+    if not summary:
+        return None
+
+    from .app_config import VERIFIER_FAILED_TASKS_LIMIT
+
+    if ns_limit is None:
+        ns_limit = VERIFIER_FAILED_TASKS_LIMIT
+
+    doc_mm = summary.get("docMismatches") or {}
+    by_type = doc_mm.get("byType") or {}
+    by_namespace = doc_mm.get("byNamespace") or {}
+
+    ns_rows = []
+    for row in summary.get("nsMismatches") or []:
+        serialized = _serialize_ns_mismatch_row(row)
+        if serialized:
+            ns_rows.append(serialized)
+
+    eta = _unwrap_option(summary.get("estCheckSecsRemaining"))
+    if eta is not None:
+        eta = _safe_float(eta)
+
+    notes = summary.get("notes") or []
+    if not isinstance(notes, list):
+        notes = []
+
+    return {
+        "estCheckSecsRemaining": eta,
+        "docMismatches": {
+            "total": _safe_int(doc_mm.get("total")),
+            "byType": {str(k): _safe_int(v) for k, v in by_type.items()},
+            "byNamespace": {str(k): _safe_int(v) for k, v in by_namespace.items()},
+        },
+        "nsMismatches": ns_rows[:ns_limit],
+        "nsMismatchesLimit": ns_limit,
+        "notes": [str(n) for n in notes if n],
+        "minDurationSecs": min_duration_secs,
+    }
+
+
+def _fetch_verifier_summary(endpoint_url):
+    from .app_config import (
+        VERIFIER_SUMMARY_MIN_DURATION_SECS,
+        build_verifier_summary_endpoint_url,
+    )
+    from .live_monitoring import fetch_summary
+
+    summary_url = build_verifier_summary_endpoint_url(endpoint_url)
+    if not summary_url:
+        return None
+    raw = fetch_summary(
+        summary_url,
+        min_duration_secs=VERIFIER_SUMMARY_MIN_DURATION_SECS,
+    )
+    return build_verifier_summary_display(
+        raw,
+        min_duration_secs=VERIFIER_SUMMARY_MIN_DURATION_SECS,
+    )
+
+
+def _fetch_verifier_endpoint_data(endpoint_url):
+    """Fetch /progress and /summary in parallel. Progress failure propagates."""
+    from .app_config import build_verifier_summary_endpoint_url
+    from .live_monitoring import ProgressFetchError
+
+    summary_url = build_verifier_summary_endpoint_url(endpoint_url)
+    warnings = []
+    progress_display = None
+    summary_display = None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        progress_future = executor.submit(_fetch_verifier_progress, endpoint_url)
+        summary_future = (
+            executor.submit(_fetch_verifier_summary, endpoint_url)
+            if summary_url else None
+        )
+        try:
+            progress_display = progress_future.result()
+        except ProgressFetchError:
+            raise
+        if summary_future is not None:
+            try:
+                summary_display = summary_future.result()
+            except ProgressFetchError as e:
+                logger.warning("Verifier summary endpoint fetch failed: %s", e)
+                warnings.append(f"Verifier summary endpoint is not responding: {e}")
+
+    if progress_display and summary_display:
+        eta = summary_display.get("estCheckSecsRemaining")
+        if eta is not None:
+            progress_display["estCheckSecsRemaining"] = eta
+
+    return progress_display, summary_display, warnings
+
+
+def _derive_state_badge_from_summary(summary_display, progress_display):
+    """Toolbar badge from /summary when metadata is unavailable."""
+    if not progress_display:
+        return {"label": "NO DATA", "color": "gray"}
+    if progress_display.get("generation", 0) == 0:
+        return {"label": "IN PROGRESS", "color": "blue"}
+    if not summary_display:
+        return {"label": "NO DATA", "color": "gray"}
+
+    doc_total = (summary_display.get("docMismatches") or {}).get("total") or 0
+    ns_mismatches = summary_display.get("nsMismatches") or []
+    if doc_total > 0 or ns_mismatches:
+        return {"label": "MISMATCHES", "color": "yellow"}
+    return {"label": "PASS", "color": "green"}
+
+
+def _endpoint_only_state_badge(progress_display, summary_display):
+    if summary_display:
+        return _derive_state_badge_from_summary(summary_display, progress_display)
+    return _derive_state_badge_from_progress(progress_display)
+
+
+def _merge_endpoint_display(display, progress_display, summary_display, *, metadata_available):
+    if progress_display:
+        display["verificationProgress"] = progress_display
+    if summary_display:
+        display["verificationSummary"] = summary_display
+    display["metadataAvailable"] = metadata_available
+    if not metadata_available:
+        display["stateBadge"] = _endpoint_only_state_badge(
+            progress_display, summary_display,
+        )
+    return display
+
+
+def _build_metadata_display(db, db_name, *, include_verification_completeness=True):
     """Build metadata-driven display dict from verifier database."""
     from .app_config import VERIFIER_FAILED_TASKS_LIMIT, VERIFIER_GENERATION_LIMIT
 
@@ -789,7 +933,12 @@ def _build_metadata_display(db, db_name):
     previous_gen = current_gen - 1 if current_gen > 0 else None
     gen_range = list(range(max(0, current_gen - gen_limit + 1), current_gen + 1))
 
-    max_workers = 4 if previous_gen is not None else 3
+    max_workers = 1
+    if include_verification_completeness:
+        max_workers += 1
+    if previous_gen is not None:
+        max_workers += 2
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             "history": executor.submit(
@@ -798,10 +947,11 @@ def _build_metadata_display(db, db_name):
             "ns_batch": executor.submit(
                 get_persisted_namespace_statistics_batch, db, gen_range,
             ),
-            "summary": executor.submit(
-                get_verification_summary, db, current_gen,
-            ),
         }
+        if include_verification_completeness:
+            futures["summary"] = executor.submit(
+                get_verification_summary, db, current_gen,
+            )
         if previous_gen is not None:
             futures["coll_mm"] = executor.submit(
                 get_collection_metadata_mismatches, db, previous_gen,
@@ -812,7 +962,10 @@ def _build_metadata_display(db, db_name):
 
         gen_history = futures["history"].result()
         ns_by_generation = futures["ns_batch"].result()
-        task_summary_current = futures["summary"].result()
+        task_summary_current = (
+            futures["summary"].result()
+            if include_verification_completeness else {}
+        )
         if previous_gen is not None:
             collection_mismatch_docs = futures["coll_mm"].result()
             failed_tasks = futures["failed"].result()
@@ -864,17 +1017,31 @@ def _build_metadata_display(db, db_name):
         ]
         namespaces.sort(key=_doc_completion_pct)
 
-    verification_completeness = get_verification_completeness(
-        ns_doc_stats, task_summary_current, current_gen,
+    verification_completeness = None
+    if include_verification_completeness:
+        verification_completeness = get_verification_completeness(
+            ns_doc_stats, task_summary_current, current_gen,
+        )
+
+    current_gen_stats = (
+        verification_completeness
+        if verification_completeness is not None
+        else _sum_namespace_stats_list(ns_doc_stats)
     )
 
     for g in generations_to_show:
         gen_num = g["num"]
         if gen_num == current_gen:
-            g["docsCompared"] = verification_completeness["documents"]["compared"]
-            g["totalDocs"] = verification_completeness["documents"]["total"]
-            g["partitionsDone"] = verification_completeness["partitions"]["done"]
-            g["partitionsTotal"] = verification_completeness["partitions"]["total"]
+            if verification_completeness is not None:
+                g["docsCompared"] = verification_completeness["documents"]["compared"]
+                g["totalDocs"] = verification_completeness["documents"]["total"]
+                g["partitionsDone"] = verification_completeness["partitions"]["done"]
+                g["partitionsTotal"] = verification_completeness["partitions"]["total"]
+            else:
+                g["docsCompared"] = current_gen_stats["docsCompared"]
+                g["totalDocs"] = current_gen_stats["totalDocs"]
+                g["partitionsDone"] = current_gen_stats["partitionsDone"]
+                g["partitionsTotal"] = current_gen_stats["partitionsTotal"]
         else:
             g.update(get_generation_progress_stats(
                 db, gen_num, ns_stats=ns_by_generation.get(gen_num, []),
@@ -895,7 +1062,7 @@ def _build_metadata_display(db, db_name):
         None,
     )
 
-    return {
+    result = {
         "metadataAvailable": True,
         "stateBadge": _derive_state_badge(
             current_gen, previous_gen_row, collection_mismatches,
@@ -903,13 +1070,15 @@ def _build_metadata_display(db, db_name):
         "currentGeneration": current_gen,
         "generationLimit": gen_limit,
         "failedTasksLimit": VERIFIER_FAILED_TASKS_LIMIT,
-        "verificationCompleteness": verification_completeness,
         "generations": generations_to_show,
         "namespaces": namespaces[:25],
         "previousGeneration": previous_gen,
         "failedTasks": failed_tasks,
         "collectionMismatches": collection_mismatches,
     }
+    if verification_completeness is not None:
+        result["verificationCompleteness"] = verification_completeness
+    return result
 
 
 def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoint_url=None):
@@ -930,19 +1099,26 @@ def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoin
     }
 
     verification_progress = None
+    verification_summary = None
     if endpoint_url:
         try:
-            verification_progress = _fetch_verifier_progress(endpoint_url)
+            verification_progress, verification_summary, endpoint_warnings = (
+                _fetch_verifier_endpoint_data(endpoint_url)
+            )
+            base["warnings"].extend(endpoint_warnings)
         except ProgressFetchError as e:
             logger.warning("Verifier progress endpoint fetch failed: %s", e)
             base["warnings"].append(f"Verifier progress endpoint is not responding: {e}")
 
     if not connection_string:
         display = {}
-        if verification_progress:
-            display["verificationProgress"] = verification_progress
-            display["stateBadge"] = _derive_state_badge_from_progress(verification_progress)
-            display["metadataAvailable"] = False
+        if verification_progress or verification_summary:
+            _merge_endpoint_display(
+                display,
+                verification_progress,
+                verification_summary,
+                metadata_available=False,
+            )
         base["display"] = display or None
         if not display and not base["warnings"]:
             base["error"] = (
@@ -956,12 +1132,13 @@ def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoin
         logger.info("Connected to verifier database: %s", db_name)
     except PyMongoError as e:
         logger.error("Failed to connect to verifier database: %s", e)
-        if verification_progress:
-            base["display"] = {
-                "verificationProgress": verification_progress,
-                "stateBadge": _derive_state_badge_from_progress(verification_progress),
-                "metadataAvailable": False,
-            }
+        if verification_progress or verification_summary:
+            base["display"] = _merge_endpoint_display(
+                {},
+                verification_progress,
+                verification_summary,
+                metadata_available=False,
+            )
             return base
         return {
             "error": str(e),
@@ -971,12 +1148,13 @@ def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoin
         }
     except Exception as e:
         logger.error("Unexpected error connecting to verifier database: %s", e)
-        if verification_progress:
-            base["display"] = {
-                "verificationProgress": verification_progress,
-                "stateBadge": _derive_state_badge_from_progress(verification_progress),
-                "metadataAvailable": False,
-            }
+        if verification_progress or verification_summary:
+            base["display"] = _merge_endpoint_display(
+                {},
+                verification_progress,
+                verification_summary,
+                metadata_available=False,
+            )
             return base
         return {
             "error": f"Connection error: {str(e)}",
@@ -987,9 +1165,17 @@ def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoin
 
     try:
         base["warnings"].extend(collect_verifier_metadata_warnings(db))
-        display = _build_metadata_display(db, db_name)
-        if verification_progress:
-            display["verificationProgress"] = verification_progress
+        display = _build_metadata_display(
+            db,
+            db_name,
+            include_verification_completeness=not bool(endpoint_url),
+        )
+        _merge_endpoint_display(
+            display,
+            verification_progress,
+            verification_summary,
+            metadata_available=True,
+        )
         base["display"] = display
         return base
 
@@ -997,16 +1183,17 @@ def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoin
         logger.error("Error gathering verifier metrics: %s", e)
         import traceback
         logger.error(traceback.format_exc())
-        if verification_progress:
+        if verification_progress or verification_summary:
             return {
                 "error": f"Error gathering metrics: {str(e)}",
                 "warnings": base.get("warnings", []),
                 "connectivity": base["connectivity"],
-                "display": {
-                    "verificationProgress": verification_progress,
-                    "stateBadge": _derive_state_badge_from_progress(verification_progress),
-                    "metadataAvailable": False,
-                },
+                "display": _merge_endpoint_display(
+                    {},
+                    verification_progress,
+                    verification_summary,
+                    metadata_available=False,
+                ),
             }
         return {
             "error": f"Error gathering metrics: {str(e)}",
