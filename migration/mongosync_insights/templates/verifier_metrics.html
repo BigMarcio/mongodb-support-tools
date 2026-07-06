@@ -24,20 +24,32 @@
 <script>
 const MI_LIVE = { verifier: {{ url_for('live.get_verifier_data')|tojson }} };
 
+var _includeFullPayload = false;
+
 async function fetchVerifierMonitorData() {
     const loading = document.getElementById('verifier-monitor-loading');
     const root = document.getElementById('verifier-monitor-root');
     try {
-        const response = await fetch(MI_LIVE.verifier, { method: 'POST', credentials: 'same-origin' });
+        const response = await fetch(MI_LIVE.verifier, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                includeSummary: _includeFullPayload,
+                includeMetadata: _includeFullPayload,
+            }),
+        });
         const payload = await response.json();
         if (!response.ok && !payload.error) {
             throw new Error(payload.error || 'Request failed');
         }
+        _includeFullPayload = true;
         loading.style.display = 'none';
         root.style.display = 'block';
         miRenderVerifierMonitor(root, payload);
     } catch (err) {
         console.error('Error fetching verifier data:', err);
+        _includeFullPayload = true;
         loading.style.display = 'none';
         root.style.display = 'block';
         miRenderVerifierMonitor(root, {

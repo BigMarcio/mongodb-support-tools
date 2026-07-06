@@ -851,32 +851,31 @@ def _fetch_verifier_summary(endpoint_url):
     )
 
 
-def _fetch_verifier_endpoint_data(endpoint_url):
-    """Fetch /progress and /summary in parallel. Progress failure propagates."""
+def _fetch_verifier_endpoint_data(endpoint_url, *, include_summary=True):
+    """Fetch /progress and optionally /summary in parallel. Progress failure propagates."""
     from .app_config import build_verifier_summary_endpoint_url
     from .live_monitoring import ProgressFetchError
 
-    summary_url = build_verifier_summary_endpoint_url(endpoint_url)
+    summary_url = build_verifier_summary_endpoint_url(endpoint_url) if include_summary else None
     warnings = []
     progress_display = None
     summary_display = None
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        progress_future = executor.submit(_fetch_verifier_progress, endpoint_url)
-        summary_future = (
-            executor.submit(_fetch_verifier_summary, endpoint_url)
-            if summary_url else None
-        )
-        try:
-            progress_display = progress_future.result()
-        except ProgressFetchError:
-            raise
-        if summary_future is not None:
+    if summary_url:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            progress_future = executor.submit(_fetch_verifier_progress, endpoint_url)
+            summary_future = executor.submit(_fetch_verifier_summary, endpoint_url)
+            try:
+                progress_display = progress_future.result()
+            except ProgressFetchError:
+                raise
             try:
                 summary_display = summary_future.result()
             except ProgressFetchError as e:
                 logger.warning("Verifier summary endpoint fetch failed: %s", e)
                 warnings.append(f"Verifier summary endpoint is not responding: {e}")
+    else:
+        progress_display = _fetch_verifier_progress(endpoint_url)
 
     if progress_display and summary_display:
         eta = summary_display.get("estCheckSecsRemaining")
@@ -1081,7 +1080,14 @@ def _build_metadata_display(db, db_name, *, include_verification_completeness=Tr
     return result
 
 
-def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoint_url=None):
+def build_verifier_monitor_payload(
+    connection_string=None,
+    db_name=None,
+    endpoint_url=None,
+    *,
+    include_summary=True,
+    include_metadata=True,
+):
     """Build JSON payload for the Migration Verifier monitoring dashboard."""
     from .app_config import MI_MIGRATION_VERIFIER_DB_NAME, get_database
     from .live_monitoring import ProgressFetchError
@@ -1103,12 +1109,30 @@ def build_verifier_monitor_payload(connection_string=None, db_name=None, endpoin
     if endpoint_url:
         try:
             verification_progress, verification_summary, endpoint_warnings = (
-                _fetch_verifier_endpoint_data(endpoint_url)
+                _fetch_verifier_endpoint_data(endpoint_url, include_summary=include_summary)
             )
             base["warnings"].extend(endpoint_warnings)
         except ProgressFetchError as e:
             logger.warning("Verifier progress endpoint fetch failed: %s", e)
             base["warnings"].append(f"Verifier progress endpoint is not responding: {e}")
+
+    skip_metadata = bool(connection_string and endpoint_url and not include_metadata)
+    if skip_metadata:
+        display = {}
+        if verification_progress or verification_summary:
+            _merge_endpoint_display(
+                display,
+                verification_progress,
+                verification_summary,
+                metadata_available=False,
+            )
+        base["display"] = display or None
+        if not display and not base["warnings"]:
+            base["error"] = (
+                "No verifier data available. Configure a progress endpoint or "
+                "connection string."
+            )
+        return base
 
     if not connection_string:
         display = {}

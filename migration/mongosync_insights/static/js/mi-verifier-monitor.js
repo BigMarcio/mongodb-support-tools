@@ -659,7 +659,7 @@
         body.appendChild(kvRow('Total document mismatches', formatCount(docMm.total)));
 
         var byType = docMm.byType || {};
-        var typeMetrics = el('div', 'lm-metrics lm-verifier-metrics');
+        var typeMetrics = el('div', 'lm-metrics lm-verifier-metrics lm-verifier-mismatch-metrics');
         [
             { label: 'Missing on destination', value: formatCount(byType.missingOnDst || 0) },
             { label: 'Extra on destination', value: formatCount(byType.extraOnDst || 0) },
@@ -674,7 +674,8 @@
             return (byNs[b] || 0) - (byNs[a] || 0);
         });
         if (nsKeys.length > 0) {
-            var table = el('table', 'lm-phase-times-table');
+            body.appendChild(el('div', 'lm-verifier-section-label', 'By namespace'));
+            var table = el('table', 'lm-phase-times-table lm-verifier-mismatch-table');
             var thead = el('thead');
             var headerRow = el('tr');
             ['Namespace', 'Mismatches'].forEach(function (h) {
@@ -709,7 +710,7 @@
 
         if (mismatches.length === 0) {
             return card(
-                'Namespace Mismatches (live)',
+                'Namespace Mismatches Summary',
                 desc,
                 [banner('info', 'No namespace mismatches reported by the verifier.')]
             );
@@ -736,7 +737,7 @@
         });
         table.appendChild(tbody);
 
-        return card('Namespace Mismatches (live)', desc, [table]);
+        return card('Namespace Mismatches Summary', desc, [table]);
     }
 
     function renderConnectivity(conn) {
@@ -802,6 +803,12 @@
             stack.appendChild(progressCard);
         }
 
+        var summaryCard = renderDocMismatchSummary(display.verificationSummary);
+        if (summaryCard) stack.appendChild(summaryCard);
+
+        var nsSummaryCard = renderEndpointNsMismatches(display.verificationSummary);
+        if (nsSummaryCard) stack.appendChild(nsSummaryCard);
+
         appendWarnings(stack, payload.warnings);
 
         if (hasMetadata(display)) {
@@ -820,12 +827,6 @@
 
             stack.appendChild(renderCollectionMismatches(display));
         }
-
-        var summaryCard = renderDocMismatchSummary(display.verificationSummary);
-        if (summaryCard) stack.appendChild(summaryCard);
-
-        var nsSummaryCard = renderEndpointNsMismatches(display.verificationSummary);
-        if (nsSummaryCard) stack.appendChild(nsSummaryCard);
 
         var connCard = renderConnectivity(payload.connectivity);
         if (connCard) stack.appendChild(connCard);

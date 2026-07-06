@@ -705,6 +705,22 @@
     font-size: 18px;
 }
 
+.lm-verifier-mismatch-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lm-verifier-mismatch-metrics .lm-mvalue {
+    font-size: clamp(14px, 2.2vw, 18px);
+    word-break: break-word;
+}
+
+.lm-verifier-mismatch-table th:last-child,
+.lm-verifier-mismatch-table td:last-child {
+    text-align: right;
+    width: 140px;
+    white-space: nowrap;
+}
+
 .lm-verifier-section-label {
     font-size: 13px;
     font-weight: 600;

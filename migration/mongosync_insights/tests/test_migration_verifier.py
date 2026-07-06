@@ -9,6 +9,7 @@ from lib.app_config import VERIFIER_FAILED_TASKS_LIMIT
 from lib.migration_verifier import (
     _derive_state_badge,
     _derive_state_badge_from_summary,
+    _fetch_verifier_endpoint_data,
     _load_mismatches_for_tasks,
     _serialize_failed_task,
     build_verifier_monitor_payload,
@@ -894,6 +895,74 @@ class TestVerifierProgressEndpointPayload:
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
         assert "verificationSummary" not in result["display"]
         assert any("summary" in w.lower() for w in result["warnings"])
+
+    @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
+    def test_skips_summary_when_include_summary_false(self, mock_fetch):
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        mock_fetch.return_value = (progress, None, [])
+        result = build_verifier_monitor_payload(
+            connection_string=None,
+            endpoint_url="localhost:27020/api/v1/progress",
+            include_summary=False,
+        )
+        mock_fetch.assert_called_once_with(
+            "localhost:27020/api/v1/progress", include_summary=False,
+        )
+        assert result["display"]["verificationProgress"]["phase"] == "recheck"
+        assert "verificationSummary" not in result["display"]
+
+    @patch("lib.migration_verifier._fetch_verifier_summary")
+    @patch("lib.migration_verifier._fetch_verifier_progress")
+    def test_fetch_endpoint_data_skips_summary_call(self, mock_progress, mock_summary):
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        mock_progress.return_value = progress
+        prog, summary, warnings = _fetch_verifier_endpoint_data(
+            "localhost:27020/api/v1/progress", include_summary=False,
+        )
+        assert prog == progress
+        assert summary is None
+        assert warnings == []
+        mock_progress.assert_called_once()
+        mock_summary.assert_not_called()
+
+    @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
+    @patch("lib.app_config.get_database")
+    def test_skips_metadata_when_endpoint_and_include_metadata_false(
+        self, mock_get_db, mock_fetch,
+    ):
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        mock_fetch.return_value = (progress, None, [])
+        result = build_verifier_monitor_payload(
+            "mongodb://localhost:27017",
+            endpoint_url="localhost:27020/api/v1/progress",
+            include_summary=False,
+            include_metadata=False,
+        )
+        mock_get_db.assert_not_called()
+        assert result["display"]["verificationProgress"]["phase"] == "recheck"
+        assert result["display"]["metadataAvailable"] is False
+        assert "generations" not in result["display"]
+
+    @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
+    @patch("lib.migration_verifier.get_generation_history", return_value=[])
+    @patch("lib.app_config.get_database")
+    def test_include_metadata_false_ignored_without_endpoint(
+        self, mock_get_db, mock_history, mock_fetch,
+    ):
+        db = MagicMock()
+        db.generation.find_one.return_value = {"metadataVersion": 7, "generation": 0}
+        db.verification_tasks.aggregate.return_value = []
+        db.mismatches.find.return_value = []
+        mock_get_db.return_value = db
+        mock_fetch.return_value = (None, None, [])
+
+        result = build_verifier_monitor_payload(
+            "mongodb://localhost:27017",
+            include_metadata=False,
+        )
+        mock_get_db.assert_called_once()
+        assert result["display"]["metadataAvailable"] is True
+        assert "generations" in result["display"]
 
     @patch("lib.migration_verifier._fetch_verifier_endpoint_data")
     @patch("lib.migration_verifier.get_generation_history", return_value=[])

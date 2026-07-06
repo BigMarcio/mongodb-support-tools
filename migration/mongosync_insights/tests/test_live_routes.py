@@ -122,10 +122,45 @@ class TestVerifierRoutes:
 
     @patch("blueprints.live.build_verifier_monitor_payload", return_value={"display": {"generations": []}})
     @patch("blueprints.live.session_store.get_session", return_value={"verifier_connection_string": "mongodb://localhost:27017"})
-    def test_get_verifier_data(self, _session, _gather, app_client):
+    def test_get_verifier_data(self, _session, mock_build, app_client):
         r = app_client.post("/live/get_verifier_data")
         assert r.status_code == 200
         assert "display" in r.get_json()
+        assert mock_build.call_args.kwargs["include_summary"] is True
+        assert mock_build.call_args.kwargs["include_metadata"] is True
+
+    @patch("blueprints.live.build_verifier_monitor_payload", return_value={"display": {}})
+    @patch(
+        "blueprints.live.session_store.get_session",
+        return_value={"verifier_endpoint_url": "localhost:27020/api/v1/progress"},
+    )
+    def test_get_verifier_data_include_summary_false(self, _session, mock_build, app_client):
+        with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
+            r = app_client.post(
+                "/live/get_verifier_data",
+                json={"includeSummary": False},
+            )
+        assert r.status_code == 200
+        assert mock_build.call_args.kwargs["include_summary"] is False
+
+    @patch("blueprints.live.build_verifier_monitor_payload", return_value={"display": {}})
+    @patch(
+        "blueprints.live.session_store.get_session",
+        return_value={
+            "verifier_endpoint_url": "localhost:27020/api/v1/progress",
+            "verifier_connection_string": "mongodb://localhost:27017",
+        },
+    )
+    def test_get_verifier_data_deferred_first_load(self, _session, mock_build, app_client):
+        with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
+            with patch("blueprints.live.VERIFIER_PROGRESS_ENDPOINT_URL", ""):
+                r = app_client.post(
+                    "/live/get_verifier_data",
+                    json={"includeSummary": False, "includeMetadata": False},
+                )
+        assert r.status_code == 200
+        assert mock_build.call_args.kwargs["include_summary"] is False
+        assert mock_build.call_args.kwargs["include_metadata"] is False
 
     @patch(
         "blueprints.live.build_verifier_monitor_payload",

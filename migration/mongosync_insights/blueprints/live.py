@@ -304,9 +304,12 @@ def get_verifier_data():
             }
         ), 400
 
+    body = request.get_json(silent=True) or {}
     return jsonify(
         build_verifier_monitor_payload(
             connection_string,
             endpoint_url=endpoint_url,
+            include_summary=body.get("includeSummary", True),
+            include_metadata=body.get("includeMetadata", True),
         )
     )
