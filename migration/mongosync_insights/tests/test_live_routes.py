@@ -120,14 +120,6 @@ class TestVerifierRoutes:
         assert r.status_code == 200
         assert b"Invalid Progress Endpoint" in r.data
 
-    @patch("blueprints.live.build_verifier_monitor_payload", return_value={"display": {"generations": []}})
-    @patch("blueprints.live.session_store.get_session", return_value={"verifier_connection_string": "mongodb://localhost:27017"})
-    def test_get_verifier_data(self, _session, mock_build, app_client):
-        r = app_client.post("/live/get_verifier_data")
-        assert r.status_code == 200
-        assert "display" in r.get_json()
-        mock_build.assert_called_once()
-
     @patch("blueprints.live.build_verifier_progress_payload", return_value={"display": {"verificationProgress": {"phase": "check"}}})
     @patch(
         "blueprints.live.session_store.get_session",
@@ -169,24 +161,3 @@ class TestVerifierRoutes:
         with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
             r = app_client.post("/live/get_verifier_metadata")
         assert r.status_code == 400
-
-    @patch(
-        "blueprints.live.build_verifier_monitor_payload",
-        return_value={"display": {"verificationProgress": {"phase": "check"}}},
-    )
-    @patch(
-        "blueprints.live.session_store.get_session",
-        return_value={"verifier_endpoint_url": "localhost:27020/api/v1/progress"},
-    )
-    def test_get_verifier_data_endpoint_only(self, _session, _gather, app_client):
-        with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
-            r = app_client.post("/live/get_verifier_data")
-            assert r.status_code == 200
-            assert r.get_json()["display"]["verificationProgress"]["phase"] == "check"
-
-    @patch("blueprints.live.session_store.get_session", return_value={})
-    def test_get_verifier_data_missing_input(self, _session, app_client):
-        with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
-            with patch("blueprints.live.VERIFIER_PROGRESS_ENDPOINT_URL", ""):
-                r = app_client.post("/live/get_verifier_data")
-                assert r.status_code == 400

@@ -807,18 +807,7 @@
         };
     }
 
-    function deriveProgressStateBadge(progress) {
-        if (!progress) return { label: 'NO DATA', color: 'gray' };
-        if (progress.generation === 0) return { label: 'IN PROGRESS', color: 'blue' };
-        var tasks = progress.tasks || {};
-        var metadataMismatch = tasks.metadataMismatch || 0;
-        if (metadataMismatch === 0 && !progress.longestDocMismatch) {
-            return { label: 'PASS', color: 'green' };
-        }
-        return { label: 'MISMATCHES', color: 'yellow' };
-    }
-
-    function buildMergedDisplay(progress, summary, metadataDisplay) {
+    function buildToolbarDisplay(progress, summary, metadataDisplay, stateBadge) {
         var display = {};
         if (metadataDisplay) {
             Object.keys(metadataDisplay).forEach(function (key) {
@@ -827,12 +816,7 @@
         }
         if (progress) display.verificationProgress = progress;
         if (summary) display.verificationSummary = summary;
-        if (progress) {
-            display.stateBadge = deriveProgressStateBadge(progress);
-        } else if (!display.metadataAvailable) {
-            display.metadataAvailable = false;
-            display.stateBadge = { label: 'NO DATA', color: 'gray' };
-        }
+        if (stateBadge) display.stateBadge = stateBadge;
         return display;
     }
 
@@ -863,9 +847,9 @@
         };
     }
 
-    function miUpdateVerifierToolbar(slots, progress, summary, metadataDisplay) {
+    function miUpdateVerifierToolbar(slots, progress, summary, metadataDisplay, stateBadge) {
         if (!slots || !slots.toolbar) return;
-        var display = buildMergedDisplay(progress, summary, metadataDisplay);
+        var display = buildToolbarDisplay(progress, summary, metadataDisplay, stateBadge);
         slots.toolbar.replaceChildren();
         slots.toolbar.appendChild(renderToolbar(display));
     }
@@ -937,91 +921,6 @@
         if (connCard) slots.connectivity.appendChild(connCard);
     }
 
-    function miRenderVerifierMonitorError(root, payload) {
-        if (!root) return;
-        root.replaceChildren();
-        var shell = el('div', 'lm-stack');
-        if (payload && payload.error) {
-            shell.appendChild(banner('danger', payload.error));
-        }
-        appendWarnings(shell, (payload && payload.warnings) || []);
-        var connCard = renderConnectivity(payload && payload.connectivity);
-        if (connCard) shell.appendChild(connCard);
-        root.appendChild(shell);
-    }
-
-    function renderVerifierMonitor(root, payload) {
-        if (!root) return;
-        root.replaceChildren();
-
-        if (payload.error && !payload.display) {
-            var shell = el('div', 'lm-stack');
-            shell.appendChild(banner('danger', payload.error));
-            appendWarnings(shell, payload.warnings);
-            var errConn = renderConnectivity(payload.connectivity);
-            if (errConn) shell.appendChild(errConn);
-            root.appendChild(shell);
-            return;
-        }
-
-        if (!payload.display) {
-            var infoShell = el('div', 'lm-stack');
-            infoShell.appendChild(
-                banner(
-                    'info',
-                    payload.error || 'No verifier data available.'
-                )
-            );
-            appendWarnings(infoShell, payload.warnings);
-            var infoConn = renderConnectivity(payload.connectivity);
-            if (infoConn) infoShell.appendChild(infoConn);
-            root.appendChild(infoShell);
-            return;
-        }
-
-        var display = payload.display;
-
-        root.appendChild(renderToolbar(display));
-
-        var stack = el('div', 'lm-stack lm-stack-after-toolbar');
-
-        var progressCard = renderVerificationProgressCard(display.verificationProgress);
-        if (progressCard) {
-            stack.appendChild(progressCard);
-        }
-
-        var summaryCard = renderDocMismatchSummary(display.verificationSummary);
-        if (summaryCard) stack.appendChild(summaryCard);
-
-        var nsSummaryCard = renderEndpointNsMismatches(display.verificationSummary);
-        if (nsSummaryCard) stack.appendChild(nsSummaryCard);
-
-        appendWarnings(stack, payload.warnings);
-
-        if (hasMetadata(display)) {
-            renderVerificationCompleteness(display).forEach(function (completenessCard) {
-                stack.appendChild(completenessCard);
-            });
-
-            stack.appendChild(renderGenerationsOverview(
-                display.generations,
-                display.generationLimit
-            ));
-
-            stack.appendChild(renderNamespaces(display.namespaces, display));
-
-            stack.appendChild(renderFailedTasks(display));
-
-            stack.appendChild(renderCollectionMismatches(display));
-        }
-
-        var connCard = renderConnectivity(payload.connectivity);
-        if (connCard) stack.appendChild(connCard);
-
-        root.appendChild(stack);
-    }
-
-    global.miRenderVerifierMonitor = renderVerifierMonitor;
     global.miInitVerifierMonitorShell = miInitVerifierMonitorShell;
     global.miUpdateVerifierToolbar = miUpdateVerifierToolbar;
     global.miUpdateVerifierProgressSection = miUpdateVerifierProgressSection;
@@ -1029,6 +928,4 @@
     global.miUpdateVerifierMetadataSection = miUpdateVerifierMetadataSection;
     global.miUpdateVerifierWarnings = miUpdateVerifierWarnings;
     global.miUpdateVerifierConnectivity = miUpdateVerifierConnectivity;
-    global.miRenderVerifierMonitorError = miRenderVerifierMonitorError;
-    global.miBuildMergedVerifierDisplay = buildMergedDisplay;
 })(typeof window !== 'undefined' ? window : this);

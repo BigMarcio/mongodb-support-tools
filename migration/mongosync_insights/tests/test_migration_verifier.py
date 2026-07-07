@@ -9,10 +9,8 @@ from lib.app_config import VERIFIER_FAILED_TASKS_LIMIT
 from lib.migration_verifier import (
     _derive_state_badge,
     _derive_state_badge_from_progress,
-    _fetch_verifier_endpoint_data,
     _load_mismatches_for_tasks,
     _serialize_failed_task,
-    build_verifier_monitor_payload,
     build_verifier_progress_display,
     build_verifier_progress_payload,
     build_verifier_summary_display,
@@ -510,14 +508,14 @@ class TestDeriveStateBadge:
         assert badge == {"label": "NO DATA", "color": "gray"}
 
 
-class TestBuildVerifierMonitorPayload:
+class TestBuildVerifierMetadataPayload:
     @patch("lib.app_config.get_verifier_metadata_database")
-    def test_connection_error_returns_error_dict(self, mock_get_db):
+    def test_connection_error_returns_generic_message(self, mock_get_db):
         mock_get_db.side_effect = PyMongoError("fail")
-        result = build_verifier_monitor_payload("mongodb://localhost:27017")
-        assert "error" in result
+        result = build_verifier_metadata_payload("mongodb://localhost:27017")
+        assert result["error"] == "Could not connect to verifier database."
+        assert "fail" not in result["error"]
         assert result["display"] is None
-        assert result["connectivity"] is not None
 
     @patch("lib.app_config.get_verifier_metadata_database")
     def test_success_returns_display_payload(self, mock_get_db):
@@ -527,7 +525,7 @@ class TestBuildVerifierMonitorPayload:
         db.mismatches.find.return_value = []
         mock_get_db.return_value = db
         with patch("lib.migration_verifier.get_generation_history", return_value=[]):
-            result = build_verifier_monitor_payload("mongodb://localhost:27017")
+            result = build_verifier_metadata_payload("mongodb://localhost:27017")
         assert result.get("error") is None
         assert result["warnings"] == []
         assert result["display"] is not None
@@ -569,7 +567,7 @@ class TestBuildVerifierMonitorPayload:
         mock_summary.return_value = {
             "completed": 0, "failed": 0, "mismatch": 0, "pending": 2, "processing": 0,
         }
-        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        result = build_verifier_metadata_payload("mongodb://localhost:27017")
         assert result["display"]["stateBadge"] == {"label": "PASS", "color": "green"}
 
     @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
@@ -598,7 +596,7 @@ class TestBuildVerifierMonitorPayload:
         mock_summary.return_value = {
             "completed": 0, "failed": 0, "mismatch": 0, "pending": 1, "processing": 0,
         }
-        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        result = build_verifier_metadata_payload("mongodb://localhost:27017")
         assert result["display"]["stateBadge"] == {"label": "MISMATCHES", "color": "yellow"}
 
     @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
@@ -622,7 +620,7 @@ class TestBuildVerifierMonitorPayload:
         mock_summary.return_value = {
             "completed": 0, "failed": 0, "mismatch": 0, "pending": 0, "processing": 0,
         }
-        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        result = build_verifier_metadata_payload("mongodb://localhost:27017")
         mock_failed_tasks.assert_called_once_with(mock_get_db.return_value, 150)
         mock_coll_mm.assert_called_once_with(mock_get_db.return_value, 150)
         assert result["display"]["previousGeneration"] == 150
@@ -636,7 +634,7 @@ class TestBuildVerifierMonitorPayload:
         db.verification_tasks.aggregate.return_value = []
         db.mismatches.find.return_value = []
         mock_get_db.return_value = db
-        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        result = build_verifier_metadata_payload("mongodb://localhost:27017")
         mock_gen_history.assert_called_once()
         assert mock_gen_history.call_args[0][1] == 10
         assert result["display"]["generationLimit"] == 10
@@ -665,7 +663,7 @@ class TestBuildVerifierMonitorPayload:
         mock_summary.return_value = {
             "completed": 8, "failed": 0, "mismatch": 0, "pending": 2, "processing": 0,
         }
-        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        result = build_verifier_metadata_payload("mongodb://localhost:27017")
         gens = result["display"]["generations"]
         gen0 = next(g for g in gens if g["num"] == 0)
         gen1 = next(g for g in gens if g["num"] == 1)
@@ -707,7 +705,7 @@ class TestBuildVerifierMonitorPayload:
                 },
             ],
         }
-        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        result = build_verifier_metadata_payload("mongodb://localhost:27017")
         gen = result["display"]["generations"][0]
         completeness = result["display"]["verificationCompleteness"]
         assert gen["docsCompared"] == 50
@@ -726,7 +724,7 @@ class TestBuildVerifierMonitorPayload:
         db.verification_tasks.aggregate.return_value = []
         db.mismatches.find.return_value = []
         mock_get_db.return_value = db
-        result = build_verifier_monitor_payload("mongodb://localhost:27017")
+        result = build_verifier_metadata_payload("mongodb://localhost:27017")
         assert len(result["warnings"]) == 1
         assert "mismatch" in result["warnings"][0].lower()
 
@@ -851,29 +849,19 @@ class TestDeriveStateBadgeFromProgress:
 
 
 class TestVerifierProgressEndpointPayload:
-    @patch("lib.migration_verifier._fetch_verifier_summary")
     @patch("lib.migration_verifier._fetch_verifier_progress")
-    def test_endpoint_only_payload(self, mock_progress, mock_summary):
+    def test_progress_payload_includes_state_badge(self, mock_progress):
         progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
-        summary = build_verifier_summary_display({
-            "docMismatches": {"total": 0, "byType": {}, "byNamespace": {}},
-            "nsMismatches": [],
-        })
         mock_progress.return_value = progress
-        mock_summary.return_value = summary
-        result = build_verifier_monitor_payload(
-            connection_string=None,
-            endpoint_url="localhost:27020/api/v1/progress",
+        result = build_verifier_progress_payload(
+            "localhost:27020/api/v1/progress",
         )
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
-        assert result["display"]["verificationSummary"]["docMismatches"]["total"] == 0
         assert result["display"]["stateBadge"]["label"] == "PASS"
-        assert result["display"]["metadataAvailable"] is False
         assert result["connectivity"]["rows"][0]["label"] == "Progress endpoint"
 
-    @patch("lib.migration_verifier._fetch_verifier_summary")
     @patch("lib.migration_verifier._fetch_verifier_progress")
-    def test_endpoint_only_mismatches_badge(self, mock_progress, mock_summary):
+    def test_progress_payload_mismatches_badge(self, mock_progress):
         progress_raw = {
             **SAMPLE_MV_PROGRESS,
             "verificationStatus": {
@@ -887,100 +875,33 @@ class TestVerifierProgressEndpointPayload:
                 "durationSecs": 832.181,
             },
         }
-        progress = build_verifier_progress_display(progress_raw)
-        summary = build_verifier_summary_display({
-            "docMismatches": {"total": 0, "byType": {}, "byNamespace": {}},
-            "nsMismatches": [],
-        })
-        mock_progress.return_value = progress
-        mock_summary.return_value = summary
-        result = build_verifier_monitor_payload(
-            connection_string=None,
-            endpoint_url="localhost:27020/api/v1/progress",
+        mock_progress.return_value = build_verifier_progress_display(progress_raw)
+        result = build_verifier_progress_payload(
+            "localhost:27020/api/v1/progress",
         )
         assert result["display"]["stateBadge"]["label"] == "MISMATCHES"
 
-    @patch("lib.migration_verifier._fetch_verifier_summary")
     @patch("lib.migration_verifier._fetch_verifier_progress")
-    def test_fetch_failure_adds_warning(self, mock_progress, mock_summary):
+    def test_progress_fetch_failure_sets_no_data_badge(self, mock_progress):
         from lib.live_monitoring import ProgressFetchError
 
-        mock_progress.side_effect = ProgressFetchError("connection error", kind="connection")
-        mock_summary.side_effect = ProgressFetchError("connection error", kind="connection")
-        result = build_verifier_monitor_payload(
-            connection_string=None,
-            endpoint_url="localhost:27020/api/v1/progress",
+        mock_progress.side_effect = ProgressFetchError(
+            "connection error", kind="connection",
+        )
+        result = build_verifier_progress_payload(
+            "localhost:27020/api/v1/progress",
         )
         assert any("not responding" in w for w in result["warnings"])
-        assert result["display"] is None
+        assert result["display"]["stateBadge"] == {"label": "NO DATA", "color": "gray"}
 
     @patch("lib.migration_verifier._fetch_verifier_summary")
-    @patch("lib.migration_verifier._fetch_verifier_progress")
-    def test_summary_failure_still_shows_progress(self, mock_progress, mock_summary):
+    def test_summary_fetch_failure_adds_warning(self, mock_summary):
         from lib.live_monitoring import ProgressFetchError
 
-        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
-        mock_progress.return_value = progress
         mock_summary.side_effect = ProgressFetchError("timeout", kind="timeout")
-        result = build_verifier_monitor_payload(
-            connection_string=None,
-            endpoint_url="localhost:27020/api/v1/progress",
-        )
-        assert result["display"]["verificationProgress"]["phase"] == "recheck"
-        assert "verificationSummary" not in result["display"]
-        assert result["display"]["stateBadge"]["label"] == "PASS"
+        result = build_verifier_summary_payload("localhost:27020/api/v1/progress")
         assert any("summary" in w.lower() for w in result["warnings"])
-
-    @patch("lib.migration_verifier._fetch_verifier_summary")
-    @patch("lib.migration_verifier._fetch_verifier_progress")
-    def test_fetch_endpoint_data_skips_summary_call(self, mock_progress, mock_summary):
-        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
-        mock_progress.return_value = progress
-        prog, summary, warnings = _fetch_verifier_endpoint_data(
-            "localhost:27020/api/v1/progress", include_summary=False,
-        )
-        assert prog == progress
-        assert summary is None
-        assert warnings == []
-        mock_progress.assert_called_once()
-        mock_summary.assert_not_called()
-
-    @patch("lib.migration_verifier._fetch_verifier_summary")
-    @patch("lib.migration_verifier._fetch_verifier_progress")
-    @patch("lib.migration_verifier.get_generation_history", return_value=[])
-    @patch("lib.app_config.get_verifier_metadata_database")
-    def test_both_endpoint_and_metadata(
-        self, mock_get_db, mock_history, mock_progress, mock_summary,
-    ):
-        db = MagicMock()
-        db.generation.find_one.return_value = {"metadataVersion": 7, "generation": 0}
-        db.verification_tasks.aggregate.return_value = []
-        db.mismatches.find.return_value = []
-        mock_get_db.return_value = db
-        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
-        summary = build_verifier_summary_display({
-            "docMismatches": {"total": 1, "byType": {}, "byNamespace": {}},
-            "nsMismatches": [],
-        })
-        mock_progress.return_value = progress
-        mock_summary.return_value = summary
-
-        result = build_verifier_monitor_payload(
-            "mongodb://localhost:27017",
-            endpoint_url="localhost:27020/api/v1/progress",
-        )
-        assert result["display"]["verificationProgress"]["phase"] == "recheck"
-        assert result["display"]["verificationSummary"]["docMismatches"]["total"] == 1
-        assert result["display"]["stateBadge"]["label"] == "PASS"
-        assert result["display"]["metadataAvailable"] is True
-        assert "generations" in result["display"]
-        assert "verificationCompleteness" not in result["display"]
-        assert result["display"]["metadataSkippedSections"] == [
-            "namespaces",
-            "collectionMismatches",
-            "verificationCompleteness",
-            "failedTasks",
-        ]
+        assert "verificationSummary" not in result["display"]
 
 
 class TestVerifierSlicePayloads:
@@ -990,6 +911,7 @@ class TestVerifierSlicePayloads:
         mock_progress.return_value = progress
         result = build_verifier_progress_payload("localhost:27020/api/v1/progress")
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
+        assert result["display"]["stateBadge"]["label"] == "PASS"
         assert result["connectivity"]["rows"][0]["label"] == "Progress endpoint"
 
     @patch("lib.migration_verifier._fetch_verifier_summary")
@@ -1157,3 +1079,4 @@ class TestPlotVerifierMetrics:
         result = plot_verifier_metrics()
         assert result == "html"
         mock_render.assert_called_once()
+        assert mock_render.call_args[1]["refresh_time"] == 10

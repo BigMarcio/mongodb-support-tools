@@ -7,9 +7,9 @@ Web dashboard for **mongosync** migrations: log analysis, real-time **Migration 
 | Hub card | Description |
 |----------|-------------|
 | **Log analyzer** | Upload and parse mongosync logs, search, and review saved analysis snapshots |
-| **Migration monitoring** | Real-time migration progress via mongosync progress API and/or destination metadata |
+| **Migration monitoring** | Real-time mongosync migration progress via progress API and/or destination metadata; includes a second **Migration Verifier** form on the same `/live/` page for the standalone migration-verifier tool |
 
-See **[MIGRATION_MONITORING.md](MIGRATION_MONITORING.md)** for how Migration Monitoring works (inputs, data sources, index-building and verifier fallbacks).
+See **[MIGRATION_MONITORING.md](MIGRATION_MONITORING.md)** for how Migration Monitoring and Migration Verifier work (inputs, data sources, polling, index-building and verifier fallbacks).
 
 See **[LOG_ANALYZER.md](LOG_ANALYZER.md)** for uploading logs, analysis tabs, snapshots, and the Log Viewer.
 
@@ -28,6 +28,8 @@ Earlier and later mongosync versions may work where log formats and APIs (for ex
 ## Migration Verifier compatibility
 
 Migration Verifier monitoring in Mongosync Insights was developed and tested with **migration-verifier 0.2.2**.
+
+MI compares verifier metadata against `VERIFIER_METADATA_VERSION` in `app_config.py` (currently **7**). When the database `metadataVersion` does not match, the dashboard shows a **Warnings** card. See [MIGRATION_MONITORING.md](MIGRATION_MONITORING.md#migration-verifier-monitoring).
 
 Earlier and later migration-verifier versions may work where metadata database schemas and collection layouts are unchanged. Behavior with untested versions is not guaranteed—validate the verifier dashboard against your migration-verifier version before relying on it in production.
 
@@ -52,6 +54,18 @@ export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 export MI_PROGRESS_ENDPOINT_URL="localhost:27182"
 python3 mongosync_insights.py
 ```
+
+## Development
+
+From source, install dev dependencies and run the test suite:
+
+```bash
+cd migration/mongosync_insights
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests/ -q
+```
+
+CI runs the same tests on changes under `migration/mongosync_insights/` (see `.github/workflows/mongosync-insights-tests.yml`).
 
 ## Documentation
 

@@ -851,40 +851,6 @@ def _fetch_verifier_summary(endpoint_url):
     )
 
 
-def _fetch_verifier_endpoint_data(endpoint_url, *, include_summary=True):
-    """Fetch /progress and optionally /summary in parallel. Progress failure propagates."""
-    from .app_config import build_verifier_summary_endpoint_url
-    from .live_monitoring import ProgressFetchError
-
-    summary_url = build_verifier_summary_endpoint_url(endpoint_url) if include_summary else None
-    warnings = []
-    progress_display = None
-    summary_display = None
-
-    if summary_url:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            progress_future = executor.submit(_fetch_verifier_progress, endpoint_url)
-            summary_future = executor.submit(_fetch_verifier_summary, endpoint_url)
-            try:
-                progress_display = progress_future.result()
-            except ProgressFetchError:
-                raise
-            try:
-                summary_display = summary_future.result()
-            except ProgressFetchError as e:
-                logger.warning("Verifier summary endpoint fetch failed: %s", e)
-                warnings.append(f"Verifier summary endpoint is not responding: {e}")
-    else:
-        progress_display = _fetch_verifier_progress(endpoint_url)
-
-    if progress_display and summary_display:
-        eta = summary_display.get("estCheckSecsRemaining")
-        if eta is not None:
-            progress_display["estCheckSecsRemaining"] = eta
-
-    return progress_display, summary_display, warnings
-
-
 def _derive_state_badge_from_progress(progress_display):
     """Toolbar badge from /progress when the progress endpoint is available."""
     if not progress_display:
@@ -897,19 +863,6 @@ def _derive_state_badge_from_progress(progress_display):
     ):
         return {"label": "PASS", "color": "green"}
     return {"label": "MISMATCHES", "color": "yellow"}
-
-
-def _merge_endpoint_display(display, progress_display, summary_display, *, metadata_available):
-    if progress_display:
-        display["verificationProgress"] = progress_display
-    if summary_display:
-        display["verificationSummary"] = summary_display
-    display["metadataAvailable"] = metadata_available
-    if progress_display:
-        display["stateBadge"] = _derive_state_badge_from_progress(progress_display)
-    elif not metadata_available:
-        display["stateBadge"] = {"label": "NO DATA", "color": "gray"}
-    return display
 
 
 _METADATA_SECTION_LABELS = {
@@ -1284,9 +1237,13 @@ def build_verifier_progress_payload(
     try:
         progress_display = _fetch_verifier_progress(endpoint_url)
         result["display"]["verificationProgress"] = progress_display
+        result["display"]["stateBadge"] = _derive_state_badge_from_progress(
+            progress_display,
+        )
     except ProgressFetchError as e:
         logger.warning("Verifier progress endpoint fetch failed: %s", e)
         result["warnings"].append(f"Verifier progress endpoint is not responding: {e}")
+        result["display"]["stateBadge"] = {"label": "NO DATA", "color": "gray"}
     return result
 
 
@@ -1334,18 +1291,18 @@ def build_verifier_metadata_payload(
         logger.info("Connected to verifier database: %s", db_name)
     except PyMongoError as e:
         logger.error("Failed to connect to verifier database: %s", e)
-        result["error"] = str(e)
+        result["error"] = "Could not connect to verifier database."
         return result
     except Exception as e:
         logger.error("Unexpected error connecting to verifier database: %s", e)
-        result["error"] = f"Connection error: {str(e)}"
+        result["error"] = "Could not connect to verifier database."
         return result
 
     try:
         result["warnings"].extend(collect_verifier_metadata_warnings(db))
     except Exception as e:
         logger.error("Error reading verifier metadata warnings: %s", e)
-        result["error"] = f"Error gathering metrics: {str(e)}"
+        result["error"] = "Could not load verifier metadata."
         return result
 
     display, section_warnings = _build_metadata_display(
@@ -1361,101 +1318,6 @@ def build_verifier_metadata_payload(
     else:
         result["error"] = "Could not load verifier metadata."
     return result
-
-
-def build_verifier_monitor_payload(
-    connection_string=None,
-    db_name=None,
-    endpoint_url=None,
-    **kwargs,
-):
-    """Build combined JSON payload (legacy single-request API)."""
-    from .app_config import MI_MIGRATION_VERIFIER_DB_NAME
-
-    kwargs.pop("include_summary", None)
-    kwargs.pop("include_metadata", None)
-
-    if db_name is None:
-        db_name = MI_MIGRATION_VERIFIER_DB_NAME
-
-    warnings = []
-    connectivity = _build_connectivity(
-        connection_string, db_name if connection_string else None, endpoint_url,
-    )
-    verification_progress = None
-    verification_summary = None
-    metadata_display = None
-    error = None
-
-    if endpoint_url:
-        progress_payload = build_verifier_progress_payload(
-            endpoint_url, connection_string, db_name,
-        )
-        warnings.extend(progress_payload.get("warnings") or [])
-        verification_progress = (progress_payload.get("display") or {}).get(
-            "verificationProgress",
-        )
-
-        summary_payload = build_verifier_summary_payload(endpoint_url)
-        warnings.extend(summary_payload.get("warnings") or [])
-        verification_summary = (summary_payload.get("display") or {}).get(
-            "verificationSummary",
-        )
-
-        if verification_progress and verification_summary:
-            eta = verification_summary.get("estCheckSecsRemaining")
-            if eta is not None:
-                verification_progress["estCheckSecsRemaining"] = eta
-
-    if connection_string:
-        metadata_payload = build_verifier_metadata_payload(
-            connection_string, endpoint_url=endpoint_url, db_name=db_name,
-        )
-        warnings.extend(metadata_payload.get("warnings") or [])
-        if metadata_payload.get("error"):
-            error = metadata_payload["error"]
-        metadata_display = metadata_payload.get("display")
-
-    if metadata_display is not None:
-        _merge_endpoint_display(
-            metadata_display,
-            verification_progress,
-            verification_summary,
-            metadata_available=True,
-        )
-        return {
-            "error": error,
-            "warnings": warnings,
-            "connectivity": connectivity,
-            "display": metadata_display,
-        }
-
-    display = {}
-    if verification_progress or verification_summary:
-        _merge_endpoint_display(
-            display,
-            verification_progress,
-            verification_summary,
-            metadata_available=False,
-        )
-
-    if not display and not warnings:
-        return {
-            "error": (
-                "No verifier data available. Configure a progress endpoint or "
-                "connection string."
-            ),
-            "warnings": warnings,
-            "connectivity": connectivity,
-            "display": None,
-        }
-
-    return {
-        "error": error,
-        "warnings": warnings,
-        "connectivity": connectivity,
-        "display": display or None,
-    }
 
 
 def _doc_completion_pct(ns):
@@ -1573,6 +1435,7 @@ def plot_verifier_metrics(db_name=None):
     """Render the verifier metrics template."""
     from .app_config import (
         MI_MIGRATION_VERIFIER_DB_NAME,
+        REFRESH_TIME,
         VERIFIER_METADATA_REFRESH_TIME,
         VERIFIER_PROGRESS_REFRESH_TIME,
         VERIFIER_SUMMARY_REFRESH_TIME,
@@ -1587,7 +1450,7 @@ def plot_verifier_metrics(db_name=None):
 
     return render_template(
         'verifier_metrics.html',
-        refresh_time=progress_refresh,
+        refresh_time=REFRESH_TIME,
         refresh_time_ms=str(int(progress_refresh) * 1000),
         progress_refresh_sec=progress_refresh,
         summary_refresh_sec=summary_refresh,

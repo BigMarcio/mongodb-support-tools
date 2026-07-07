@@ -68,7 +68,7 @@ After parsing, the results page shows one or more tabs:
 
 ### Mongosync Logs
 
-Interactive Plotly charts grouped by section (global migration, collection copy, CEA, indexes, verifier). Zoom, pan, and toggle series from the legend.
+Interactive Plotly charts grouped by section (global migration, collection copy, CEA, indexes, verifier). Zoom, pan, and toggle series from the legend. The **Mongosync Progress** table includes a **Copy as Markdown** badge on the chart for sharing phase and state-transition rows.
 
 ![Mongosync Logs tab — migration charts](images/mongosync_logs_logs.png)
 

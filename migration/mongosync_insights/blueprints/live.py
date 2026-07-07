@@ -9,7 +9,6 @@ from lib.live_monitoring import (
 )
 from lib.migration_verifier import (
     build_verifier_metadata_payload,
-    build_verifier_monitor_payload,
     build_verifier_progress_payload,
     build_verifier_summary_payload,
     plot_verifier_metrics,
@@ -312,20 +311,6 @@ def _verifier_no_config_response():
             )
         }
     ), 400
-
-
-@bp.route("/get_verifier_data", methods=["POST"])
-def get_verifier_data():
-    connection_string, endpoint_url = _verifier_session_context()
-    if not connection_string and not endpoint_url:
-        return _verifier_no_config_response()
-
-    return jsonify(
-        build_verifier_monitor_payload(
-            connection_string,
-            endpoint_url=endpoint_url,
-        )
-    )
 
 
 @bp.route("/get_verifier_progress", methods=["POST"])

@@ -29,12 +29,10 @@ const MI_VERIFIER = {
         summary: {{ url_for('live.get_verifier_summary')|tojson }},
         metadata: {{ url_for('live.get_verifier_metadata')|tojson }},
     },
+    baseRefreshSec: {{ refresh_time }},
     progressRefreshMs: {{ progress_refresh_ms }},
     summaryRefreshMs: {{ summary_refresh_ms }},
     metadataRefreshMs: {{ metadata_refresh_ms }},
-    progressMultiplier: 3,
-    summaryMultiplier: 12,
-    metadataMultiplier: 6,
 };
 
 function _updateFooterRefresh(progressSec, summarySec, metadataSec) {

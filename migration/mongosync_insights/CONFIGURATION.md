@@ -57,7 +57,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MI_REFRESH_TIME` | `10` | Migration monitoring dashboard refresh interval in seconds. On the Migration Verifier dashboard, **progress** polls every 3× this value (default 30s) and uses the same duration as the verifier `/progress` HTTP timeout; **summary** polls every 12× and **metadata** every 6× (defaults: 30s / 120s / 60s). |
+| `MI_REFRESH_TIME` | `10` | Base refresh interval in seconds (sidebar **Settings** control). **Migration Monitoring** dashboard polls at this interval. **Migration Verifier** dashboard uses multiples of this value: **progress** = 3× (default 30s, same duration as verifier `/progress` HTTP timeout), **summary** = 12× (default 120s), **metadata** = 6× (default 60s). Changing the sidebar refresh updates Migration Monitoring directly and rescales all three verifier intervals proportionally. |
 | `MI_PROGRESS_FETCH_TIMEOUT_SECS` | `10` | HTTP timeout in seconds for mongosync `/api/v1/progress` polling |
 | `MI_VERIFIER_FETCH_TIMEOUT_SECS` | `120` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` |
 | `MI_INDEX_BUILD_REFRESH_TIME` | `60` | Minimum interval in seconds between destination `list_indexes` scans used for approximate metadata index-building progress (counter reads still run every poll). See [MIGRATION_MONITORING.md](MIGRATION_MONITORING.md). |
@@ -102,7 +102,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_SSL_CERT` | `/etc/letsencrypt/live/your-domain/fullchain.pem` | Path to SSL certificate file |
 | `MI_SSL_KEY` | `/etc/letsencrypt/live/your-domain/privkey.pem` | Path to SSL private key file |
 
-> **Note**: Sessions are stored **in-memory** on the server. All active sessions are lost when the application restarts. This is by design to avoid persisting sensitive data (such as connection strings) to disk.
+> **Note**: Sessions are stored **in-memory** on the server. All active sessions are lost when the application restarts. This is by design to avoid persisting sensitive data (such as connection strings) to disk. A session may hold both mongosync and Migration Verifier credentials when you use both forms on `/live/`. Use **Logout** to clear the session cookie and stored credentials.
 
 > **Note**: For detailed HTTPS setup instructions, see [HTTPS_SETUP.md](HTTPS_SETUP.md)
 >
@@ -260,7 +260,10 @@ export MI_VERIFIER_SUMMARY_MIN_DURATION_SECS=0
 
 # HTTP timeouts for verifier endpoint polling (seconds)
 export MI_PROGRESS_FETCH_TIMEOUT_SECS=10
-export MI_VERIFIER_FETCH_TIMEOUT_SECS=60
+export MI_VERIFIER_FETCH_TIMEOUT_SECS=120
+
+# Socket timeout for verifier metadata DB reads (milliseconds)
+export MI_VERIFIER_METADATA_TIMEOUT_MS=120000
 
 # Or reuse the same connection string as migration monitoring
 export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
@@ -324,6 +327,15 @@ sudo -E python3 mongosync_insights.py
 - Confirm mongosync is running and its API is reachable on the host/port you entered (default port **27182**)
 - Verify `MI_PROGRESS_ENDPOINT_URL` uses `host:port` or `host:port/api/v1/progress` (no `http://` required in env)
 - Metadata-only monitoring still works if `MI_CONNECTION_STRING` is set; leave the progress **host** empty in the UI to skip the endpoint intentionally
+
+### Verifier Metadata Connection Errors
+
+**Problem**: Migration Verifier dashboard shows a generic metadata connection error
+
+**Solution**:
+- The UI shows generic messages such as `Could not connect to verifier database.` — driver details are written to `insights.log` only
+- Verify `MI_VERIFIER_CONNECTION_STRING` (or `MI_CONNECTION_STRING` fallback) with `mongosh`
+- Check network access, credentials, and that `MI_MIGRATION_VERIFIER_DB_NAME` exists on the cluster
 
 ### Log File Permission Denied
 

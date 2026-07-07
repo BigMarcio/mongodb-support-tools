@@ -244,7 +244,7 @@ class TestFetchTimeouts:
         assert PROGRESS_FETCH_TIMEOUT_SECS == 10
 
     def test_default_verifier_fetch_timeout(self):
-        assert VERIFIER_FETCH_TIMEOUT_SECS == 60
+        assert VERIFIER_FETCH_TIMEOUT_SECS == 120
 
     def test_progress_fetch_timeout_env_override(self):
         import importlib

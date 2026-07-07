@@ -20,7 +20,7 @@ Refresh interval defaults to **10 seconds** (`MI_REFRESH_TIME`).
 
 ## Configuration inputs
 
-You can provide **one or both** of the following on the Migration monitoring home form (or via environment variables):
+You can provide **one or both** of the following on the Migration monitoring home form (or via environment variables). On the form, the **progress endpoint** fields appear **before** the connection string; the endpoint is the primary live source and the connection string is an optional complement.
 
 | Input | Purpose | Env variable |
 |-------|---------|--------------|
@@ -90,7 +90,9 @@ When metadata is used for embedded verifier progress, the card notes that progre
 
 ## Migration Verifier monitoring
 
-The second form on `/live/` monitors the standalone migration-verifier tool (not mongosync embedded verifier). Provide **one or both** of:
+The second form on `/live/` monitors the standalone migration-verifier tool (not mongosync embedded verifier). On the home page, the **progress endpoint** fields appear **before** the connection string on both forms; the endpoint is the primary live source and the connection string is an optional complement for metadata cards.
+
+Provide **one or both** of:
 
 | Input | Purpose | Env variable |
 |-------|---------|--------------|
@@ -122,11 +124,23 @@ Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_m
 
 When **both** the progress endpoint and connection string are configured:
 
-1. **Progress endpoint** drives the **Verification Progress** card and toolbar phase badge (live in-memory state from migration-verifier).
+1. **Progress endpoint** drives the **Verification Progress** card and the **phase badge** on that card (live in-memory state from migration-verifier).
 2. The same endpoint host also serves **`/api/v1/summary`**, polled independently for mismatch tallies, live namespace mismatches, and initial-check ETA.
 3. **Metadata database** fills **generation overview** (including document and partition columns via namespace statistics) when a progress endpoint is also configured. MI uses **lean metadata mode**: it still runs generation history plus a batched namespace-statistics aggregation for the overview table, but skips the separate namespace-progress, verification-completeness, collection-metadata, and failed-task cards because live **Verification Progress**, **Document Mismatch Summary**, and **Namespace Mismatches Summary** cover that data. Queries run **sequentially** in lean mode to reduce parallel load on the source cluster.
 
-Each source is fetched via a separate MI API route and updates its dashboard section independently. Refresh intervals are **progress** = `MI_REFRESH_TIME × 3` (default 30s), **summary** = 12× `MI_REFRESH_TIME` (default 120s), **metadata** = 6× `MI_REFRESH_TIME` (default 60s). Changing the sidebar refresh control updates all three proportionally.
+### Verifier polling architecture
+
+The browser polls **Mongosync Insights** (same origin); MI fetches migration-verifier HTTP endpoints (`/api/v1/progress`, `/api/v1/summary`) and the metadata database on the server.
+
+| MI route | Requires | Updates |
+|----------|----------|---------|
+| `POST /live/get_verifier_progress` | Progress endpoint | **Verification Progress** card, toolbar **state badge** (`PASS` / `MISMATCHES` / `IN PROGRESS`) |
+| `POST /live/get_verifier_summary` | Progress endpoint | **Document Mismatch Summary** and **Namespace Mismatches Summary** cards |
+| `POST /live/get_verifier_metadata` | Connection string | Generation overview and other metadata cards |
+
+Each source updates its dashboard section independently. Default refresh intervals: **progress** = `MI_REFRESH_TIME × 3` (default 30s), **summary** = `12×` (default 120s), **metadata** = `6×` (default 60s). The page footer shows `Progress: Xs · Summary: Ys · Metadata: Zs`. Changing the sidebar **Settings** refresh control updates all three proportionally (base = `MI_REFRESH_TIME`).
+
+If a source is not configured, its poll returns **HTTP 400** and that timer **stops** (for example, metadata polling is skipped when no connection string is provided). The toolbar **state badge** is computed **server-side** in the progress or metadata poll response (`stateBadge` field); when both progress and metadata are available, the progress badge takes precedence.
 
 If the progress endpoint fails to respond, the dashboard still loads metadata when a connection string is available, and shows a progress-endpoint warning. If individual metadata queries time out, MI shows **partial metadata cards** with section-level warnings instead of failing the entire metadata poll.
 
@@ -134,13 +148,13 @@ The dashboard uses the same Atlas-style card UI as Migration Monitoring. The **V
 
 When the progress endpoint is configured, MI also polls **`/api/v1/summary`** on its own schedule and shows **Document Mismatch Summary** (totals by type and namespace) and **Namespace Mismatches Summary** cards directly below **Verification Progress** (before warnings and metadata cards). Configure `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` to filter out short-lived document mismatches in summary counts. HTTP timeouts: verifier `/progress` uses the same duration as the verifier progress poll interval (`MI_REFRESH_TIME × 3`, default 30s); mongosync `/progress` uses `MI_PROGRESS_FETCH_TIMEOUT_SECS` (default 10s); `/summary` uses `MI_VERIFIER_FETCH_TIMEOUT_SECS` (default 120s). Verifier metadata DB reads use `MI_VERIFIER_METADATA_TIMEOUT_MS` (default 120s).
 
-Additional cards (when metadata is configured): status badge, **verification completeness** summary (metadata-only mode; omitted when a progress endpoint is also configured — use the **Verification Progress** card instead), generation overview, namespace document progress for the previous generation (metadata-only mode), **Failed Tasks / Document Mismatches** (metadata-only mode; omitted when the progress endpoint is configured — use **Document Mismatch Summary** and task counts on **Verification Progress**), and collection metadata mismatches (metadata-only mode; live mismatches come from `/summary` when the endpoint is configured). The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20). When a metadata section fails to load, its card shows a warning banner; other sections continue to update.
+Additional cards (when metadata is configured): **verification completeness** summary (metadata-only mode; omitted when a progress endpoint is also configured — use the **Verification Progress** card instead), generation overview, namespace document progress for the previous generation (metadata-only mode), **Failed Tasks / Document Mismatches** (metadata-only mode; omitted when the progress endpoint is configured — use **Document Mismatch Summary** and task counts on **Verification Progress**), and collection metadata mismatches (metadata-only mode; live mismatches come from `/summary` when the endpoint is configured). The toolbar **state badge** (`PASS` / `MISMATCHES` / `IN PROGRESS`) comes from the **progress** poll when an endpoint is configured, or from **metadata** in metadata-only mode. The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20). When a metadata section fails to load, its card shows a warning banner; other sections continue to update.
 
 **Verification completeness:** The top card rolls up current-generation progress from verifier metadata: document scan progress (`docsCompared` / `totalDocs`), namespaces with all partitions finished, partition queue depth, and task counts (pending / failed / completed). For generation 0 it may also show byte progress. For recheck generations (gen 1+), document totals reflect documents scheduled for recheck, not full cluster size.
 
 **Generation Overview:** Each row summarizes one verification generation. **Total**, **Completed**, **Failed**, and **Pending** count `verification_tasks` by status (excluding the coordinator `primary` task): completed = `completed`; failed = `failed` or `mismatch`; pending = `added` or `processing`. **Documents** shows `docsCompared / totalDocs` from namespace metadata (gen 0 = full cluster; gen 1+ = recheck queue). **Partitions** shows finished partition tasks / total partition tasks for that generation. Doc and partition counts reflect finished work in metadata (in-flight worker progress is not included).
 
-**Progress semantics:** Task progress counts `verification_tasks` by status (excluding the coordinator `primary` task). Document progress uses the same aggregation as migration-verifier’s `/progress` API (`docsCompared` / `totalDocs` from `found_source_documents_count` and `documents_count`). The **current generation** is read from the `generation` collection (not the highest generation number in `verification_tasks`, which can include pre-inserted recheck tasks). When the progress endpoint is configured, the title status badge shows **In Progress** (blue) while `/progress` reports generation 0. From generation 1 onward, **Pass** (green) or **Mismatches** (yellow) is derived from `/progress`: **Pass** when `metadataMismatchTasks` is 0 and `longestDocMismatch` is empty; otherwise **Mismatches**. The **Verification Progress** card shows **Metadata mismatches** and **Docs mismatches** as Yes/No indicators from the same fields. When only the metadata database is configured (no progress endpoint), the status badge reflects the previous completed generation from metadata: failed or metadata-mismatch tasks plus collection/index mismatches from the `mismatches` collection. migration-verifier does not persist writes-off state in the metadata database.
+**Progress semantics:** Task progress counts `verification_tasks` by status (excluding the coordinator `primary` task). Document progress uses the same aggregation as migration-verifier’s `/progress` API (`docsCompared` / `totalDocs` from `found_source_documents_count` and `documents_count`). The **current generation** is read from the `generation` collection (not the highest generation number in `verification_tasks`, which can include pre-inserted recheck tasks). When the progress endpoint is configured, the toolbar **state badge** in the page title shows **In Progress** (blue) while `/progress` reports generation 0. From generation 1 onward, **Pass** (green) or **Mismatches** (yellow) is returned in the progress poll response (`stateBadge`): **Pass** when `metadataMismatchTasks` is 0 and `longestDocMismatch` is empty; otherwise **Mismatches**. The **Verification Progress** card shows a separate **phase badge** (e.g. `RECHECK`) and **Metadata mismatches** / **Docs mismatches** as Yes/No indicators from the same fields. When only the metadata database is configured (no progress endpoint), the toolbar state badge reflects the previous completed generation from metadata: failed or metadata-mismatch tasks plus collection/index mismatches from the `mismatches` collection. migration-verifier does not persist writes-off state in the metadata database.
 
 **Metadata version:** MI compares the `metadataVersion` field on the `generation` document against `VERIFIER_METADATA_VERSION` in `app_config.py` (currently **7**). This constant is not overridable via environment variables — update it in `app_config.py` when migration-verifier bumps `verifierMetadataVersion`. When the version is missing or does not match, MI logs a warning and shows a **Warnings** card on the dashboard (same pattern as Migration Monitoring).
 
