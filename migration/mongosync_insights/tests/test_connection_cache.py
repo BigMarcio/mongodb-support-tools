@@ -7,6 +7,7 @@ from lib import app_config
 class TestClearConnectionCache:
     def setup_method(self):
         app_config.get_mongo_client.cache_clear()
+        app_config.get_verifier_metadata_mongo_client.cache_clear()
         with app_config._resolved_internal_db_lock:
             app_config._resolved_internal_db_cache.clear()
 
@@ -16,9 +17,12 @@ class TestClearConnectionCache:
                 app_config.MI_MONGOSYNC_DB_NAME_NEW
             )
 
-        with patch.object(app_config.get_mongo_client, "cache_clear") as mock_cache_clear:
+        with patch.object(app_config.get_mongo_client, "cache_clear") as mock_cache_clear, patch.object(
+            app_config.get_verifier_metadata_mongo_client, "cache_clear",
+        ) as mock_verifier_cache_clear:
             app_config.clear_connection_cache()
             mock_cache_clear.assert_called_once()
+            mock_verifier_cache_clear.assert_called_once()
 
         assert app_config._resolved_internal_db_cache == {}
 

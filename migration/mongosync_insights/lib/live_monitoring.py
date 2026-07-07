@@ -5,7 +5,11 @@ import logging
 
 import requests
 
-from .app_config import PROGRESS_FETCH_TIMEOUT_SECS, VERIFIER_FETCH_TIMEOUT_SECS
+from .app_config import (
+    PROGRESS_FETCH_TIMEOUT_SECS,
+    VERIFIER_FETCH_TIMEOUT_SECS,
+    VERIFIER_PROGRESS_REFRESH_TIME,
+)
 from .connection_validator import sanitize_for_display
 from .live_metadata_status import (
     MetadataFetchError,
@@ -35,7 +39,7 @@ class ProgressFetchError(Exception):
         self.kind = kind
 
 
-def fetch_progress(endpoint_url):
+def fetch_progress(endpoint_url, *, timeout_secs=None):
     """
     GET mongosync progress JSON from host:port/api/v1/progress.
 
@@ -45,10 +49,12 @@ def fetch_progress(endpoint_url):
     Raises:
         ProgressFetchError: on timeout, connection, HTTP, or JSON errors.
     """
+    if timeout_secs is None:
+        timeout_secs = PROGRESS_FETCH_TIMEOUT_SECS
     url = f"http://{endpoint_url}"
     logger.info("Fetching progress from endpoint: %s", url)
     try:
-        response = requests.get(url, timeout=PROGRESS_FETCH_TIMEOUT_SECS)
+        response = requests.get(url, timeout=timeout_secs)
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.Timeout as e:
@@ -77,6 +83,11 @@ def fetch_progress(endpoint_url):
     if not isinstance(warnings, list):
         warnings = []
     return progress, warnings
+
+
+def fetch_verifier_progress(endpoint_url):
+    """GET migration-verifier /api/v1/progress with verifier refresh-interval timeout."""
+    return fetch_progress(endpoint_url, timeout_secs=VERIFIER_PROGRESS_REFRESH_TIME)
 
 
 def fetch_summary(endpoint_url, *, min_duration_secs=0):

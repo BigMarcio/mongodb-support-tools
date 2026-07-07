@@ -298,7 +298,8 @@
             { label: 'Tasks processing', value: formatCount(tasks.processing) },
             { label: 'Tasks failed', value: formatCount(tasks.failed) },
             { label: 'Tasks completed', value: formatCount(tasks.completed) },
-            { label: 'Metadata mismatches', value: formatCount(tasks.metadataMismatch) },
+            yesNoMetric('Metadata mismatches', (tasks.metadataMismatch || 0) > 0),
+            yesNoMetric('Docs mismatches', !!progress.longestDocMismatch),
             { label: 'Docs/sec', value: formatRate(progress.docsComparedPerSecond) },
             { label: 'Bytes/sec', value: formatRate(progress.srcBytesComparedPerSecond) },
         ].forEach(function (m) {
@@ -348,16 +349,6 @@
         var gen0Block = renderGen0StatsBlock(progress);
         if (gen0Block) body.appendChild(gen0Block);
 
-        if (progress.longestDocMismatch) {
-            var mm = progress.longestDocMismatch;
-            var detail = mm.namespace || '—';
-            if (mm.type) detail += ' (' + mm.type + ')';
-            if (mm.durationSecs != null) {
-                detail += ' — ' + mm.durationSecs.toFixed(1) + 's';
-            }
-            body.appendChild(banner('warning', 'Longest-lived mismatch: ' + detail));
-        }
-
         if (progress.error) {
             body.appendChild(banner('danger', 'Verifier error: ' + progress.error));
         }
@@ -381,8 +372,12 @@
         return title;
     }
 
-    function renderGenerationsOverview(generations, generationLimit) {
+    function renderGenerationsOverview(generations, generationLimit, unavailableMessage) {
         var title = generationOverviewTitle(generationLimit);
+
+        if (unavailableMessage) {
+            return card(title, null, [banner('warning', unavailableMessage)]);
+        }
 
         if (!generations || generations.length === 0) {
             return card(title, null, [
@@ -425,6 +420,11 @@
         return card(title, desc, [table]);
     }
 
+    function isMetadataSectionSkipped(display, section) {
+        var skipped = display && display.metadataSkippedSections;
+        return Array.isArray(skipped) && skipped.indexOf(section) !== -1;
+    }
+
     function hasMetadata(display) {
         return display && display.metadataAvailable === true;
     }
@@ -446,6 +446,14 @@
             'previous generation (collection metadata mismatches are listed separately).';
         if (limit) {
             desc += ' Showing up to ' + limit + ' most recent rows.';
+        }
+
+        if (display.failedTasksUnavailable) {
+            return card(
+                'Failed Tasks / Document Mismatches',
+                desc,
+                [banner('warning', 'Failed tasks could not be loaded from the verifier database.')]
+            );
         }
 
         if (!hasPreviousGeneration(display)) {
@@ -550,23 +558,43 @@
     }
 
     function shouldShowVerificationCompleteness(display) {
+        if (isMetadataSectionSkipped(display, 'verificationCompleteness')) return false;
         if (!display || !display.verificationCompleteness) return false;
         if (display.verificationProgress && hasMetadata(display)) return false;
         return true;
     }
 
     function renderVerificationCompleteness(display) {
+        if (isMetadataSectionSkipped(display, 'verificationCompleteness')) return [];
+        if (display.verificationCompletenessUnavailable) {
+            var title = display.currentGeneration > 0
+                ? 'Current generation completeness'
+                : 'Verification completeness';
+            return [card(
+                title,
+                null,
+                [banner('warning', 'Verification completeness could not be loaded from the verifier database.')]
+            )];
+        }
         if (!shouldShowVerificationCompleteness(display)) return [];
 
         var title = display.currentGeneration > 0
             ? 'Current generation completeness'
             : 'Verification completeness';
-        var card = renderCompletenessCard(display.verificationCompleteness, { title: title });
-        return card ? [card] : [];
+        var completenessCard = renderCompletenessCard(display.verificationCompleteness, { title: title });
+        return completenessCard ? [completenessCard] : [];
     }
 
     function renderNamespaces(namespaces, display) {
         var desc = 'Document progress by namespace for the previous generation.';
+
+        if (display.namespacesUnavailable) {
+            return card(
+                'Namespace Progress',
+                desc,
+                [banner('warning', 'Namespace statistics could not be loaded from the verifier database.')]
+            );
+        }
 
         if (!hasPreviousGeneration(display)) {
             return previousGenerationUnavailableCard('Namespace Progress', desc);
@@ -605,6 +633,14 @@
     function renderCollectionMismatches(display) {
         var mismatches = display.collectionMismatches || [];
         var desc = 'Collection/index metadata mismatches from the previous generation.';
+
+        if (display.collectionMismatchesUnavailable) {
+            return card(
+                'Collection Metadata',
+                desc,
+                [banner('warning', 'Collection metadata mismatches could not be loaded from the verifier database.')]
+            );
+        }
 
         if (!hasPreviousGeneration(display)) {
             return previousGenerationUnavailableCard('Collection Metadata', desc);
@@ -763,6 +799,157 @@
         if (warnCard) parent.appendChild(warnCard);
     }
 
+    function yesNoMetric(label, active) {
+        return {
+            label: label,
+            value: active ? 'Yes' : 'No',
+            badge: active ? 'yellow' : 'black',
+        };
+    }
+
+    function deriveProgressStateBadge(progress) {
+        if (!progress) return { label: 'NO DATA', color: 'gray' };
+        if (progress.generation === 0) return { label: 'IN PROGRESS', color: 'blue' };
+        var tasks = progress.tasks || {};
+        var metadataMismatch = tasks.metadataMismatch || 0;
+        if (metadataMismatch === 0 && !progress.longestDocMismatch) {
+            return { label: 'PASS', color: 'green' };
+        }
+        return { label: 'MISMATCHES', color: 'yellow' };
+    }
+
+    function buildMergedDisplay(progress, summary, metadataDisplay) {
+        var display = {};
+        if (metadataDisplay) {
+            Object.keys(metadataDisplay).forEach(function (key) {
+                display[key] = metadataDisplay[key];
+            });
+        }
+        if (progress) display.verificationProgress = progress;
+        if (summary) display.verificationSummary = summary;
+        if (progress) {
+            display.stateBadge = deriveProgressStateBadge(progress);
+        } else if (!display.metadataAvailable) {
+            display.metadataAvailable = false;
+            display.stateBadge = { label: 'NO DATA', color: 'gray' };
+        }
+        return display;
+    }
+
+    function miInitVerifierMonitorShell(root) {
+        if (!root) return null;
+        root.replaceChildren();
+        var toolbarSlot = el('div', 'lm-verifier-toolbar-slot');
+        var stack = el('div', 'lm-stack lm-stack-after-toolbar');
+        var progressSlot = el('div', 'lm-verifier-progress-slot');
+        var summarySlot = el('div', 'lm-verifier-summary-slot');
+        var warningsSlot = el('div', 'lm-verifier-warnings-slot');
+        var metadataSlot = el('div', 'lm-verifier-metadata-slot');
+        var connectivitySlot = el('div', 'lm-verifier-connectivity-slot');
+        stack.appendChild(progressSlot);
+        stack.appendChild(summarySlot);
+        stack.appendChild(warningsSlot);
+        stack.appendChild(metadataSlot);
+        stack.appendChild(connectivitySlot);
+        root.appendChild(toolbarSlot);
+        root.appendChild(stack);
+        return {
+            toolbar: toolbarSlot,
+            progress: progressSlot,
+            summary: summarySlot,
+            warnings: warningsSlot,
+            metadata: metadataSlot,
+            connectivity: connectivitySlot,
+        };
+    }
+
+    function miUpdateVerifierToolbar(slots, progress, summary, metadataDisplay) {
+        if (!slots || !slots.toolbar) return;
+        var display = buildMergedDisplay(progress, summary, metadataDisplay);
+        slots.toolbar.replaceChildren();
+        slots.toolbar.appendChild(renderToolbar(display));
+    }
+
+    function miUpdateVerifierProgressSection(slots, progress) {
+        if (!slots || !slots.progress) return;
+        slots.progress.replaceChildren();
+        var card = renderVerificationProgressCard(progress);
+        if (card) slots.progress.appendChild(card);
+    }
+
+    function miUpdateVerifierSummarySection(slots, summary) {
+        if (!slots || !slots.summary) return;
+        slots.summary.replaceChildren();
+        var docCard = renderDocMismatchSummary(summary);
+        if (docCard) slots.summary.appendChild(docCard);
+        var nsCard = renderEndpointNsMismatches(summary);
+        if (nsCard) slots.summary.appendChild(nsCard);
+    }
+
+    function miUpdateVerifierMetadataSection(slots, display) {
+        if (!slots || !slots.metadata) return;
+        slots.metadata.replaceChildren();
+        if (!display || !hasMetadata(display)) return;
+
+        if (display.metadataPartial) {
+            slots.metadata.appendChild(
+                banner('warning', 'Some metadata sections could not be loaded.')
+            );
+        }
+
+        if (!isMetadataSectionSkipped(display, 'verificationCompleteness')) {
+            renderVerificationCompleteness(display).forEach(function (cardEl) {
+                slots.metadata.appendChild(cardEl);
+            });
+        }
+
+        var generationsMessage = display.generationsUnavailable
+            ? 'Generation history could not be loaded from the verifier database.'
+            : null;
+        slots.metadata.appendChild(renderGenerationsOverview(
+            display.generations,
+            display.generationLimit,
+            generationsMessage
+        ));
+
+        if (!isMetadataSectionSkipped(display, 'namespaces')) {
+            slots.metadata.appendChild(renderNamespaces(display.namespaces, display));
+        }
+        if (!isMetadataSectionSkipped(display, 'failedTasks')) {
+            slots.metadata.appendChild(renderFailedTasks(display));
+        }
+        if (!isMetadataSectionSkipped(display, 'collectionMismatches')) {
+            slots.metadata.appendChild(renderCollectionMismatches(display));
+        }
+    }
+
+    function miUpdateVerifierWarnings(slots, warnings) {
+        if (!slots || !slots.warnings) return;
+        slots.warnings.replaceChildren();
+        var warnCard = renderWarningsCard(warnings);
+        if (warnCard) slots.warnings.appendChild(warnCard);
+    }
+
+    function miUpdateVerifierConnectivity(slots, connectivity) {
+        if (!slots || !slots.connectivity) return;
+        slots.connectivity.replaceChildren();
+        var connCard = renderConnectivity(connectivity);
+        if (connCard) slots.connectivity.appendChild(connCard);
+    }
+
+    function miRenderVerifierMonitorError(root, payload) {
+        if (!root) return;
+        root.replaceChildren();
+        var shell = el('div', 'lm-stack');
+        if (payload && payload.error) {
+            shell.appendChild(banner('danger', payload.error));
+        }
+        appendWarnings(shell, (payload && payload.warnings) || []);
+        var connCard = renderConnectivity(payload && payload.connectivity);
+        if (connCard) shell.appendChild(connCard);
+        root.appendChild(shell);
+    }
+
     function renderVerifierMonitor(root, payload) {
         if (!root) return;
         root.replaceChildren();
@@ -835,4 +1022,13 @@
     }
 
     global.miRenderVerifierMonitor = renderVerifierMonitor;
+    global.miInitVerifierMonitorShell = miInitVerifierMonitorShell;
+    global.miUpdateVerifierToolbar = miUpdateVerifierToolbar;
+    global.miUpdateVerifierProgressSection = miUpdateVerifierProgressSection;
+    global.miUpdateVerifierSummarySection = miUpdateVerifierSummarySection;
+    global.miUpdateVerifierMetadataSection = miUpdateVerifierMetadataSection;
+    global.miUpdateVerifierWarnings = miUpdateVerifierWarnings;
+    global.miUpdateVerifierConnectivity = miUpdateVerifierConnectivity;
+    global.miRenderVerifierMonitorError = miRenderVerifierMonitorError;
+    global.miBuildMergedVerifierDisplay = buildMergedDisplay;
 })(typeof window !== 'undefined' ? window : this);

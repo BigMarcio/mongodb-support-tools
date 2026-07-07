@@ -29,6 +29,11 @@ from lib.app_config import (
     VERIFIER_SUMMARY_MIN_DURATION_SECS,
     PROGRESS_FETCH_TIMEOUT_SECS,
     VERIFIER_FETCH_TIMEOUT_SECS,
+    VERIFIER_METADATA_TIMEOUT_MS,
+    VERIFIER_PROGRESS_REFRESH_TIME,
+    VERIFIER_SUMMARY_REFRESH_TIME,
+    VERIFIER_METADATA_REFRESH_TIME,
+    REFRESH_TIME,
 )
 
 
@@ -208,6 +213,30 @@ class TestVerifierSummaryMinDuration:
             importlib.reload(config_module)
             assert config_module.VERIFIER_SUMMARY_MIN_DURATION_SECS == 60
         importlib.reload(app_config)
+
+
+class TestVerifierMetadataTimeout:
+    def test_default_verifier_metadata_timeout(self):
+        assert VERIFIER_METADATA_TIMEOUT_MS == 120000
+
+    def test_verifier_metadata_timeout_env_override(self):
+        import importlib
+
+        import lib.app_config as config_module
+
+        with patch.dict(
+            "os.environ", {"MI_VERIFIER_METADATA_TIMEOUT_MS": "90000"}, clear=False,
+        ):
+            importlib.reload(config_module)
+            assert config_module.VERIFIER_METADATA_TIMEOUT_MS == 90000
+        importlib.reload(app_config)
+
+
+class TestVerifierRefreshIntervals:
+    def test_refresh_multiples(self):
+        assert VERIFIER_PROGRESS_REFRESH_TIME == REFRESH_TIME * 3
+        assert VERIFIER_SUMMARY_REFRESH_TIME == REFRESH_TIME * 12
+        assert VERIFIER_METADATA_REFRESH_TIME == REFRESH_TIME * 6
 
 
 class TestFetchTimeouts:

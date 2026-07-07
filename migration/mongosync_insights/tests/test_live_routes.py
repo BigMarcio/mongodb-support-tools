@@ -126,41 +126,49 @@ class TestVerifierRoutes:
         r = app_client.post("/live/get_verifier_data")
         assert r.status_code == 200
         assert "display" in r.get_json()
-        assert mock_build.call_args.kwargs["include_summary"] is True
-        assert mock_build.call_args.kwargs["include_metadata"] is True
+        mock_build.assert_called_once()
 
-    @patch("blueprints.live.build_verifier_monitor_payload", return_value={"display": {}})
+    @patch("blueprints.live.build_verifier_progress_payload", return_value={"display": {"verificationProgress": {"phase": "check"}}})
     @patch(
         "blueprints.live.session_store.get_session",
         return_value={"verifier_endpoint_url": "localhost:27020/api/v1/progress"},
     )
-    def test_get_verifier_data_include_summary_false(self, _session, mock_build, app_client):
+    def test_get_verifier_progress(self, _session, mock_build, app_client):
         with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
-            r = app_client.post(
-                "/live/get_verifier_data",
-                json={"includeSummary": False},
-            )
+            r = app_client.post("/live/get_verifier_progress")
         assert r.status_code == 200
-        assert mock_build.call_args.kwargs["include_summary"] is False
+        assert r.get_json()["display"]["verificationProgress"]["phase"] == "check"
 
-    @patch("blueprints.live.build_verifier_monitor_payload", return_value={"display": {}})
+    @patch("blueprints.live.build_verifier_summary_payload", return_value={"display": {}})
     @patch(
         "blueprints.live.session_store.get_session",
-        return_value={
-            "verifier_endpoint_url": "localhost:27020/api/v1/progress",
-            "verifier_connection_string": "mongodb://localhost:27017",
-        },
+        return_value={"verifier_endpoint_url": "localhost:27020/api/v1/progress"},
     )
-    def test_get_verifier_data_deferred_first_load(self, _session, mock_build, app_client):
+    def test_get_verifier_summary(self, _session, mock_build, app_client):
+        with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
+            r = app_client.post("/live/get_verifier_summary")
+        assert r.status_code == 200
+        mock_build.assert_called_once()
+
+    @patch("blueprints.live.build_verifier_metadata_payload", return_value={"display": {"generations": []}})
+    @patch("blueprints.live.session_store.get_session", return_value={"verifier_connection_string": "mongodb://localhost:27017"})
+    def test_get_verifier_metadata(self, _session, mock_build, app_client):
+        r = app_client.post("/live/get_verifier_metadata")
+        assert r.status_code == 200
+        assert "display" in r.get_json()
+
+    @patch("blueprints.live.session_store.get_session", return_value={})
+    def test_get_verifier_progress_missing_endpoint(self, _session, app_client):
         with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
             with patch("blueprints.live.VERIFIER_PROGRESS_ENDPOINT_URL", ""):
-                r = app_client.post(
-                    "/live/get_verifier_data",
-                    json={"includeSummary": False, "includeMetadata": False},
-                )
-        assert r.status_code == 200
-        assert mock_build.call_args.kwargs["include_summary"] is False
-        assert mock_build.call_args.kwargs["include_metadata"] is False
+                r = app_client.post("/live/get_verifier_progress")
+        assert r.status_code == 400
+
+    @patch("blueprints.live.session_store.get_session", return_value={})
+    def test_get_verifier_metadata_missing_connection(self, _session, app_client):
+        with patch("blueprints.live.VERIFIER_CONNECTION_STRING", ""):
+            r = app_client.post("/live/get_verifier_metadata")
+        assert r.status_code == 400
 
     @patch(
         "blueprints.live.build_verifier_monitor_payload",

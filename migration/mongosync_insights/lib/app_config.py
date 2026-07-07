@@ -174,6 +174,9 @@ SSL_KEY_PATH = os.getenv('MI_SSL_KEY', '/etc/letsencrypt/live/your-domain/privke
 # Live monitoring settings
 REFRESH_TIME = parse_env_int('MI_REFRESH_TIME', 10, min_value=1)
 INDEX_BUILD_REFRESH_TIME = parse_env_int('MI_INDEX_BUILD_REFRESH_TIME', 60, min_value=1)
+VERIFIER_PROGRESS_REFRESH_TIME = REFRESH_TIME * 3 
+VERIFIER_SUMMARY_REFRESH_TIME = REFRESH_TIME * 12
+VERIFIER_METADATA_REFRESH_TIME = REFRESH_TIME * 6
 PROGRESS_FETCH_TIMEOUT_SECS = parse_env_int(
     'MI_PROGRESS_FETCH_TIMEOUT_SECS', 10, min_value=1,
 )
@@ -409,6 +412,66 @@ def validate_progress_endpoint_url(url):
 # Connection pool settings
 CONNECTION_POOL_SIZE = parse_env_int('MI_POOL_SIZE', 10, min_value=1)
 CONNECTION_TIMEOUT_MS = parse_env_int('MI_TIMEOUT_MS', 30000, min_value=1)
+VERIFIER_METADATA_TIMEOUT_MS = parse_env_int(
+    'MI_VERIFIER_METADATA_TIMEOUT_MS', 120000, min_value=1000,
+)
+
+def _create_mongo_client(connection_string, *, timeout_ms):
+    """
+    Create a MongoDB client with connection pooling and the given timeout settings.
+
+    Args:
+        connection_string (str): MongoDB connection string
+        timeout_ms (int): Socket/connect/server-selection timeout in milliseconds
+
+    Returns:
+        MongoClient: MongoDB client instance
+    """
+    logger = logging.getLogger(__name__)
+
+    try:
+        from pymongo.uri_parser import parse_uri
+        parsed = parse_uri(connection_string)
+
+        uri_tls_options = parsed.get('options', {})
+        is_srv = connection_string.strip().lower().startswith('mongodb+srv://')
+        tls_explicitly_set = 'tls' in uri_tls_options or 'ssl' in uri_tls_options
+        tls_disabled = uri_tls_options.get('tls', uri_tls_options.get('ssl', True)) is False
+        use_tls_ca = is_srv or (tls_explicitly_set and not tls_disabled)
+
+        client_kwargs = dict(
+            maxPoolSize=CONNECTION_POOL_SIZE,
+            minPoolSize=1,
+            maxIdleTimeMS=30000,
+            serverSelectionTimeoutMS=timeout_ms,
+            connectTimeoutMS=timeout_ms,
+            socketTimeoutMS=timeout_ms,
+            retryWrites=True,
+            retryReads=True,
+        )
+        if use_tls_ca:
+            client_kwargs['tlsCAFile'] = certifi.where()
+
+        client = MongoClient(connection_string, **client_kwargs)
+
+        client.admin.command('ping', read_preference=ReadPreference.SECONDARY_PREFERRED)
+        logger.info(
+            "Successfully connected to MongoDB with pool size %s (timeout_ms=%s)",
+            CONNECTION_POOL_SIZE,
+            timeout_ms,
+        )
+
+        return client
+
+    except InvalidURI as e:
+        logger.error(f"Invalid MongoDB connection string: {e}")
+        raise
+    except PyMongoError as e:
+        logger.error(f"Failed to connect to MongoDB: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error connecting to MongoDB: {e}")
+        raise PyMongoError(f"Connection failed: {e}") from e
 
 @lru_cache(maxsize=4)
 def get_mongo_client(connection_string):
@@ -425,52 +488,14 @@ def get_mongo_client(connection_string):
         InvalidURI: If the connection string is invalid
         PyMongoError: If connection fails
     """
-    logger = logging.getLogger(__name__)
-    
-    try:
-        # Validate connection string format
-        from pymongo.uri_parser import parse_uri
-        parsed = parse_uri(connection_string)
-        
-        # Only set tlsCAFile for SRV connections (Atlas) or when TLS is explicitly enabled.
-        # Plain mongodb:// URIs to local/on-prem instances often don't use TLS.
-        uri_tls_options = parsed.get('options', {})
-        is_srv = connection_string.strip().lower().startswith('mongodb+srv://')
-        tls_explicitly_set = 'tls' in uri_tls_options or 'ssl' in uri_tls_options
-        tls_disabled = uri_tls_options.get('tls', uri_tls_options.get('ssl', True)) is False
-        use_tls_ca = is_srv or (tls_explicitly_set and not tls_disabled)
+    return _create_mongo_client(connection_string, timeout_ms=CONNECTION_TIMEOUT_MS)
 
-        client_kwargs = dict(
-            maxPoolSize=CONNECTION_POOL_SIZE,
-            minPoolSize=1,
-            maxIdleTimeMS=30000,
-            serverSelectionTimeoutMS=CONNECTION_TIMEOUT_MS,
-            connectTimeoutMS=CONNECTION_TIMEOUT_MS,
-            socketTimeoutMS=CONNECTION_TIMEOUT_MS,
-            retryWrites=True,
-            retryReads=True,
-        )
-        if use_tls_ca:
-            client_kwargs['tlsCAFile'] = certifi.where()
-
-        # Create client with connection pooling
-        client = MongoClient(connection_string, **client_kwargs)
-        
-        # Test the connection (secondaryPreferred: reachable when primary node is slow/unavailable)
-        client.admin.command('ping', read_preference=ReadPreference.SECONDARY_PREFERRED)
-        logger.info(f"Successfully connected to MongoDB with pool size {CONNECTION_POOL_SIZE}")
-        
-        return client
-        
-    except InvalidURI as e:
-        logger.error(f"Invalid MongoDB connection string: {e}")
-        raise
-    except PyMongoError as e:
-        logger.error(f"Failed to connect to MongoDB: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error connecting to MongoDB: {e}")
-        raise PyMongoError(f"Connection failed: {e}")
+@lru_cache(maxsize=4)
+def get_verifier_metadata_mongo_client(connection_string):
+    """Cached MongoDB client for verifier metadata reads (extended timeout)."""
+    return _create_mongo_client(
+        connection_string, timeout_ms=VERIFIER_METADATA_TIMEOUT_MS,
+    )
 
 def get_database(connection_string, database_name):
     """
@@ -484,6 +509,16 @@ def get_database(connection_string, database_name):
         Database: MongoDB database instance
     """
     client = get_mongo_client(connection_string)
+    return client[database_name]
+
+def get_verifier_metadata_database(connection_string, database_name):
+    """
+    Get a verifier metadata database with an extended socket timeout.
+
+    Uses MI_VERIFIER_METADATA_TIMEOUT_MS (default 120s) instead of MI_TIMEOUT_MS
+    for metadata aggregation reads only.
+    """
+    client = get_verifier_metadata_mongo_client(connection_string)
     return client[database_name]
 
 _resolved_internal_db_cache = {}
@@ -556,6 +591,7 @@ def clear_connection_cache():
     """
     logger = logging.getLogger(__name__)
     get_mongo_client.cache_clear()
+    get_verifier_metadata_mongo_client.cache_clear()
     with _resolved_internal_db_lock:
         _resolved_internal_db_cache.clear()
     logger.info("MongoDB connection cache cleared")

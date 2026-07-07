@@ -4,7 +4,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from lib.app_config import PROGRESS_FETCH_TIMEOUT_SECS, VERIFIER_FETCH_TIMEOUT_SECS
+from lib.app_config import (
+    PROGRESS_FETCH_TIMEOUT_SECS,
+    VERIFIER_FETCH_TIMEOUT_SECS,
+    VERIFIER_PROGRESS_REFRESH_TIME,
+)
 from lib.live_monitoring import (
     ProgressFetchError,
     _build_connectivity,
@@ -15,6 +19,7 @@ from lib.live_monitoring import (
     _state_badge_color,
     fetch_progress,
     fetch_summary,
+    fetch_verifier_progress,
     progress_monitor_no_config_response,
 )
 
@@ -68,6 +73,20 @@ class TestFetchProgress:
         with pytest.raises(ProgressFetchError) as exc:
             fetch_progress("host:27182/api/v1/progress")
         assert exc.value.kind == "json"
+
+
+class TestFetchVerifierProgress:
+    @patch("lib.live_monitoring.requests.get")
+    def test_uses_verifier_refresh_timeout(self, mock_get):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"progress": {"generation": 0}}
+        mock_get.return_value = mock_resp
+        progress, _warnings = fetch_verifier_progress("host:27020/api/v1/progress")
+        assert progress["generation"] == 0
+        mock_get.assert_called_once_with(
+            "http://host:27020/api/v1/progress",
+            timeout=VERIFIER_PROGRESS_REFRESH_TIME,
+        )
 
 
 class TestFetchSummary:

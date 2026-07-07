@@ -419,6 +419,12 @@
     color: var(--lm-text-secondary);
 }
 
+.lm-badge.black {
+    background: var(--lm-node-bg);
+    border-color: var(--lm-card-border);
+    color: var(--lm-text-primary);
+}
+
 .lm-badge.red {
     background: var(--mongodb-red-light3);
     border-color: var(--mongodb-red-light2);
@@ -637,6 +643,12 @@
     color: var(--lm-text-secondary);
 }
 
+[data-theme="dark"] .lm-badge.black {
+    background: var(--lm-node-bg);
+    border-color: var(--lm-card-border);
+    color: var(--lm-text-primary);
+}
+
 [data-theme="dark"] .lm-badge.red {
     background: var(--mi-error-banner-bg);
     border-color: var(--mongodb-red-base);
@@ -686,6 +698,17 @@
 
 .lm-verifier-progress-card-body {
     margin-top: 10px;
+}
+
+/* Section slots (split polling): match lm-stack vertical gap between cards/banners */
+.lm-verifier-progress-slot,
+.lm-verifier-summary-slot,
+.lm-verifier-warnings-slot,
+.lm-verifier-metadata-slot,
+.lm-verifier-connectivity-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
 }
 
 .lm-verifier-progress-body.lm-stack-tight {

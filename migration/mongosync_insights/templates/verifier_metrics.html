@@ -21,71 +21,40 @@
 
 {% block scripts %}
 <script src="/static/js/mi-verifier-monitor.js"></script>
+<script src="/static/js/mi-verifier-poll.js"></script>
 <script>
-const MI_LIVE = { verifier: {{ url_for('live.get_verifier_data')|tojson }} };
+const MI_VERIFIER = {
+    urls: {
+        progress: {{ url_for('live.get_verifier_progress')|tojson }},
+        summary: {{ url_for('live.get_verifier_summary')|tojson }},
+        metadata: {{ url_for('live.get_verifier_metadata')|tojson }},
+    },
+    progressRefreshMs: {{ progress_refresh_ms }},
+    summaryRefreshMs: {{ summary_refresh_ms }},
+    metadataRefreshMs: {{ metadata_refresh_ms }},
+    progressMultiplier: 3,
+    summaryMultiplier: 12,
+    metadataMultiplier: 6,
+};
 
-var _includeFullPayload = false;
-
-async function fetchVerifierMonitorData() {
-    const loading = document.getElementById('verifier-monitor-loading');
-    const root = document.getElementById('verifier-monitor-root');
-    try {
-        const response = await fetch(MI_LIVE.verifier, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                includeSummary: _includeFullPayload,
-                includeMetadata: _includeFullPayload,
-            }),
-        });
-        const payload = await response.json();
-        if (!response.ok && !payload.error) {
-            throw new Error(payload.error || 'Request failed');
-        }
-        _includeFullPayload = true;
-        loading.style.display = 'none';
-        root.style.display = 'block';
-        miRenderVerifierMonitor(root, payload);
-    } catch (err) {
-        console.error('Error fetching verifier data:', err);
-        _includeFullPayload = true;
-        loading.style.display = 'none';
-        root.style.display = 'block';
-        miRenderVerifierMonitor(root, {
-            warnings: [],
-            connectivity: null,
-            display: null,
-            error: 'Error loading data: ' + err.message
-        });
-    }
-}
-
-fetchVerifierMonitorData();
-
-var _refreshMs = parseInt(sessionStorage.getItem('mi_refresh_time'), 10);
-_refreshMs = (_refreshMs > 0 ? _refreshMs * 1000 : {{ refresh_time_ms }});
-var _refreshIntervalId = setInterval(fetchVerifierMonitorData, _refreshMs);
-
-function _updateFooterRefresh(ms) {
+function _updateFooterRefresh(progressSec, summarySec, metadataSec) {
     var label = document.getElementById('mi-verifier-refresh-label');
-    if (label) label.textContent = 'Refreshing every ' + (ms / 1000) + ' seconds';
+    if (!label) return;
+    label.textContent =
+        'Progress: ' + progressSec + 's · Summary: ' + summarySec + 's · Metadata: ' + metadataSec + 's';
 }
-_updateFooterRefresh(_refreshMs);
 
-window.addEventListener('mi-refresh-changed', function(e) {
-    var newMs = e.detail.refreshSec * 1000;
-    if (newMs > 0 && newMs !== _refreshMs) {
-        clearInterval(_refreshIntervalId);
-        _refreshMs = newMs;
-        _refreshIntervalId = setInterval(fetchVerifierMonitorData, _refreshMs);
-        _updateFooterRefresh(_refreshMs);
-    }
-});
+MI_VERIFIER.onRefreshLabelUpdate = function (progressSec, summarySec, metadataSec) {
+    _updateFooterRefresh(progressSec, summarySec, metadataSec);
+};
+
+_updateFooterRefresh({{ progress_refresh_sec }}, {{ summary_refresh_sec }}, {{ metadata_refresh_sec }});
+
+miInitVerifierPolling(MI_VERIFIER);
 </script>
 {% endblock %}
 
 {% block footer %}
-<p><span id="mi-verifier-refresh-label">Refreshing every {{ refresh_time }} seconds</span> -
+<p><span id="mi-verifier-refresh-label">Progress: {{ progress_refresh_sec }}s · Summary: {{ summary_refresh_sec }}s · Metadata: {{ metadata_refresh_sec }}s</span> -
     <a href="https://github.com/mongodb-labs/migration-verifier" target="_blank" rel="noopener noreferrer">Migration Verifier Docs</a></p>
 {% endblock %}

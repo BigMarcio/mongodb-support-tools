@@ -7,7 +7,13 @@ from lib.live_monitoring import (
     build_live_monitor_payload,
     progress_monitor_no_config_response,
 )
-from lib.migration_verifier import build_verifier_monitor_payload, plot_verifier_metrics
+from lib.migration_verifier import (
+    build_verifier_metadata_payload,
+    build_verifier_monitor_payload,
+    build_verifier_progress_payload,
+    build_verifier_summary_payload,
+    plot_verifier_metrics,
+)
 from lib.session_support import SESSION_COOKIE_NAME, store_session_data
 from lib.app_config import (
     CONNECTION_STRING,
@@ -277,8 +283,8 @@ def verifier():
     return response
 
 
-@bp.route("/get_verifier_data", methods=["POST"])
-def get_verifier_data():
+def _verifier_session_context():
+    """Resolve verifier connection string and progress endpoint from env or session."""
     session_id = request.cookies.get(SESSION_COOKIE_NAME)
     session_data = session_store.get_session(session_id)
 
@@ -292,24 +298,61 @@ def get_verifier_data():
     else:
         connection_string = (session_data or {}).get("verifier_connection_string")
 
-    if not connection_string and not endpoint_url:
-        logger.error("No connection string or verifier progress endpoint available")
-        return jsonify(
-            {
-                "error": (
-                    "No progress endpoint or connection string is configured. "
-                    "Return to Migration monitoring home and provide a Migration Verifier "
-                    "progress endpoint or MongoDB connection string."
-                )
-            }
-        ), 400
+    return connection_string, endpoint_url
 
-    body = request.get_json(silent=True) or {}
+
+def _verifier_no_config_response():
+    logger.error("No connection string or verifier progress endpoint available")
+    return jsonify(
+        {
+            "error": (
+                "No progress endpoint or connection string is configured. "
+                "Return to Migration monitoring home and provide a Migration Verifier "
+                "progress endpoint or MongoDB connection string."
+            )
+        }
+    ), 400
+
+
+@bp.route("/get_verifier_data", methods=["POST"])
+def get_verifier_data():
+    connection_string, endpoint_url = _verifier_session_context()
+    if not connection_string and not endpoint_url:
+        return _verifier_no_config_response()
+
     return jsonify(
         build_verifier_monitor_payload(
             connection_string,
             endpoint_url=endpoint_url,
-            include_summary=body.get("includeSummary", True),
-            include_metadata=body.get("includeMetadata", True),
         )
+    )
+
+
+@bp.route("/get_verifier_progress", methods=["POST"])
+def get_verifier_progress():
+    connection_string, endpoint_url = _verifier_session_context()
+    if not endpoint_url:
+        return jsonify({"error": "No verifier progress endpoint is configured."}), 400
+    return jsonify(
+        build_verifier_progress_payload(endpoint_url, connection_string),
+    )
+
+
+@bp.route("/get_verifier_summary", methods=["POST"])
+def get_verifier_summary():
+    _connection_string, endpoint_url = _verifier_session_context()
+    if not endpoint_url:
+        return jsonify({"error": "No verifier progress endpoint is configured."}), 400
+    return jsonify(build_verifier_summary_payload(endpoint_url))
+
+
+@bp.route("/get_verifier_metadata", methods=["POST"])
+def get_verifier_metadata():
+    connection_string, endpoint_url = _verifier_session_context()
+    if not connection_string:
+        return jsonify({"error": "No verifier connection string is configured."}), 400
+    return jsonify(
+        build_verifier_metadata_payload(
+            connection_string, endpoint_url=endpoint_url,
+        ),
     )

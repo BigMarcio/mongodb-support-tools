@@ -51,14 +51,15 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_EMBEDDED_VERIFIER_DST_DB_NAME` | `__mdb_internal_mongosync_verifier_dst` | Embedded verifier destination persistence database on the destination cluster. |
 | `MI_POOL_SIZE` | `10` | MongoDB connection pool size |
 | `MI_TIMEOUT_MS` | `30000` | MongoDB connection timeout in milliseconds |
+| `MI_VERIFIER_METADATA_TIMEOUT_MS` | `120000` | Socket timeout in milliseconds for Migration Verifier metadata DB reads (`verification_tasks` aggregations). Does not affect mongosync live monitoring or general `get_database()` calls. |
 
 ### Migration Monitoring Settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MI_REFRESH_TIME` | `10` | Migration monitoring dashboard refresh interval in seconds |
-| `MI_PROGRESS_FETCH_TIMEOUT_SECS` | `10` | HTTP timeout in seconds for mongosync and migration-verifier `/api/v1/progress` polling |
-| `MI_VERIFIER_FETCH_TIMEOUT_SECS` | `60` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` and other non-progress verifier HTTP endpoints |
+| `MI_REFRESH_TIME` | `10` | Migration monitoring dashboard refresh interval in seconds. On the Migration Verifier dashboard, **progress** polls every 3× this value (default 30s) and uses the same duration as the verifier `/progress` HTTP timeout; **summary** polls every 12× and **metadata** every 6× (defaults: 30s / 120s / 60s). |
+| `MI_PROGRESS_FETCH_TIMEOUT_SECS` | `10` | HTTP timeout in seconds for mongosync `/api/v1/progress` polling |
+| `MI_VERIFIER_FETCH_TIMEOUT_SECS` | `120` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` |
 | `MI_INDEX_BUILD_REFRESH_TIME` | `60` | Minimum interval in seconds between destination `list_indexes` scans used for approximate metadata index-building progress (counter reads still run every poll). See [MIGRATION_MONITORING.md](MIGRATION_MONITORING.md). |
 | `MI_PROGRESS_ENDPOINT_URL` | _(empty)_ | Mongosync progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27182**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration monitoring home page. Leave host empty in the UI to skip the endpoint. |
 | `MI_VERIFIER_PROGRESS_ENDPOINT_URL` | _(empty)_ | Migration Verifier progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27020**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration Verifier form. Leave host empty in the UI to skip the endpoint. |
