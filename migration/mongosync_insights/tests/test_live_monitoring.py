@@ -5,9 +5,9 @@ import pytest
 import requests
 
 from lib.app_config import (
-    PROGRESS_FETCH_TIMEOUT_SECS,
-    VERIFIER_FETCH_TIMEOUT_SECS,
-    VERIFIER_PROGRESS_REFRESH_TIME,
+    MONGOSYNC_PROGRESS_TIMEOUT_SECS,
+    VERIFIER_PROGRESS_TIMEOUT_SECS,
+    VERIFIER_SUMMARY_TIMEOUT_SECS,
 )
 from lib.live_monitoring import (
     ProgressFetchError,
@@ -35,7 +35,7 @@ class TestFetchProgress:
         assert warnings == ["w1"]
         mock_get.assert_called_once_with(
             "http://host:27182/api/v1/progress",
-            timeout=PROGRESS_FETCH_TIMEOUT_SECS,
+            timeout=MONGOSYNC_PROGRESS_TIMEOUT_SECS,
         )
 
     @patch("lib.live_monitoring.requests.get")
@@ -77,7 +77,7 @@ class TestFetchProgress:
 
 class TestFetchVerifierProgress:
     @patch("lib.live_monitoring.requests.get")
-    def test_uses_verifier_refresh_timeout(self, mock_get):
+    def test_uses_verifier_progress_timeout(self, mock_get):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"progress": {"generation": 0}}
         mock_get.return_value = mock_resp
@@ -85,7 +85,7 @@ class TestFetchVerifierProgress:
         assert progress["generation"] == 0
         mock_get.assert_called_once_with(
             "http://host:27020/api/v1/progress",
-            timeout=VERIFIER_PROGRESS_REFRESH_TIME,
+            timeout=VERIFIER_PROGRESS_TIMEOUT_SECS,
         )
 
 
@@ -103,7 +103,7 @@ class TestFetchSummary:
         mock_get.assert_called_once_with(
             "http://host:27020/api/v1/summary",
             params=None,
-            timeout=VERIFIER_FETCH_TIMEOUT_SECS,
+            timeout=VERIFIER_SUMMARY_TIMEOUT_SECS,
         )
 
     @patch("lib.live_monitoring.requests.get")
@@ -115,7 +115,7 @@ class TestFetchSummary:
         mock_get.assert_called_once_with(
             "http://host:27020/api/v1/summary",
             params={"minDurationSecs": 60},
-            timeout=VERIFIER_FETCH_TIMEOUT_SECS,
+            timeout=VERIFIER_SUMMARY_TIMEOUT_SECS,
         )
 
     @patch("lib.live_monitoring.requests.get")

@@ -177,11 +177,14 @@ INDEX_BUILD_REFRESH_TIME = parse_env_int('MI_INDEX_BUILD_REFRESH_TIME', 60, min_
 VERIFIER_PROGRESS_REFRESH_TIME = REFRESH_TIME * 3 
 VERIFIER_SUMMARY_REFRESH_TIME = REFRESH_TIME * 12
 VERIFIER_METADATA_REFRESH_TIME = REFRESH_TIME * 6
-PROGRESS_FETCH_TIMEOUT_SECS = parse_env_int(
-    'MI_PROGRESS_FETCH_TIMEOUT_SECS', 10, min_value=1,
+MONGOSYNC_PROGRESS_TIMEOUT_SECS = parse_env_int(
+    'MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS', REFRESH_TIME, min_value=1,
 )
-VERIFIER_FETCH_TIMEOUT_SECS = parse_env_int(
-    'MI_VERIFIER_FETCH_TIMEOUT_SECS', 120, min_value=1,
+VERIFIER_PROGRESS_TIMEOUT_SECS = parse_env_int(
+    'MI_VERIFIER_PROGRESS_TIMEOUT_SECS', VERIFIER_PROGRESS_REFRESH_TIME, min_value=1,
+)
+VERIFIER_SUMMARY_TIMEOUT_SECS = parse_env_int(
+    'MI_VERIFIER_SUMMARY_TIMEOUT_SECS', VERIFIER_SUMMARY_REFRESH_TIME, min_value=1,
 )
 CONNECTION_STRING = os.getenv('MI_CONNECTION_STRING', '')
 VERIFIER_CONNECTION_STRING = os.getenv('MI_VERIFIER_CONNECTION_STRING', '') or CONNECTION_STRING
@@ -277,7 +280,7 @@ VERIFIER_PROGRESS_ENDPOINT_URL = (
 )
 
 # MongoDB settings
-MI_MONGOSYNC_DB_NAME = os.getenv("MI_MONGOSYNC_DB_NAME", "mongosync_reserved_for_internal_use")
+MI_MONGOSYNC_DB_NAME = "mongosync_reserved_for_internal_use"
 MI_MONGOSYNC_DB_NAME_NEW = "__mdb_internal_mongosync"
 MI_MIGRATION_VERIFIER_DB_NAME = os.getenv(
     "MI_MIGRATION_VERIFIER_DB_NAME", "__mdb_internal_migration_verifier"
@@ -301,9 +304,20 @@ VERIFIER_SUMMARY_MIN_DURATION_SECS = parse_env_int(
 # Not configurable via environment — change only here when MV bumps the schema version.
 VERIFIER_METADATA_VERSION = 7
 
-# Error patterns file
-ERROR_PATTERNS_FILE = os.getenv('MI_ERROR_PATTERNS_FILE', 
-                                 os.path.join(os.path.dirname(__file__), 'error_patterns.json'))
+# Error patterns file (Log Analyzer)
+_DEFAULT_ERROR_PATTERNS_FILE = os.path.join(
+    os.path.dirname(__file__), 'error_patterns.json',
+)
+
+
+def resolve_error_patterns_file() -> str:
+    """Resolve error patterns JSON path from MI_ERROR_PATTERNS_FILE or the bundled default."""
+    configured = os.getenv('MI_ERROR_PATTERNS_FILE', '').strip()
+    return configured or _DEFAULT_ERROR_PATTERNS_FILE
+
+
+ERROR_PATTERNS_FILE = resolve_error_patterns_file()
+
 
 def load_error_patterns():
     """
@@ -315,14 +329,15 @@ def load_error_patterns():
     """
     import json
     logger = logging.getLogger(__name__)
+    patterns_file = resolve_error_patterns_file()
     
     try:
-        with open(ERROR_PATTERNS_FILE, 'r') as f:
+        with open(patterns_file, 'r') as f:
             patterns = json.load(f)
-            logger.info(f"Loaded {len(patterns)} error patterns from {ERROR_PATTERNS_FILE}")
+            logger.info(f"Loaded {len(patterns)} error patterns from {patterns_file}")
             return patterns
     except FileNotFoundError:
-        logger.warning(f"Error patterns file not found: {ERROR_PATTERNS_FILE}")
+        logger.warning(f"Error patterns file not found: {patterns_file}")
         return []
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in error patterns file: {e}")
@@ -530,7 +545,7 @@ def resolve_mongosync_db_name(connection_string):
 
     Checks for the new name first (__mdb_internal_mongosync), then falls back
     to the legacy name (mongosync_reserved_for_internal_use). Results are cached
-    per connection string. The MI_MONGOSYNC_DB_NAME env var acts as a hard override.
+    per connection string.
 
     Args:
         connection_string (str): MongoDB connection string
@@ -538,9 +553,6 @@ def resolve_mongosync_db_name(connection_string):
     Returns:
         str: The resolved internal database name
     """
-    if os.getenv("MI_MONGOSYNC_DB_NAME"):
-        return MI_MONGOSYNC_DB_NAME
-
     with _resolved_internal_db_lock:
         if connection_string in _resolved_internal_db_cache:
             return _resolved_internal_db_cache[connection_string]

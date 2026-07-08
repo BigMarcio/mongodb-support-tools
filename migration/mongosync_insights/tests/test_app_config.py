@@ -27,8 +27,9 @@ from lib.app_config import (
     VERIFIER_GENERATION_LIMIT,
     VERIFIER_FAILED_TASKS_LIMIT,
     VERIFIER_SUMMARY_MIN_DURATION_SECS,
-    PROGRESS_FETCH_TIMEOUT_SECS,
-    VERIFIER_FETCH_TIMEOUT_SECS,
+    MONGOSYNC_PROGRESS_TIMEOUT_SECS,
+    VERIFIER_PROGRESS_TIMEOUT_SECS,
+    VERIFIER_SUMMARY_TIMEOUT_SECS,
     VERIFIER_METADATA_TIMEOUT_MS,
     VERIFIER_PROGRESS_REFRESH_TIME,
     VERIFIER_SUMMARY_REFRESH_TIME,
@@ -240,30 +241,43 @@ class TestVerifierRefreshIntervals:
 
 
 class TestFetchTimeouts:
-    def test_default_progress_fetch_timeout(self):
-        assert PROGRESS_FETCH_TIMEOUT_SECS == 10
+    def test_default_mongosync_progress_timeout(self):
+        assert MONGOSYNC_PROGRESS_TIMEOUT_SECS == REFRESH_TIME
 
-    def test_default_verifier_fetch_timeout(self):
-        assert VERIFIER_FETCH_TIMEOUT_SECS == 120
+    def test_default_verifier_progress_timeout(self):
+        assert VERIFIER_PROGRESS_TIMEOUT_SECS == VERIFIER_PROGRESS_REFRESH_TIME
 
-    def test_progress_fetch_timeout_env_override(self):
+    def test_default_verifier_summary_timeout(self):
+        assert VERIFIER_SUMMARY_TIMEOUT_SECS == VERIFIER_SUMMARY_REFRESH_TIME
+
+    def test_mongosync_progress_timeout_env_override(self):
         import importlib
 
         import lib.app_config as config_module
 
-        with patch.dict("os.environ", {"MI_PROGRESS_FETCH_TIMEOUT_SECS": "30"}, clear=False):
+        with patch.dict("os.environ", {"MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS": "30"}, clear=False):
             importlib.reload(config_module)
-            assert config_module.PROGRESS_FETCH_TIMEOUT_SECS == 30
+            assert config_module.MONGOSYNC_PROGRESS_TIMEOUT_SECS == 30
         importlib.reload(app_config)
 
-    def test_verifier_fetch_timeout_env_override(self):
+    def test_verifier_progress_timeout_env_override(self):
         import importlib
 
         import lib.app_config as config_module
 
-        with patch.dict("os.environ", {"MI_VERIFIER_FETCH_TIMEOUT_SECS": "120"}, clear=False):
+        with patch.dict("os.environ", {"MI_VERIFIER_PROGRESS_TIMEOUT_SECS": "45"}, clear=False):
             importlib.reload(config_module)
-            assert config_module.VERIFIER_FETCH_TIMEOUT_SECS == 120
+            assert config_module.VERIFIER_PROGRESS_TIMEOUT_SECS == 45
+        importlib.reload(app_config)
+
+    def test_verifier_summary_timeout_env_override(self):
+        import importlib
+
+        import lib.app_config as config_module
+
+        with patch.dict("os.environ", {"MI_VERIFIER_SUMMARY_TIMEOUT_SECS": "180"}, clear=False):
+            importlib.reload(config_module)
+            assert config_module.VERIFIER_SUMMARY_TIMEOUT_SECS == 180
         importlib.reload(app_config)
 
 
@@ -303,20 +317,32 @@ class TestIsMultiFileArchive:
 
 
 class TestLoadErrorPatterns:
-    def test_loads_default_patterns_file(self):
+    def test_loads_default_patterns_file(self, monkeypatch):
+        monkeypatch.delenv("MI_ERROR_PATTERNS_FILE", raising=False)
         patterns = load_error_patterns()
         assert isinstance(patterns, list)
         assert len(patterns) > 0
         assert "pattern" in patterns[0]
 
+    def test_env_var_override(self, tmp_path, monkeypatch):
+        custom = tmp_path / "custom.json"
+        custom.write_text(
+            '[{"pattern": "custom error", "friendly_name": "Custom"}]',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("MI_ERROR_PATTERNS_FILE", str(custom))
+        patterns = load_error_patterns()
+        assert len(patterns) == 1
+        assert patterns[0]["friendly_name"] == "Custom"
+
     def test_missing_file_returns_empty(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(app_config, "ERROR_PATTERNS_FILE", str(tmp_path / "missing.json"))
+        monkeypatch.setenv("MI_ERROR_PATTERNS_FILE", str(tmp_path / "missing.json"))
         assert load_error_patterns() == []
 
     def test_invalid_json_returns_empty(self, tmp_path, monkeypatch):
         bad = tmp_path / "bad.json"
         bad.write_text("{not json", encoding="utf-8")
-        monkeypatch.setattr(app_config, "ERROR_PATTERNS_FILE", str(bad))
+        monkeypatch.setenv("MI_ERROR_PATTERNS_FILE", str(bad))
         assert load_error_patterns() == []
 
 

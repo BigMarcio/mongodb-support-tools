@@ -29,6 +29,8 @@ You can provide **one or both** of the following on the Migration monitoring hom
 
 At least one must be configured to start a session.
 
+The mongosync internal metadata database name is **auto-detected** on the destination cluster: `__mdb_internal_mongosync` (new) when present, otherwise `mongosync_reserved_for_internal_use` (legacy). This is not configurable.
+
 ### Progress endpoint (UI)
 
 When not set via `MI_PROGRESS_ENDPOINT_URL`, the form asks for:
@@ -146,7 +148,7 @@ If the progress endpoint fails to respond, the dashboard still loads metadata wh
 
 The dashboard uses the same Atlas-style card UI as Migration Monitoring. The **Verification Progress** card is shown first when the progress endpoint is configured; it summarizes phase, generation, document/byte progress, task counts, throughput, change-stream stats, recheck optimes, initial-check ETA (from `/summary`), and related fields from `/api/v1/progress`.
 
-When the progress endpoint is configured, MI also polls **`/api/v1/summary`** on its own schedule and shows **Document Mismatch Summary** (totals by type and namespace) and **Namespace Mismatches Summary** cards directly below **Verification Progress** (before warnings and metadata cards). Configure `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` to filter out short-lived document mismatches in summary counts. HTTP timeouts: verifier `/progress` uses the same duration as the verifier progress poll interval (`MI_REFRESH_TIME × 3`, default 30s); mongosync `/progress` uses `MI_PROGRESS_FETCH_TIMEOUT_SECS` (default 10s); `/summary` uses `MI_VERIFIER_FETCH_TIMEOUT_SECS` (default 120s). Verifier metadata DB reads use `MI_VERIFIER_METADATA_TIMEOUT_MS` (default 120s).
+When the progress endpoint is configured, MI also polls **`/api/v1/summary`** on its own schedule and shows **Document Mismatch Summary** (totals by type and namespace) and **Namespace Mismatches Summary** cards directly below **Verification Progress** (before warnings and metadata cards). Configure `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` to filter out short-lived document mismatches in summary counts. HTTP timeouts (each overridable via env): mongosync `/progress` — `MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS` (default `MI_REFRESH_TIME`); verifier `/progress` — `MI_VERIFIER_PROGRESS_TIMEOUT_SECS` (default `MI_REFRESH_TIME × 3`); verifier `/summary` — `MI_VERIFIER_SUMMARY_TIMEOUT_SECS` (default `MI_REFRESH_TIME × 12`). Verifier metadata DB reads use `MI_VERIFIER_METADATA_TIMEOUT_MS` (default 120s).
 
 Additional cards (when metadata is configured): **verification completeness** summary (metadata-only mode; omitted when a progress endpoint is also configured — use the **Verification Progress** card instead), generation overview, namespace document progress for the previous generation (metadata-only mode), **Failed Tasks / Document Mismatches** (metadata-only mode; omitted when the progress endpoint is configured — use **Document Mismatch Summary** and task counts on **Verification Progress**), and collection metadata mismatches (metadata-only mode; live mismatches come from `/summary` when the endpoint is configured). The toolbar **state badge** (`PASS` / `MISMATCHES` / `IN PROGRESS`) comes from the **progress** poll when an endpoint is configured, or from **metadata** in metadata-only mode. The latest N generations are shown (default 5, configurable via `MI_VERIFIER_GENERATION_LIMIT`, range 1–20). When a metadata section fails to load, its card shows a warning banner; other sections continue to update.
 

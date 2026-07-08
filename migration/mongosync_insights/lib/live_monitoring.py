@@ -6,9 +6,9 @@ import logging
 import requests
 
 from .app_config import (
-    PROGRESS_FETCH_TIMEOUT_SECS,
-    VERIFIER_FETCH_TIMEOUT_SECS,
-    VERIFIER_PROGRESS_REFRESH_TIME,
+    MONGOSYNC_PROGRESS_TIMEOUT_SECS,
+    VERIFIER_PROGRESS_TIMEOUT_SECS,
+    VERIFIER_SUMMARY_TIMEOUT_SECS,
 )
 from .connection_validator import sanitize_for_display
 from .live_metadata_status import (
@@ -50,7 +50,7 @@ def fetch_progress(endpoint_url, *, timeout_secs=None):
         ProgressFetchError: on timeout, connection, HTTP, or JSON errors.
     """
     if timeout_secs is None:
-        timeout_secs = PROGRESS_FETCH_TIMEOUT_SECS
+        timeout_secs = MONGOSYNC_PROGRESS_TIMEOUT_SECS
     url = f"http://{endpoint_url}"
     logger.info("Fetching progress from endpoint: %s", url)
     try:
@@ -86,8 +86,8 @@ def fetch_progress(endpoint_url, *, timeout_secs=None):
 
 
 def fetch_verifier_progress(endpoint_url):
-    """GET migration-verifier /api/v1/progress with verifier refresh-interval timeout."""
-    return fetch_progress(endpoint_url, timeout_secs=VERIFIER_PROGRESS_REFRESH_TIME)
+    """GET migration-verifier /api/v1/progress."""
+    return fetch_progress(endpoint_url, timeout_secs=VERIFIER_PROGRESS_TIMEOUT_SECS)
 
 
 def fetch_summary(endpoint_url, *, min_duration_secs=0):
@@ -107,7 +107,7 @@ def fetch_summary(endpoint_url, *, min_duration_secs=0):
     logger.info("Fetching summary from endpoint: %s", url)
     try:
         response = requests.get(
-            url, params=params or None, timeout=VERIFIER_FETCH_TIMEOUT_SECS,
+            url, params=params or None, timeout=VERIFIER_SUMMARY_TIMEOUT_SECS,
         )
         response.raise_for_status()
         data = response.json()

@@ -42,7 +42,6 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 |----------|---------|-------------|
 | `MI_CONNECTION_STRING` | _(empty)_ | MongoDB connection string (optional, can be provided via UI) |
 | `MI_VERIFIER_CONNECTION_STRING` | _(falls back to `MI_CONNECTION_STRING`)_ | MongoDB connection string for the migration verifier database. When omitted, the value of `MI_CONNECTION_STRING` is used. Set this when the verifier database lives on a different cluster. |
-| `MI_MONGOSYNC_DB_NAME` | _(auto-detected)_ | Mongosync internal metadata database name. When not set, the app auto-detects between `__mdb_internal_mongosync` (new) and `mongosync_reserved_for_internal_use` (legacy). Set this variable to override auto-detection. |
 | `MI_MIGRATION_VERIFIER_DB_NAME` | `__mdb_internal_migration_verifier` | Standalone migration-verifier metadata database name. |
 | `MI_VERIFIER_GENERATION_LIMIT` | `5` | Maximum generations shown on the Migration Verifier dashboard (1–20). |
 | `MI_VERIFIER_FAILED_TASKS_LIMIT` | `20` | Maximum failed document tasks shown on the **Failed Tasks / Document Mismatches** card (1–100). |
@@ -57,9 +56,10 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MI_REFRESH_TIME` | `10` | Base refresh interval in seconds (sidebar **Settings** control). **Migration Monitoring** dashboard polls at this interval. **Migration Verifier** dashboard uses multiples of this value: **progress** = 3× (default 30s, same duration as verifier `/progress` HTTP timeout), **summary** = 12× (default 120s), **metadata** = 6× (default 60s). Changing the sidebar refresh updates Migration Monitoring directly and rescales all three verifier intervals proportionally. |
-| `MI_PROGRESS_FETCH_TIMEOUT_SECS` | `10` | HTTP timeout in seconds for mongosync `/api/v1/progress` polling |
-| `MI_VERIFIER_FETCH_TIMEOUT_SECS` | `120` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` |
+| `MI_REFRESH_TIME` | `10` | Base refresh interval in seconds (sidebar **Settings** control). **Migration Monitoring** dashboard polls at this interval. **Migration Verifier** dashboard uses multiples of this value: **progress** = 3× (default 30s), **summary** = 12× (default 120s), **metadata** = 6× (default 60s). Changing the sidebar refresh updates Migration Monitoring directly and rescales all three verifier intervals proportionally. |
+| `MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS` | `MI_REFRESH_TIME` | HTTP timeout in seconds for mongosync `/api/v1/progress` polling |
+| `MI_VERIFIER_PROGRESS_TIMEOUT_SECS` | `MI_REFRESH_TIME × 3` | HTTP timeout in seconds for migration-verifier `/api/v1/progress` polling |
+| `MI_VERIFIER_SUMMARY_TIMEOUT_SECS` | `MI_REFRESH_TIME × 12` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` polling |
 | `MI_INDEX_BUILD_REFRESH_TIME` | `60` | Minimum interval in seconds between destination `list_indexes` scans used for approximate metadata index-building progress (counter reads still run every poll). See [MIGRATION_MONITORING.md](MIGRATION_MONITORING.md). |
 | `MI_PROGRESS_ENDPOINT_URL` | _(empty)_ | Mongosync progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27182**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration monitoring home page. Leave host empty in the UI to skip the endpoint. |
 | `MI_VERIFIER_PROGRESS_ENDPOINT_URL` | _(empty)_ | Migration Verifier progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27020**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration Verifier form. Leave host empty in the UI to skip the endpoint. |
@@ -74,13 +74,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MI_ERROR_PATTERNS_FILE` | `lib/error_patterns.json` _(auto-detected)_ | Path to a custom error patterns JSON file used during log analysis to detect common errors (e.g., oplog rollover, timeouts, verifier mismatches). Each entry may include an optional `recommendation` string, shown in the Errors tab when a line matches that pattern. |
-
-### UI Customization
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MI_MAX_PARTITIONS_DISPLAY` | `10` | Maximum partitions to display in UI |
+| `MI_ERROR_PATTERNS_FILE` | `lib/error_patterns.json` | Path to a custom error patterns JSON file for Log Analyzer error detection (e.g., oplog rollover, timeouts, verifier mismatches). Set via environment variable before startup. Each entry may include an optional `recommendation` string, shown in the Errors tab when a line matches that pattern. |
 
 ### Log Viewer & Snapshot Settings
 
@@ -143,10 +137,10 @@ python3 mongosync_insights.py
 
 ### Example 3: Pre-configured MongoDB Connection
 
-Set the MongoDB connection string to avoid entering it in the UI:
+Set the MongoDB connection string for metadata-only monitoring, or as metadata fallback when a progress endpoint is also configured:
 
 ```bash
-# Set connection string
+# Optional: metadata-only monitoring, or metadata fallback when a progress endpoint is also set
 export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 
 # Optional: Adjust refresh rate
@@ -158,14 +152,14 @@ python3 mongosync_insights.py
 
 ### Example 3b: Combined Monitoring (Metadata + Progress Endpoint)
 
-Pre-configure both the connection string and progress endpoint for comprehensive monitoring. In the UI, the equivalent is entering a **host** and **port** (default `27182`) on the Migration monitoring home page; leave host empty for metadata-only mode.
+Pre-configure both the progress endpoint and connection string for comprehensive monitoring. In the UI, the equivalent is entering a **host** and **port** (default `27182`) on the Migration monitoring home page; leave host empty for metadata-only mode.
 
 ```bash
-# Set MongoDB connection string for metadata access (destination cluster)
-export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
-
 # Set mongosync progress endpoint (host:port or full path; /api/v1/progress is appended if omitted)
 export MI_PROGRESS_ENDPOINT_URL="localhost:27182"
+
+# Optional: metadata fallback — destination cluster connection string
+export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 
 # Optional: throttle destination index-name verification scans (metadata fallback)
 export MI_INDEX_BUILD_REFRESH_TIME=60
@@ -193,6 +187,17 @@ python3 mongosync_insights.py
 tail -f /var/log/mongosync-insights/debug.log
 ```
 
+### Example 4b: Custom Log Analyzer Error Patterns
+
+Point Log Analyzer at a custom error-patterns file (absolute path recommended in production):
+
+```bash
+export MI_ERROR_PATTERNS_FILE="/etc/mongosync-insights/custom_error_patterns.json"
+python3 mongosync_insights.py
+```
+
+Each JSON entry requires `pattern` and `friendly_name`; `recommendation` is optional. See the bundled `lib/error_patterns.json` for the schema.
+
 ### Example 5: Production Configuration with HTTPS
 
 Secure production setup with HTTPS:
@@ -207,7 +212,7 @@ export LOG_LEVEL=INFO
 export MI_SSL_ENABLED=false  # Nginx handles SSL
 export MI_SECURE_COOKIES=true
 
-# MongoDB connection
+# MongoDB connection (optional: metadata-only, or metadata fallback when a progress endpoint is also set)
 export MI_CONNECTION_STRING="mongodb+srv://user:pass@production-cluster.mongodb.net/"
 
 # Performance settings
@@ -220,16 +225,13 @@ python3 mongosync_insights.py
 
 See [HTTPS_SETUP.md](HTTPS_SETUP.md) for complete production deployment guide.
 
-### Example 6: Custom Upload Size and UI Settings
+### Example 6: Custom Upload Size
 
-Adjust file upload limits and plot dimensions:
+Adjust the maximum log file upload size:
 
 ```bash
 # Allow larger log files (20GB)
 export MI_MAX_FILE_SIZE=21474836480
-
-# Customize UI settings
-export MI_MAX_PARTITIONS_DISPLAY=20
 
 # Run the application
 python3 mongosync_insights.py
@@ -243,7 +245,10 @@ Pre-configure the migration-verifier progress endpoint and/or connection string:
 # Set migration-verifier progress endpoint (host:port or full path; /api/v1/progress is appended if omitted)
 export MI_VERIFIER_PROGRESS_ENDPOINT_URL="localhost:27020"
 
-# Set verifier connection string (separate cluster from migration monitoring)
+# Optional: metadata fallback — used when MI_VERIFIER_CONNECTION_STRING is not set
+export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
+
+# Optional: metadata fallback on a different cluster (falls back to MI_CONNECTION_STRING when omitted)
 export MI_VERIFIER_CONNECTION_STRING="mongodb+srv://user:pass@verifier-cluster.mongodb.net/"
 
 # Optional: override migration-verifier metadata database name (default: __mdb_internal_migration_verifier)
@@ -258,15 +263,13 @@ export MI_VERIFIER_FAILED_TASKS_LIMIT=20
 # Optional: ignore short-lived doc mismatches in /summary (0 = no filter)
 export MI_VERIFIER_SUMMARY_MIN_DURATION_SECS=0
 
-# HTTP timeouts for verifier endpoint polling (seconds)
-export MI_PROGRESS_FETCH_TIMEOUT_SECS=10
-export MI_VERIFIER_FETCH_TIMEOUT_SECS=120
+# HTTP timeouts for endpoint polling (seconds; defaults follow refresh intervals)
+export MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS=10
+export MI_VERIFIER_PROGRESS_TIMEOUT_SECS=30
+export MI_VERIFIER_SUMMARY_TIMEOUT_SECS=120
 
 # Socket timeout for verifier metadata DB reads (milliseconds)
 export MI_VERIFIER_METADATA_TIMEOUT_MS=120000
-
-# Or reuse the same connection string as migration monitoring
-export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 
 # Run the application
 python3 mongosync_insights.py

@@ -152,7 +152,6 @@ Snapshots are removed on logout, app startup maintenance, and when TTL expires. 
 | `MI_LOG_STORE_DIR` | OS temp | Snapshot and log-store directory |
 | `MI_LOG_STORE_MAX_AGE_HOURS` | `24` | Snapshot/log-store TTL |
 | `MI_LOG_VIEWER_MAX_LINES` | `2000` | Tail view line limit |
-| `MI_MAX_PARTITIONS_DISPLAY` | `10` | Max partitions shown per collection in tables |
 
 See **[CONFIGURATION.md](CONFIGURATION.md)** for examples (upload size, persistent snapshots, log viewer buffer).
 
