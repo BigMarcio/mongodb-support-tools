@@ -687,10 +687,10 @@ def fetch_metadata_status(
     verificationProgress (from verifier persistence DBs when verification is enabled,
     verification_progress_needed is True, and phase gating allows it).
     """
-    from .app_config import INDEX_BUILD_REFRESH_TIME, get_database, resolve_internal_db_name
+    from .app_config import INDEX_BUILD_REFRESH_TIME, get_database, resolve_mongosync_db_name
     from .live_verifier_metadata import fetch_verifier_persistence_status
 
-    internal_db_name = resolve_internal_db_name(connection_string)
+    internal_db_name = resolve_mongosync_db_name(connection_string)
     try:
         db = get_database(connection_string, internal_db_name)
         resume_data = db.resumeData.find_one({"_id": "coordinator"})

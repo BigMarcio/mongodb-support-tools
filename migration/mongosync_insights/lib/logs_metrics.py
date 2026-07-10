@@ -1031,6 +1031,8 @@ def upload_file():
 
         logger.info(f"Plotting")
 
+        progress_data = []
+
         # Create a subplot for the scatter plots (tables are now in a separate tab)
         fig = make_subplots(rows=17, cols=2, subplot_titles=("Mongosync Phases", "Mongosync Progress",
                                                             "Lag Time (seconds)", "Estimated Source Oplog Time Remaining (minutes)",
@@ -1085,16 +1087,22 @@ def upload_file():
         progress_table_rows.extend(progress_flag_events)
         if progress_table_rows:
             progress_table_data = sorted(progress_table_rows, key=lambda x: x[0])
-            table_dates = [row[0] for row in progress_table_data]
-            table_events = [row[1] for row in progress_table_data]
+            progress_data = [
+                {"time": t, "event": e}
+                for t, e in progress_table_data
+            ]
+            table_dates = [row["time"] for row in progress_data]
+            table_events = [row["event"] for row in progress_data]
             fig.add_trace(go.Table(
                 header=dict(values=["Date Time", "Event"]),
-                cells=dict(values=[table_dates, table_events])
+                cells=dict(values=[table_dates, table_events]),
+                meta=dict(markdownKey="progress"),
             ), row=1, col=2)
         else:
             fig.add_trace(go.Table(
                 header=dict(values=["Date Time", "Event"]),
-                cells=dict(values=[[], []])
+                cells=dict(values=[[], []]),
+                meta=dict(markdownKey="progress"),
             ), row=1, col=2)
 
         # Row 2: Lag Time
@@ -1568,6 +1576,7 @@ def upload_file():
             'natural_order_data': natural_order_data,
             'errors_data': matched_errors,
             'partition_init_data': partition_init_data,
+            'progress_data': progress_data,
             'has_logs_data': has_logs_data,
             'has_metrics_data': has_metrics_data,
             'log_viewer_lines': log_viewer_lines_out,

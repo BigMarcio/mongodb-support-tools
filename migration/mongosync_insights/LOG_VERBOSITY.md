@@ -36,7 +36,7 @@ The table below lists every chart and panel in Mongosync Insights, the minimum v
 | Chart / Feature | Min. verbosity | Source log pattern |
 |----------------|---------------|--------------------|
 | Mongosync Phases (scatter) | `info` (default) | `"Starting ... phase"` \| `"Commit handler called"`; with `debug` (`--verbosity 1`): also `"Updating the in-memory phase from ... to ..."`; Live Migrate: `sent response` → `progress.atlasLiveMigrateMetrics.PhaseTransitions` — all sources merged, earliest timestamp per phase name wins |
-| Mongosync Progress (table) | `info` (default) | Same merged phase sources as scatter (phase rows only), plus `"sent response"` → `body.progress.canCommit` / `canWrite` state transitions |
+| Mongosync Progress (table) | `info` (default) | Same merged phase sources as scatter (phase rows only), plus `"sent response"` → `body.progress.canCommit` / `canWrite` state transitions. In the Log Analyzer UI, use the chart **Copy as Markdown** badge to export the table. |
 | Lag Time (seconds) | `info` (default) | `"Replication progress"` → `lagTimeSeconds` |
 | Est. Source Oplog Time Remaining | `info` (default) | `"Replication progress"` → `estimatedOplogTimeRemaining` |
 | Ping Latency — src & dst | `info` (default) | `"Operation duration stats"` → `sourcePingLatencyMs` / `destinationPingLatencyMs` |

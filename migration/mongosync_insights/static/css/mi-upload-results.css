@@ -144,6 +144,38 @@
     color: var(--mongodb-green-dark2);
 }
 
+.chart-copy-badge {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--lm-card-border);
+    background: var(--lm-card-bg);
+    color: var(--lm-text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    pointer-events: auto;
+    box-shadow: var(--lm-card-shadow);
+    padding: 0;
+}
+
+.chart-copy-badge .chart-copy-icon {
+    display: block;
+}
+
+.chart-copy-badge:hover {
+    border-color: var(--mongodb-green-dark2);
+    color: var(--mongodb-green-dark2);
+}
+
+.chart-copy-badge.copied {
+    background: var(--mi-btn-success-bg);
+    border-color: var(--mi-btn-success-bg);
+    color: var(--mongodb-white);
+}
+
 .chart-info-tooltip {
     position: absolute;
     min-width: 180px;
@@ -483,13 +515,36 @@
 
 .lv-header {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: stretch;
     gap: 8px;
     padding: 8px 12px;
     background: #2a2a2a;
     border-bottom: 1px solid #3a3a3a;
+}
+
+.lv-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+}
+
+.lv-header-search {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+}
+
+.lv-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
 }
 
 .lv-header-left {
@@ -497,12 +552,6 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 10px;
-}
-
-.lv-header-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
 }
 
 .lv-title {
@@ -552,6 +601,68 @@
     background: #1e1e1e;
     color: #e0e0e0;
     width: 180px;
+    flex: 1 1 180px;
+    max-width: 320px;
+}
+
+.lv-datetime-range {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.lv-datetime-label {
+    font-size: 11px;
+    color: #888;
+    white-space: nowrap;
+}
+
+.lv-datetime-field {
+    display: inline-flex;
+    vertical-align: middle;
+}
+
+.lv-datetime-input {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: auto;
+    min-width: 10.5rem;
+    max-width: 12.5rem;
+    padding: 4px 8px;
+    font-size: 12px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #1e1e1e;
+    color: #e0e0e0;
+    color-scheme: dark;
+}
+
+.lv-datetime-input::-webkit-datetime-edit {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0;
+}
+
+.lv-datetime-input::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+}
+
+.lv-datetime-input::-webkit-datetime-edit-second-field {
+    min-width: 1.4em;
+}
+
+.lv-datetime-input::-webkit-calendar-picker-indicator {
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    padding: 0;
+    filter: invert(0.8);
+    cursor: pointer;
+    opacity: 1;
 }
 
 .lv-line-count {

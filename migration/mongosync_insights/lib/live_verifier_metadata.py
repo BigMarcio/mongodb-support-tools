@@ -124,14 +124,18 @@ def fetch_verifier_persistence_status(connection_string):
     Returns progress-api-shaped {"source": {...}, "destination": {...}} or None
     when neither side has persistence data.
     """
-    from .app_config import VERIFIER_DST_NAMESPACE, VERIFIER_SRC_NAMESPACE, get_database
+    from .app_config import (
+        MI_EMBEDDED_VERIFIER_DST_DB_NAME,
+        MI_EMBEDDED_VERIFIER_SRC_DB_NAME,
+        get_database,
+    )
 
     if not connection_string:
         return None
 
     try:
-        src_db = get_database(connection_string, VERIFIER_SRC_NAMESPACE)
-        dst_db = get_database(connection_string, VERIFIER_DST_NAMESPACE)
+        src_db = get_database(connection_string, MI_EMBEDDED_VERIFIER_SRC_DB_NAME)
+        dst_db = get_database(connection_string, MI_EMBEDDED_VERIFIER_DST_DB_NAME)
     except PyMongoError as e:
         logger.debug("Could not open verifier persistence databases: %s", e)
         return None

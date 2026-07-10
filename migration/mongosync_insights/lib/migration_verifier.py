@@ -3,27 +3,118 @@ Migration Verifier metrics gathering and visualization.
 Provides monitoring for MongoDB migration-verifier tool.
 https://github.com/mongodb-labs/migration-verifier
 """
-import plotly.graph_objects as go
-from plotly.utils import PlotlyJSONEncoder
-from plotly.subplots import make_subplots
-from flask import render_template
-import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+from flask import render_template
 from pymongo.errors import PyMongoError
 
-from .plot_theme import apply_mi_theme, theme_tokens
+from .data_sources import STATUS_ACTIVE, STATUS_UNAVAILABLE, build_data_sources
 
 logger = logging.getLogger(__name__)
+
+_EXCLUDED_TASK_TYPES = ["primary"]
+_TASK_STATUSES_PENDING = ["added", "processing"]
+_TASK_STATUSES_FAILED = ["failed", "mismatch"]
+_VERIFY_DOCUMENTS = "verifyDocuments"
+_VERIFY_COLLECTION = "verifyCollection"
+
+
+def _base_task_match(generation):
+    """Match filter for verification_tasks, excluding coordinator tasks."""
+    return {
+        "generation": generation,
+        "type": {"$nin": _EXCLUDED_TASK_TYPES},
+    }
+
+
+def _field_from_doc(doc, *keys):
+    """Return the first present field from a BSON document (case variants).
+
+    migration-verifier uses the Go mongo-driver v2 default struct encoding, which
+    lowercases the entire field name (e.g. MetadataVersion -> metadataversion).
+    """
+    if not doc:
+        return None
+    for key in keys:
+        if key in doc:
+            return doc[key]
+    lower_index = {k.lower(): k for k in doc if k != "_id"}
+    for key in keys:
+        actual = lower_index.get(key.lower())
+        if actual is not None:
+            return doc[actual]
+    return None
+
+
+def _read_generation_doc(db):
+    """Read the single generation metadata document."""
+    return db.generation.find_one({})
+
+
+def get_current_generation(db):
+    """Read authoritative generation from the generation collection.
+
+    Falls back to max generation in verification_tasks for older metadata.
+    """
+    doc = _read_generation_doc(db)
+    gen = _field_from_doc(doc, "generation", "Generation")
+    if gen is not None:
+        return gen
+
+    latest = db.verification_tasks.find_one(
+        {},
+        {"generation": 1},
+        sort=[("generation", -1)],
+    )
+    if not latest:
+        return None
+    return latest.get("generation", 0)
+
+
+def _load_mismatches_for_tasks(db, generation, task_ids):
+    """Load mismatch details keyed by task ID (supports legacy ``task`` field)."""
+    if not task_ids:
+        return {}
+
+    result = {task_id: [] for task_id in task_ids}
+
+    try:
+        by_task_id = list(db.mismatches.find(
+            {"generation": generation, "taskID": {"$in": task_ids}},
+            {"taskID": 1, "detail": 1},
+        ))
+        for m in by_task_id:
+            task_id = m.get("taskID")
+            detail = m.get("detail")
+            if task_id in result and detail:
+                result[task_id].append(detail)
+
+        missing_ids = [tid for tid in task_ids if not result[tid]]
+        if missing_ids:
+            by_legacy = list(db.mismatches.find(
+                {"task": {"$in": missing_ids}},
+                {"task": 1, "detail": 1},
+            ))
+            for m in by_legacy:
+                task_id = m.get("task")
+                detail = m.get("detail")
+                if task_id in result and detail:
+                    result[task_id].append(detail)
+    except Exception as e:
+        logger.warning("Failed to load mismatches for tasks: %s", e)
+
+    return result
 
 
 def get_verification_summary(db, generation):
     """Get summary of verification tasks for a generation."""
     pipeline = [
-        {"$match": {"generation": generation}},
+        {"$match": _base_task_match(generation)},
         {"$group": {
             "_id": "$status",
-            "count": {"$sum": 1}
-        }}
+            "count": {"$sum": 1},
+        }},
     ]
     results = list(db.verification_tasks.aggregate(pipeline))
     summary = {
@@ -31,7 +122,7 @@ def get_verification_summary(db, generation):
         "failed": 0,
         "mismatch": 0,
         "pending": 0,
-        "processing": 0
+        "processing": 0,
     }
     for r in results:
         status = r["_id"]
@@ -42,11 +133,21 @@ def get_verification_summary(db, generation):
     return summary
 
 
-def get_failed_tasks(db, generation, limit=50):
+def get_failed_tasks(db, generation, limit=None, document_only=False):
     """Get failed verification tasks with details including mismatch info."""
-    # First get basic task info (fast query)
+    if limit is None:
+        from .app_config import VERIFIER_FAILED_TASKS_LIMIT
+        limit = VERIFIER_FAILED_TASKS_LIMIT
+
+    match = {
+        **_base_task_match(generation),
+        "status": {"$in": _TASK_STATUSES_FAILED},
+    }
+    if document_only:
+        match["type"] = {"$ne": _VERIFY_COLLECTION}
+
     pipeline = [
-        {"$match": {"generation": generation, "status": {"$in": ["failed", "mismatch"]}}},
+        {"$match": match},
         {"$sort": {"begin_time": -1}},
         {"$limit": limit},
         {"$project": {
@@ -55,615 +156,1341 @@ def get_failed_tasks(db, generation, limit=50):
             "status": 1,
             "query_filter": 1,
             "_ids": 1,
-            "failed_docs": 1,
-            "begin_time": 1
-        }}
+            "begin_time": 1,
+        }},
     ]
     tasks = list(db.verification_tasks.aggregate(pipeline))
-    
-    # For first 20 tasks, try to get mismatch details (separate fast query)
+
     if tasks:
-        task_ids = [t["_id"] for t in tasks[:20]]
-        try:
-            mismatches = list(db.mismatches.find(
-                {"task": {"$in": task_ids}},
-                {"task": 1, "detail": 1}
-            ).limit(20))
-            
-            # Create lookup dict
-            mismatch_map = {m["task"]: m for m in mismatches}
-            
-            # Attach mismatch info to tasks
-            for t in tasks:
-                if t["_id"] in mismatch_map:
-                    t["mismatch"] = mismatch_map[t["_id"]]
-        except Exception:
-            pass  # Skip mismatch lookup if it fails
-    
+        task_ids = [t["_id"] for t in tasks]
+        mismatch_map = _load_mismatches_for_tasks(db, generation, task_ids)
+        for t in tasks:
+            t["mismatches"] = mismatch_map.get(t["_id"], [])
+
     return tasks
 
 
 def get_namespace_stats(db, generation):
-    """Get statistics grouped by namespace for the specified generation."""
+    """Get task-level statistics grouped by namespace for the specified generation."""
     pipeline = [
-        {"$match": {"generation": generation}},
+        {"$match": _base_task_match(generation)},
         {"$group": {
             "_id": "$query_filter.namespace",
             "total": {"$sum": 1},
             "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
-            "failed": {"$sum": {"$cond": [{"$in": ["$status", ["failed", "mismatch"]]}, 1, 0]}},
-            "pending": {"$sum": {"$cond": [{"$in": ["$status", ["added", "pending"]]}, 1, 0]}}
+            "failed": {"$sum": {"$cond": [{"$in": ["$status", _TASK_STATUSES_FAILED]}, 1, 0]}},
+            "pending": {"$sum": {"$cond": [{"$in": ["$status", _TASK_STATUSES_PENDING]}, 1, 0]}},
         }},
         {"$sort": {"failed": -1, "total": -1}},
-        {"$limit": 15}  # Reduced for performance
+        {"$limit": 15},
     ]
     return list(db.verification_tasks.aggregate(pipeline, allowDiskUse=True))
 
 
-def get_generation_history(db, limit=4):
-    """Get history of latest generations with their stats - optimized for performance."""
-    # First, quickly find the latest generation numbers
-    latest_gen_doc = db.verification_tasks.find_one(
-        {},
-        {"generation": 1},
-        sort=[("generation", -1)]
-    )
-    
-    if not latest_gen_doc:
+def _namespace_stats_add_fields_stage():
+    """Shared $addFields stage for namespace statistics aggregations."""
+    finished_statuses = ["completed", "failed"]
+    return {
+        "$addFields": {
+            "partitionAdded": {
+                "$cond": [
+                    {"$and": [
+                        {"$eq": ["$type", _VERIFY_DOCUMENTS]},
+                        {"$eq": ["$status", "added"]},
+                    ]},
+                    1,
+                    0,
+                ],
+            },
+            "partitionProcessing": {
+                "$cond": [
+                    {"$and": [
+                        {"$eq": ["$type", _VERIFY_DOCUMENTS]},
+                        {"$eq": ["$status", "processing"]},
+                    ]},
+                    1,
+                    0,
+                ],
+            },
+            "partitionDone": {
+                "$cond": [
+                    {"$and": [
+                        {"$eq": ["$type", _VERIFY_DOCUMENTS]},
+                        {"$in": ["$status", finished_statuses]},
+                    ]},
+                    1,
+                    0,
+                ],
+            },
+            "docsCompared": {
+                "$cond": [
+                    {"$and": [
+                        {"$eq": ["$type", _VERIFY_DOCUMENTS]},
+                        {"$in": ["$status", finished_statuses]},
+                    ]},
+                    "$found_source_documents_count",
+                    0,
+                ],
+            },
+            "bytesCompared": {
+                "$cond": [
+                    {"$and": [
+                        {"$eq": ["$type", _VERIFY_DOCUMENTS]},
+                        {"$in": ["$status", finished_statuses]},
+                    ]},
+                    "$source_bytes_count",
+                    0,
+                ],
+            },
+            "totalDocs": {
+                "$cond": {
+                    "if": {"$eq": ["$generation", 0]},
+                    "then": {"$cond": {
+                        "if": {"$eq": ["$type", _VERIFY_COLLECTION]},
+                        "then": "$documents_count",
+                        "else": 0,
+                    }},
+                    "else": {"$cond": {
+                        "if": {"$eq": ["$type", _VERIFY_DOCUMENTS]},
+                        "then": "$documents_count",
+                        "else": 0,
+                    }},
+                },
+            },
+            "totalBytes": {
+                "$cond": [
+                    {"$eq": ["$type", _VERIFY_COLLECTION]},
+                    "$source_bytes_count",
+                    0,
+                ],
+            },
+        },
+    }
+
+
+def _namespace_stats_group_stage(group_id):
+    return {
+        "$group": {
+            "_id": group_id,
+            "docsCompared": {"$sum": "$docsCompared"},
+            "totalDocs": {"$sum": "$totalDocs"},
+            "bytesCompared": {"$sum": "$bytesCompared"},
+            "totalBytes": {"$sum": "$totalBytes"},
+            "partitionsAdded": {"$sum": "$partitionAdded"},
+            "partitionsProcessing": {"$sum": "$partitionProcessing"},
+            "partitionsDone": {"$sum": "$partitionDone"},
+        },
+    }
+
+
+def _namespace_stats_pipeline(generation=None, generations=None):
+    """Port of migration-verifier GetPersistedNamespaceStatistics aggregation."""
+    if generations is not None:
+        unique_gens = sorted({g for g in generations if g is not None})
+        if not unique_gens:
+            return []
+        match_stage = {
+            "type": {"$in": [_VERIFY_DOCUMENTS, _VERIFY_COLLECTION]},
+            "generation": {"$in": unique_gens},
+        }
+        group_id = {
+            "generation": "$generation",
+            "namespace": "$query_filter.namespace",
+        }
+        sort_stage = {"$sort": {"_id.generation": 1, "_id.namespace": 1}}
+    else:
+        match_stage = {
+            "type": {"$in": [_VERIFY_DOCUMENTS, _VERIFY_COLLECTION]},
+            "generation": generation,
+        }
+        group_id = "$query_filter.namespace"
+        sort_stage = {"$sort": {"_id": 1}}
+
+    return [
+        {"$match": match_stage},
+        _namespace_stats_add_fields_stage(),
+        _namespace_stats_group_stage(group_id),
+        sort_stage,
+    ]
+
+
+def _split_batch_namespace_statistics(rows):
+    """Group batched namespace stats rows by generation number."""
+    by_generation = {}
+    for row in rows:
+        group_key = row.get("_id") or {}
+        generation = group_key.get("generation")
+        if generation is None:
+            continue
+        by_generation.setdefault(generation, []).append({
+            "_id": group_key.get("namespace"),
+            "docsCompared": row.get("docsCompared") or 0,
+            "totalDocs": row.get("totalDocs") or 0,
+            "bytesCompared": row.get("bytesCompared") or 0,
+            "totalBytes": row.get("totalBytes") or 0,
+            "partitionsAdded": row.get("partitionsAdded") or 0,
+            "partitionsProcessing": row.get("partitionsProcessing") or 0,
+            "partitionsDone": row.get("partitionsDone") or 0,
+        })
+    return by_generation
+
+
+def get_persisted_namespace_statistics_batch(db, generations):
+    """Namespace statistics for multiple generations in one aggregation."""
+    pipeline = _namespace_stats_pipeline(generations=generations)
+    if not pipeline:
+        return {}
+    try:
+        rows = list(db.verification_tasks.aggregate(pipeline, allowDiskUse=True))
+        return _split_batch_namespace_statistics(rows)
+    except Exception as e:
+        logger.warning("Failed to get batched namespace statistics: %s", e)
+        return {}
+
+
+def get_persisted_namespace_statistics(db, generation):
+    """Document-level namespace progress (aligned with migration-verifier /progress)."""
+    try:
+        return list(db.verification_tasks.aggregate(
+            _namespace_stats_pipeline(generation=generation),
+            allowDiskUse=True,
+        ))
+    except Exception as e:
+        logger.warning("Failed to get persisted namespace statistics: %s", e)
         return []
-    
-    latest_gen = latest_gen_doc.get("generation", 0)
-    
-    # Only aggregate for the latest N generations (much faster)
-    gen_range = list(range(max(0, latest_gen - limit + 1), latest_gen + 1))
-    
+
+
+def get_generation_doc_progress(db, generation):
+    """Sum namespace document stats into generation-level totals."""
+    stats = get_generation_progress_stats(db, generation)
+    docs_compared = stats["docsCompared"]
+    total_docs = stats["totalDocs"]
+    percent = (docs_compared / total_docs * 100) if total_docs > 0 else None
+    return {
+        "docsCompared": docs_compared,
+        "totalDocs": total_docs,
+        "docPercentComplete": round(percent, 1) if percent is not None else None,
+    }
+
+
+def _sum_namespace_stats_list(ns_stats):
+    docs_compared = 0
+    total_docs = 0
+    partitions_done = 0
+    partitions_pending = 0
+    for ns in ns_stats:
+        docs_compared += ns.get("docsCompared") or 0
+        total_docs += ns.get("totalDocs") or 0
+        partitions_done += ns.get("partitionsDone") or 0
+        partitions_pending += (ns.get("partitionsAdded") or 0) + (ns.get("partitionsProcessing") or 0)
+    return {
+        "docsCompared": docs_compared,
+        "totalDocs": total_docs,
+        "partitionsDone": partitions_done,
+        "partitionsTotal": partitions_done + partitions_pending,
+    }
+
+
+def get_generation_progress_stats(db, generation, ns_stats=None):
+    """Sum namespace document and partition stats for a generation."""
+    if ns_stats is None:
+        ns_stats = get_persisted_namespace_statistics(db, generation)
+    return _sum_namespace_stats_list(ns_stats)
+
+
+def get_generation_history(db, limit=4, current_gen=None):
+    """Get history of latest generations with their stats."""
+    if current_gen is None:
+        current_gen = get_current_generation(db)
+    if current_gen is None:
+        return []
+
+    gen_range = list(range(max(0, current_gen - limit + 1), current_gen + 1))
+
     pipeline = [
-        {"$match": {"generation": {"$in": gen_range}}},  # Filter first for speed
+        {"$match": {
+            "generation": {"$in": gen_range},
+            "type": {"$nin": _EXCLUDED_TASK_TYPES},
+        }},
         {"$group": {
             "_id": "$generation",
             "total_tasks": {"$sum": 1},
             "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
-            "failed": {"$sum": {"$cond": [{"$in": ["$status", ["failed", "mismatch"]]}, 1, 0]}},
-            "first_task_time": {"$min": "$begin_time"}
+            "failed": {"$sum": {"$cond": [{"$in": ["$status", _TASK_STATUSES_FAILED]}, 1, 0]}},
+            "pending": {"$sum": {"$cond": [{"$in": ["$status", _TASK_STATUSES_PENDING]}, 1, 0]}},
+            "first_task_time": {"$min": "$begin_time"},
         }},
         {"$sort": {"_id": -1}},
-        {"$limit": limit}
+        {"$limit": limit},
     ]
     return list(db.verification_tasks.aggregate(pipeline, allowDiskUse=True))
+
+
+def get_collection_metadata_mismatches(db, generation):
+    """Fetch collection/index mismatches for a generation from the mismatches collection."""
+    try:
+        return list(db.mismatches.find(
+            {"generation": generation, "taskType": _VERIFY_COLLECTION},
+            {"generation": 1, "detail": 1},
+        ))
+    except Exception as e:
+        logger.warning("Failed to fetch collection metadata mismatches: %s", e)
+        return []
 
 
 def get_generation_name(gen_num):
     """Get human-readable name for a generation."""
     if gen_num is None:
         return "Unknown"
-    elif gen_num == 0:
+    if gen_num == 0:
         return "Initial Verification"
+    return f"Recheck #{gen_num}"
+
+
+def _format_start_time(start_time):
+    if start_time is None or start_time == "N/A":
+        return "N/A"
+    return str(start_time)[:16]
+
+
+def _get_source_ns(task):
+    qf = task.get("query_filter", {})
+    return qf.get("namespace", "N/A") or "N/A"
+
+
+def _get_dest_ns(task):
+    qf = task.get("query_filter", {})
+    return qf.get("to", qf.get("namespace", "N/A")) or "N/A"
+
+
+def _format_single_mismatch_detail(detail, task_type=None):
+    """Format one mismatch detail document for display."""
+    if not detail or not isinstance(detail, dict):
+        return None
+
+    item_id = detail.get("id", "?")
+    field_type = detail.get("field", "")
+    details_str = detail.get("details", "")
+    cluster = detail.get("cluster", "")
+
+    is_collection = task_type == _VERIFY_COLLECTION or (
+        task_type is None and not field_type and details_str
+    )
+
+    if is_collection or task_type == _VERIFY_COLLECTION:
+        if "unique" in str(details_str).lower():
+            if "src:" in details_str and "unique\": true" in details_str:
+                if "dst:" in details_str and "unique" not in details_str.split("dst:")[1][:50]:
+                    return f"Index '{item_id}' ({field_type}): unique constraint missing on {cluster}"
+            return f"Index '{item_id}' ({field_type}): Mismatch on {cluster}"
+        if "Missing" in details_str:
+            return f"Index '{item_id}' ({field_type}): Missing on {cluster}"
+        if details_str:
+            short = details_str[:60] + ("..." if len(details_str) > 60 else "")
+            return f"Index '{item_id}' ({field_type}): {short} ({cluster})"
+        return f"Index '{item_id}' ({field_type}): ({cluster})"
+
+    if field_type:
+        short = details_str[:40] + ("..." if len(details_str) > 40 else "")
+        return f"Doc '{item_id}', field '{field_type}': {short} ({cluster})"
+    if details_str:
+        short = details_str[:50] + ("..." if len(details_str) > 50 else "")
+        return f"Doc '{item_id}': {short} ({cluster})"
+    return f"Doc '{item_id}': ({cluster})"
+
+
+def _get_mismatch_details(task):
+    task_type = task.get("type", "")
+    mismatches = task.get("mismatches", [])
+
+    if mismatches:
+        parts = []
+        for detail in mismatches[:3]:
+            formatted = _format_single_mismatch_detail(detail, task_type)
+            if formatted:
+                parts.append(formatted)
+        if parts:
+            result = "; ".join(parts)
+            if len(mismatches) > 3:
+                result += f"... +{len(mismatches) - 3} more"
+            return result
+
+    if task_type == _VERIFY_COLLECTION:
+        return "Metadata mismatch (no details)"
+
+    if task_type == _VERIFY_DOCUMENTS:
+        ids = task.get("_ids", [])
+        if ids:
+            count = len(ids)
+            sample = ", ".join([str(i)[:20] for i in ids[:5]])
+            if count > 5:
+                return f"{count} docs mismatched: {sample}..."
+            return f"{count} docs: {sample}"
+        return "Document mismatch (no details)"
+
+    if task.get("_ids"):
+        return f"{len(task.get('_ids', []))} items"
+    return task.get("status", "N/A")
+
+
+def _serialize_failed_task(task, generation):
+    """Build a JSON-safe row for the failed-tasks dashboard card."""
+    status = task.get("status", "")
+    if status == "failed" and not task.get("mismatches"):
+        details = "Task failed (check migration-verifier logs for details)"
     else:
-        return f"Recheck #{gen_num}"
+        details = _get_mismatch_details(task)
+    return {
+        "namespace": _get_source_ns(task),
+        "type": task.get("type", ""),
+        "status": status,
+        "details": details,
+        "beginTime": _format_start_time(task.get("begin_time")),
+    }
 
 
-def gather_verifier_metrics(connection_string, db_name="migration_verification_metadata"):
-    """Gather all verifier metrics and create Plotly figure."""
-    from .app_config import get_database
-    
+def get_failed_tasks_for_display(db, generation, limit=None):
+    """Collect failed/mismatch document tasks for one generation."""
+    if limit is None:
+        from .app_config import VERIFIER_FAILED_TASKS_LIMIT
+        limit = VERIFIER_FAILED_TASKS_LIMIT
+
+    rows = []
+    tasks = get_failed_tasks(db, generation, limit=limit, document_only=True)
+    for task in tasks:
+        rows.append(_serialize_failed_task(task, generation))
+    rows.sort(key=lambda r: r.get("beginTime") or "", reverse=True)
+    return rows[:limit]
+
+
+def _derive_state_badge(current_gen, previous_gen_stats, collection_mismatches):
+    if current_gen == 0:
+        return {"label": "IN PROGRESS", "color": "blue"}
+    if not previous_gen_stats:
+        return {"label": "NO DATA", "color": "gray"}
+    has_mismatches = (
+        previous_gen_stats.get("failed", 0) > 0
+        or bool(collection_mismatches)
+    )
+    if has_mismatches:
+        return {"label": "MISMATCHES", "color": "yellow"}
+    return {"label": "PASS", "color": "green"}
+
+
+def _verifier_data_sources(
+    endpoint_url=None,
+    connection_string=None,
+    *,
+    progress_status=None,
+    metadata_status=None,
+):
+    return build_data_sources(
+        progress_configured=bool(endpoint_url),
+        metadata_configured=bool(connection_string),
+        progress_status=progress_status,
+        metadata_status=metadata_status,
+        metadata_label="Verifier metadata",
+    )
+
+
+def _safe_int(value, default=0):
+    if value is None:
+        return default
     try:
-        db = get_database(connection_string, db_name)
-        logger.info(f"Connected to verifier database: {db_name}")
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value):
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _unwrap_option(value):
+    """Unwrap migration-verifier option fields (scalar or null)."""
+    if value is None:
+        return None
+    if isinstance(value, dict) and len(value) == 0:
+        return None
+    return value
+
+
+def _format_bson_timestamp(ts):
+    if not ts:
+        return None
+    if isinstance(ts, dict):
+        inner = ts.get("$timestamp") or ts
+        t_val = inner.get("t")
+        i_val = inner.get("i")
+        if t_val is not None:
+            if i_val is not None:
+                return f"{{t: {t_val}, i: {i_val}}}"
+            return str(t_val)
+    return str(ts)
+
+
+def _phase_badge_from_progress(phase):
+    phase_lower = (phase or "").strip().lower()
+    mapping = {
+        "idle": ("IDLE", "gray"),
+        "check": ("CHECK", "blue"),
+        "recheck": ("RECHECK", "yellow"),
+    }
+    label, color = mapping.get(phase_lower, (phase_lower.upper() or "—", "gray"))
+    return {"label": label, "color": color}
+
+
+def _serialize_generation_stats(stats):
+    if not stats:
+        return None
+    compared = _safe_int(stats.get("docsCompared"))
+    total = _safe_int(stats.get("totalDocs"))
+    bytes_compared = _safe_int(stats.get("srcBytesCompared"))
+    total_bytes = _safe_int(stats.get("totalSrcBytes"))
+    result = {
+        "docsCompared": compared,
+        "totalDocs": total,
+        "docsPercent": _percent(compared, total),
+        "totalNamespaces": _safe_int(stats.get("totalNamespaces")),
+    }
+    if total_bytes > 0:
+        result["srcBytesCompared"] = bytes_compared
+        result["totalSrcBytes"] = total_bytes
+        result["bytesPercent"] = _percent(bytes_compared, total_bytes)
+    return result
+
+
+def _serialize_change_stats(stats, label):
+    if not stats:
+        return None
+    event_counts = stats.get("eventCounts") or {}
+    lag = _unwrap_option(stats.get("lagSecs"))
+    eps = _unwrap_option(stats.get("eventsPerSecond"))
+    return {
+        "label": label,
+        "eventsPerSecond": _safe_float(eps),
+        "lagSecs": _safe_int(lag) if lag is not None else None,
+        "bufferSaturation": _safe_float(stats.get("bufferSaturation")),
+        "eventCounts": {
+            "insert": _safe_int(event_counts.get("insert")),
+            "update": _safe_int(event_counts.get("update")),
+            "replace": _safe_int(event_counts.get("replace")),
+            "delete": _safe_int(event_counts.get("delete")),
+        },
+    }
+
+
+def _serialize_longest_mismatch(mismatch):
+    if not mismatch:
+        return None
+    return {
+        "type": mismatch.get("type"),
+        "namespace": mismatch.get("namespace"),
+        "id": mismatch.get("_id"),
+        "field": _unwrap_option(mismatch.get("field")),
+        "detail": _unwrap_option(mismatch.get("detail")),
+        "durationSecs": _safe_float(mismatch.get("durationSecs")),
+    }
+
+
+def build_verifier_progress_display(progress):
+    """Map migration-verifier /progress fields to dashboard display object."""
+    if not progress:
+        return None
+
+    phase = (progress.get("phase") or "").strip().lower()
+    gen_stats = progress.get("generationStats") or {}
+    verification_status = progress.get("verificationStatus") or {}
+    gen0_stats = _unwrap_option(progress.get("gen0Stats"))
+
+    compared = _safe_int(gen_stats.get("docsCompared"))
+    total_docs = _safe_int(gen_stats.get("totalDocs"))
+    bytes_compared = _safe_int(gen_stats.get("srcBytesCompared"))
+    total_bytes = _safe_int(gen_stats.get("totalSrcBytes"))
+
+    phase_descriptions = {
+        "idle": "Verification is idle (not actively checking or rechecking).",
+        "check": "Initial document check (generation 0) is in progress.",
+        "recheck": "Recheck generation is in progress.",
+    }
+
+    error_val = progress.get("error")
+    error_str = None
+    if error_val is not None and error_val != "":
+        error_str = str(error_val)
+
+    return {
+        "phase": phase,
+        "phaseLabel": phase.upper() if phase else "—",
+        "phaseBadge": _phase_badge_from_progress(phase),
+        "phaseDescription": phase_descriptions.get(phase),
+        "generation": _safe_int(progress.get("generation")),
+        "documents": {
+            "compared": compared,
+            "total": total_docs,
+            "percent": _percent(compared, total_docs),
+        },
+        "bytes": {
+            "compared": bytes_compared,
+            "total": total_bytes,
+            "percent": _percent(bytes_compared, total_bytes) if total_bytes > 0 else None,
+        },
+        "totalNamespaces": _safe_int(gen_stats.get("totalNamespaces")),
+        "tasks": {
+            "total": _safe_int(verification_status.get("totalTasks")),
+            "added": _safe_int(verification_status.get("addedTasks")),
+            "processing": _safe_int(verification_status.get("processingTasks")),
+            "failed": _safe_int(verification_status.get("failedTasks")),
+            "completed": _safe_int(verification_status.get("completedTasks")),
+            "metadataMismatch": _safe_int(verification_status.get("metadataMismatchTasks")),
+        },
+        "docsComparedPerSecond": _safe_float(progress.get("docsComparedPerSecond")),
+        "srcBytesComparedPerSecond": _safe_float(progress.get("srcBytesComparedPerSecond")),
+        "srcChangeStats": _serialize_change_stats(progress.get("srcChangeStats"), "Source"),
+        "dstChangeStats": _serialize_change_stats(progress.get("dstChangeStats"), "Destination"),
+        "srcLastRecheckedTS": _format_bson_timestamp(progress.get("srcLastRecheckedTS")),
+        "dstLastRecheckedTS": _format_bson_timestamp(progress.get("dstLastRecheckedTS")),
+        "recentRecheckSecs": [
+            round(float(x), 2)
+            for x in (progress.get("recentRecheckSecs") or [])
+            if x is not None
+        ],
+        "totalRechecksDone": _safe_int(progress.get("totalRechecksDone")),
+        "gen0Stats": _serialize_generation_stats(gen0_stats),
+        "longestDocMismatch": _serialize_longest_mismatch(
+            _unwrap_option(progress.get("longestDocMismatch"))
+        ),
+        "error": error_str,
+    }
+
+
+def _fetch_verifier_progress(endpoint_url):
+    from .live_monitoring import fetch_verifier_progress
+
+    progress, _warnings = fetch_verifier_progress(endpoint_url)
+    return build_verifier_progress_display(progress)
+
+
+def _serialize_ns_mismatch_row(row):
+    if not row:
+        return None
+    return {
+        "type": row.get("type"),
+        "namespace": row.get("namespace"),
+        "aspect": row.get("aspect"),
+        "component": _unwrap_option(row.get("component")),
+        "detail": _unwrap_option(row.get("detail")),
+    }
+
+
+def build_verifier_summary_display(summary, *, min_duration_secs=0, ns_limit=None):
+    """Map migration-verifier /summary fields to dashboard display object."""
+    if not summary:
+        return None
+
+    from .app_config import VERIFIER_FAILED_TASKS_LIMIT
+
+    if ns_limit is None:
+        ns_limit = VERIFIER_FAILED_TASKS_LIMIT
+
+    doc_mm = summary.get("docMismatches") or {}
+    by_type = doc_mm.get("byType") or {}
+    by_namespace = doc_mm.get("byNamespace") or {}
+
+    ns_rows = []
+    for row in summary.get("nsMismatches") or []:
+        serialized = _serialize_ns_mismatch_row(row)
+        if serialized:
+            ns_rows.append(serialized)
+
+    eta = _unwrap_option(summary.get("estCheckSecsRemaining"))
+    if eta is not None:
+        eta = _safe_float(eta)
+
+    notes = summary.get("notes") or []
+    if not isinstance(notes, list):
+        notes = []
+
+    return {
+        "estCheckSecsRemaining": eta,
+        "docMismatches": {
+            "total": _safe_int(doc_mm.get("total")),
+            "byType": {str(k): _safe_int(v) for k, v in by_type.items()},
+            "byNamespace": {str(k): _safe_int(v) for k, v in by_namespace.items()},
+        },
+        "nsMismatches": ns_rows[:ns_limit],
+        "nsMismatchesLimit": ns_limit,
+        "notes": [str(n) for n in notes if n],
+        "minDurationSecs": min_duration_secs,
+    }
+
+
+def _fetch_verifier_summary(endpoint_url):
+    from .app_config import (
+        VERIFIER_SUMMARY_MIN_DURATION_SECS,
+        build_verifier_summary_endpoint_url,
+    )
+    from .live_monitoring import fetch_summary
+
+    summary_url = build_verifier_summary_endpoint_url(endpoint_url)
+    if not summary_url:
+        return None
+    raw = fetch_summary(
+        summary_url,
+        min_duration_secs=VERIFIER_SUMMARY_MIN_DURATION_SECS,
+    )
+    return build_verifier_summary_display(
+        raw,
+        min_duration_secs=VERIFIER_SUMMARY_MIN_DURATION_SECS,
+    )
+
+
+def _derive_state_badge_from_progress(progress_display):
+    """Toolbar badge from /progress when the progress endpoint is available."""
+    if not progress_display:
+        return {"label": "NO DATA", "color": "gray"}
+    if progress_display.get("generation", 0) == 0:
+        return {"label": "IN PROGRESS", "color": "blue"}
+    tasks = progress_display.get("tasks") or {}
+    if (tasks.get("metadataMismatch", 0) or 0) == 0 and not progress_display.get(
+        "longestDocMismatch",
+    ):
+        return {"label": "PASS", "color": "green"}
+    return {"label": "MISMATCHES", "color": "yellow"}
+
+
+_METADATA_SECTION_LABELS = {
+    "history": "Generation history",
+    "ns_batch": "Namespace statistics",
+    "summary": "Verification summary",
+    "coll_mm": "Collection metadata mismatches",
+    "failed": "Failed tasks",
+}
+
+_METADATA_SECTION_DEFAULTS = {
+    "history": [],
+    "ns_batch": {},
+    "summary": {},
+    "coll_mm": [],
+    "failed": [],
+}
+
+_METADATA_SECTION_UNAVAILABLE_KEYS = {
+    "history": "generationsUnavailable",
+    "ns_batch": "namespacesUnavailable",
+    "summary": "verificationCompletenessUnavailable",
+    "coll_mm": "collectionMismatchesUnavailable",
+    "failed": "failedTasksUnavailable",
+}
+
+_ENDPOINT_SKIPPED_SECTIONS = [
+    "namespaces",
+    "collectionMismatches",
+    "verificationCompleteness",
+    "failedTasks",
+]
+
+
+def _resolve_metadata_future(future, section_key, timeout_secs):
+    """Wait for a metadata future; return (value, warning_or_none)."""
+    label = _METADATA_SECTION_LABELS[section_key]
+    default = _METADATA_SECTION_DEFAULTS[section_key]
+    try:
+        return future.result(timeout=timeout_secs), None
+    except FuturesTimeoutError:
+        msg = f"{label} unavailable: timed out after {timeout_secs}s"
+        logger.warning("Verifier metadata section %s timed out", section_key)
+        return default, msg
     except PyMongoError as e:
-        logger.error(f"Failed to connect to verifier database: {e}")
-        return {"error": str(e)}
+        msg = f"{label} unavailable: {e}"
+        logger.warning("Verifier metadata section %s failed: %s", section_key, e)
+        return default, msg
     except Exception as e:
-        logger.error(f"Unexpected error connecting to verifier database: {e}")
-        return {"error": f"Connection error: {str(e)}"}
+        msg = f"{label} unavailable: {e}"
+        logger.warning("Verifier metadata section %s failed: %s", section_key, e)
+        return default, msg
+
+
+def _call_metadata_section(fn, section_key):
+    """Run a metadata query synchronously; return (value, warning_or_none)."""
+    label = _METADATA_SECTION_LABELS[section_key]
+    default = _METADATA_SECTION_DEFAULTS[section_key]
+    try:
+        return fn(), None
+    except PyMongoError as e:
+        msg = f"{label} unavailable: {e}"
+        logger.warning("Verifier metadata section %s failed: %s", section_key, e)
+        return default, msg
+    except Exception as e:
+        msg = f"{label} unavailable: {e}"
+        logger.warning("Verifier metadata section %s failed: %s", section_key, e)
+        return default, msg
+
+
+def _fetch_metadata_sections(
+    db,
+    *,
+    gen_limit,
+    current_gen,
+    gen_range,
+    previous_gen,
+    include_verification_completeness,
+    endpoint_configured,
+    timeout_secs,
+):
+    """Load metadata sections in parallel or sequential (endpoint lean) mode."""
+    warnings = []
+    unavailable = {}
+    attempted = []
+    section_values = {}
+
+    if endpoint_configured:
+        for section_key, fn in _iter_metadata_section_calls(
+            db,
+            gen_limit=gen_limit,
+            current_gen=current_gen,
+            gen_range=gen_range,
+            previous_gen=previous_gen,
+            include_verification_completeness=include_verification_completeness,
+            endpoint_configured=endpoint_configured,
+        ):
+            attempted.append(section_key)
+            value, warning = _call_metadata_section(fn, section_key)
+            section_values[section_key] = value
+            if warning:
+                warnings.append(warning)
+                unavailable[_METADATA_SECTION_UNAVAILABLE_KEYS[section_key]] = True
+        return section_values, warnings, unavailable, attempted
+
+    max_workers = 1
+    if include_verification_completeness:
+        max_workers += 1
+    if previous_gen is not None:
+        max_workers += 2
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for section_key, fn in _iter_metadata_section_calls(
+            db,
+            gen_limit=gen_limit,
+            current_gen=current_gen,
+            gen_range=gen_range,
+            previous_gen=previous_gen,
+            include_verification_completeness=include_verification_completeness,
+            endpoint_configured=endpoint_configured,
+        ):
+            attempted.append(section_key)
+            futures[section_key] = executor.submit(fn)
+
+        for section_key, future in futures.items():
+            value, warning = _resolve_metadata_future(
+                future, section_key, timeout_secs,
+            )
+            section_values[section_key] = value
+            if warning:
+                warnings.append(warning)
+                unavailable[_METADATA_SECTION_UNAVAILABLE_KEYS[section_key]] = True
+
+    return section_values, warnings, unavailable, attempted
+
+
+def _iter_metadata_section_calls(
+    db,
+    *,
+    gen_limit,
+    current_gen,
+    gen_range,
+    previous_gen,
+    include_verification_completeness,
+    endpoint_configured,
+):
+    """Yield (section_key, callable) pairs for metadata loading."""
+    if endpoint_configured:
+        yield "history", (
+            lambda: get_generation_history(db, gen_limit, current_gen)
+        )
+        yield "ns_batch", (
+            lambda: get_persisted_namespace_statistics_batch(db, gen_range)
+        )
+        return
+
+    yield "history", lambda: get_generation_history(db, gen_limit, current_gen)
+    yield "ns_batch", (
+        lambda: get_persisted_namespace_statistics_batch(db, gen_range)
+    )
+    if include_verification_completeness:
+        yield "summary", lambda: get_verification_summary(db, current_gen)
+    if previous_gen is not None:
+        yield "coll_mm", (
+            lambda: get_collection_metadata_mismatches(db, previous_gen)
+        )
+        yield "failed", (
+            lambda: get_failed_tasks_for_display(db, previous_gen)
+        )
+
+
+def _section_succeeded(section_key, unavailable_flags):
+    """True when a section was attempted and completed without error."""
+    flag = _METADATA_SECTION_UNAVAILABLE_KEYS[section_key]
+    return not unavailable_flags.get(flag)
+
+
+def _build_metadata_display(
+    db,
+    db_name,
+    *,
+    include_verification_completeness=True,
+    endpoint_configured=False,
+):
+    """Build metadata-driven display dict from verifier database.
+
+    Returns:
+        tuple[dict | None, list[str]]: (display dict or None on total failure, warnings)
+    """
+    from .app_config import (
+        VERIFIER_FAILED_TASKS_LIMIT,
+        VERIFIER_GENERATION_LIMIT,
+        VERIFIER_METADATA_TIMEOUT_MS,
+    )
+
+    warnings = []
+    try:
+        current_gen = get_current_generation(db)
+    except Exception as e:
+        logger.warning("Failed to read current generation: %s", e)
+        return None, [f"Could not read verifier generation metadata: {e}"]
+
+    if current_gen is None:
+        current_gen = 0
+
+    gen_limit = VERIFIER_GENERATION_LIMIT
+    previous_gen = current_gen - 1 if current_gen > 0 else None
+    gen_range = list(range(max(0, current_gen - gen_limit + 1), current_gen + 1))
+    timeout_secs = VERIFIER_METADATA_TIMEOUT_MS / 1000.0
+
+    section_values, section_warnings, unavailable, attempted = _fetch_metadata_sections(
+        db,
+        gen_limit=gen_limit,
+        current_gen=current_gen,
+        gen_range=gen_range,
+        previous_gen=previous_gen,
+        include_verification_completeness=include_verification_completeness,
+        endpoint_configured=endpoint_configured,
+        timeout_secs=timeout_secs,
+    )
+    warnings.extend(section_warnings)
+
+    if attempted and not any(
+        _section_succeeded(key, unavailable) for key in attempted
+    ):
+        return None, warnings
+
+    gen_history = section_values.get("history", [])
+    ns_by_generation = section_values.get("ns_batch", {})
+    task_summary_current = section_values.get("summary", {})
+    collection_mismatch_docs = section_values.get("coll_mm", [])
+    failed_tasks = section_values.get("failed", [])
+
+    generations_to_show = []
+    for g in gen_history:
+        gen_num = g["_id"]
+        if gen_num is not None:
+            generations_to_show.append({
+                "num": gen_num,
+                "name": get_generation_name(gen_num),
+                "total": g["total_tasks"],
+                "completed": g["completed"],
+                "failed": g["failed"],
+                "pending": g.get("pending", 0),
+                "startTime": _format_start_time(g.get("first_task_time", "N/A")),
+            })
+
+    generations_to_show.sort(
+        key=lambda x: x["num"] if x["num"] is not None else -1,
+        reverse=True,
+    )
+
+    for g in generations_to_show:
+        is_current = g["num"] == current_gen
+        g["isCurrent"] = is_current
+        g["isFinal"] = is_current
+        if is_current:
+            g["name"] = f"★ {g['name']} (CURRENT)"
+
+    generations_to_show = generations_to_show[:gen_limit]
+
+    ns_doc_stats = ns_by_generation.get(current_gen, [])
+    namespaces = []
+    if previous_gen is not None and not endpoint_configured:
+        ns_doc_stats_previous = ns_by_generation.get(previous_gen, [])
+        namespaces = [
+            {
+                "name": ns["_id"] or "unknown",
+                "docsCompared": ns.get("docsCompared") or 0,
+                "totalDocs": ns.get("totalDocs") or 0,
+                "partitionsDone": ns.get("partitionsDone") or 0,
+                "partitionsPending": (
+                    (ns.get("partitionsAdded") or 0)
+                    + (ns.get("partitionsProcessing") or 0)
+                ),
+            }
+            for ns in ns_doc_stats_previous
+        ]
+        namespaces.sort(key=_doc_completion_pct)
+
+    verification_completeness = None
+    if include_verification_completeness and not unavailable.get(
+        "verificationCompletenessUnavailable",
+    ):
+        verification_completeness = get_verification_completeness(
+            ns_doc_stats, task_summary_current, current_gen,
+        )
+
+    current_gen_stats = (
+        verification_completeness
+        if verification_completeness is not None
+        else _sum_namespace_stats_list(ns_doc_stats)
+    )
+
+    for g in generations_to_show:
+        gen_num = g["num"]
+        if gen_num == current_gen:
+            if verification_completeness is not None:
+                g["docsCompared"] = verification_completeness["documents"]["compared"]
+                g["totalDocs"] = verification_completeness["documents"]["total"]
+                g["partitionsDone"] = verification_completeness["partitions"]["done"]
+                g["partitionsTotal"] = verification_completeness["partitions"]["total"]
+            else:
+                g["docsCompared"] = current_gen_stats["docsCompared"]
+                g["totalDocs"] = current_gen_stats["totalDocs"]
+                g["partitionsDone"] = current_gen_stats["partitionsDone"]
+                g["partitionsTotal"] = current_gen_stats["partitionsTotal"]
+        else:
+            g.update(_sum_namespace_stats_list(
+                ns_by_generation.get(gen_num, []),
+            ))
+
+    collection_mismatches = []
+    for mm in collection_mismatch_docs:
+        detail = mm.get("detail", {})
+        namespace = detail.get("nameSpace") or detail.get("namespace") or "N/A"
+        formatted = _format_single_mismatch_detail(detail, _VERIFY_COLLECTION)
+        collection_mismatches.append({
+            "namespace": namespace,
+            "details": formatted or "Mismatch detected (check logs for details)",
+        })
+
+    previous_gen_row = next(
+        (g for g in generations_to_show if g["num"] == previous_gen),
+        None,
+    )
+
+    result = {
+        "metadataAvailable": True,
+        "stateBadge": _derive_state_badge(
+            current_gen, previous_gen_row, collection_mismatches,
+        ),
+        "currentGeneration": current_gen,
+        "generationLimit": gen_limit,
+        "failedTasksLimit": VERIFIER_FAILED_TASKS_LIMIT,
+        "generations": generations_to_show,
+        "namespaces": namespaces[:25],
+        "previousGeneration": previous_gen,
+        "failedTasks": failed_tasks,
+        "collectionMismatches": collection_mismatches,
+    }
+    if verification_completeness is not None:
+        result["verificationCompleteness"] = verification_completeness
+    if warnings:
+        result["metadataPartial"] = True
+    if unavailable:
+        result.update(unavailable)
+    if endpoint_configured:
+        result["metadataSkippedSections"] = list(_ENDPOINT_SKIPPED_SECTIONS)
+    return result, warnings
+
+
+def build_verifier_progress_payload(
+    endpoint_url, connection_string=None, db_name=None,
+):
+    """Build JSON slice for verifier /progress polling."""
+    from .live_monitoring import ProgressFetchError
+
+    result = {
+        "error": None,
+        "warnings": [],
+        "dataSources": None,
+        "display": {},
+    }
+    progress_status = STATUS_UNAVAILABLE
+    try:
+        progress_display = _fetch_verifier_progress(endpoint_url)
+        result["display"]["verificationProgress"] = progress_display
+        result["display"]["stateBadge"] = _derive_state_badge_from_progress(
+            progress_display,
+        )
+        progress_status = STATUS_ACTIVE
+    except ProgressFetchError as e:
+        logger.warning("Verifier progress endpoint fetch failed: %s", e)
+        result["warnings"].append(f"Verifier progress endpoint is not responding: {e}")
+        result["display"]["stateBadge"] = {"label": "NO DATA", "color": "gray"}
+    result["dataSources"] = _verifier_data_sources(
+        endpoint_url,
+        connection_string,
+        progress_status=progress_status if endpoint_url else None,
+        metadata_status=None,
+    )
+    return result
+
+
+def build_verifier_summary_payload(endpoint_url):
+    """Build JSON slice for verifier /summary polling."""
+    from .live_monitoring import ProgressFetchError
+
+    result = {
+        "error": None,
+        "warnings": [],
+        "dataSources": None,
+        "display": {},
+    }
+    progress_status = STATUS_UNAVAILABLE
+    try:
+        summary_display = _fetch_verifier_summary(endpoint_url)
+        result["display"]["verificationSummary"] = summary_display
+        progress_status = STATUS_ACTIVE
+    except ProgressFetchError as e:
+        logger.warning("Verifier summary endpoint fetch failed: %s", e)
+        result["warnings"].append(f"Verifier summary endpoint is not responding: {e}")
+    result["dataSources"] = build_data_sources(
+        progress_configured=bool(endpoint_url),
+        metadata_configured=False,
+        progress_status=progress_status if endpoint_url else None,
+        metadata_status=None,
+    )
+    return result
+
+
+def build_verifier_metadata_payload(
+    connection_string, endpoint_url=None, db_name=None,
+):
+    """Build JSON slice for verifier metadata DB polling."""
+    from .app_config import (
+        MI_MIGRATION_VERIFIER_DB_NAME,
+        get_verifier_metadata_database,
+    )
+
+    if db_name is None:
+        db_name = MI_MIGRATION_VERIFIER_DB_NAME
+
+    result = {
+        "error": None,
+        "warnings": [],
+        "dataSources": None,
+        "display": None,
+    }
 
     try:
-        # Get latest generations history (limited for performance)
-        gen_history = get_generation_history(db, limit=4)
-        
-        # Get the generations we want to show (latest and any with failures)
-        generations_to_show = []
-        for g in gen_history:
-            gen_num = g["_id"]
-            if gen_num is not None:
-                generations_to_show.append({
-                    "num": gen_num,
-                    "name": get_generation_name(gen_num),
-                    "total": g["total_tasks"],
-                    "completed": g["completed"],
-                    "failed": g["failed"],
-                    "start_time": g.get("first_task_time", "N/A")
-                })
-        
-        # Sort by generation number DESCENDING (latest first)
-        generations_to_show.sort(key=lambda x: x["num"] if x["num"] is not None else -1, reverse=True)
-        
-        # Find the LAST generation (the only one that matters for final result)
-        last_gen_num = max([g["num"] for g in generations_to_show]) if generations_to_show else 0
-        
-        # Mark which is the last generation
-        for g in generations_to_show:
-            g["is_last"] = (g["num"] == last_gen_num)
-            if g["is_last"]:
-                g["name"] = f"★ {g['name']} (FINAL)"
-        
-        # Limit to latest 4 generations for display
-        generations_to_show = generations_to_show[:4]
-        
-        # Get namespace stats - always use all-time stats for comprehensive view
-        try:
-            all_ns_pipeline = [
-                {"$group": {
-                    "_id": "$query_filter.namespace",
-                    "total": {"$sum": 1},
-                    "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
-                    "failed": {"$sum": {"$cond": [{"$in": ["$status", ["failed", "mismatch"]]}, 1, 0]}},
-                    "pending": {"$sum": {"$cond": [{"$in": ["$status", ["added", "pending", "processing"]]}, 1, 0]}}
-                }},
-                {"$sort": {"failed": -1, "total": -1}},
-                {"$limit": 25}
-            ]
-            namespace_stats = list(db.verification_tasks.aggregate(all_ns_pipeline, maxTimeMS=60000))
-        except Exception as e:
-            logger.warning(f"Failed to get all-time namespace stats: {e}")
-            # Fallback to last generation only
-            namespace_stats = get_namespace_stats(db, last_gen_num)
-        
-        # Get collection mismatches - focus on LAST generation (the only one that matters)
-        # Per docs: "the only failures we care about are in the last generation"
-        all_collection_mismatches = list(db.verification_tasks.find({
-            "generation": last_gen_num,
-            "status": "mismatch",
-            "type": "verifyCollection"
-        }).limit(100))
-
-        # Calculate number of rows: 1 overview + generations + 1 namespace + 1 collection mismatches
-        num_gens = len(generations_to_show)
-        total_rows = 1 + num_gens + 1 + 1
-        
-        # Build specs
-        specs = [
-            [{"colspan": 2, "type": "table"}, None],  # Row 1: Overview (full width)
-        ]
-        for _ in generations_to_show:
-            specs.append([{"type": "domain"}, {"type": "table"}])  # Each gen: pie + failed table
-        specs.append([{"colspan": 2}, None])  # Namespace progress bar chart
-        specs.append([{"colspan": 2, "type": "table"}, None])  # Collection mismatches
-        
-        # Row heights - give more space to overview and generation rows
-        row_heights = [0.18] + [0.22] * num_gens + [0.20, 0.12]
-        
-        # Create subplot figure
-        fig = make_subplots(
-            rows=total_rows, cols=2,
-            specs=specs,
-            row_heights=row_heights,
-            column_widths=[0.35, 0.65],
-            horizontal_spacing=0.05,
-            vertical_spacing=0.06
+        db = get_verifier_metadata_database(connection_string, db_name)
+        logger.info("Connected to verifier database: %s", db_name)
+    except PyMongoError as e:
+        logger.error("Failed to connect to verifier database: %s", e)
+        result["error"] = "Could not connect to verifier database."
+        result["dataSources"] = _verifier_data_sources(
+            endpoint_url,
+            connection_string,
+            progress_status=None,
+            metadata_status=STATUS_UNAVAILABLE,
         )
-        
-        current_row = 1
-
-        # Row 1: Overview table showing all generations
-        if generations_to_show:
-            overview_headers = ['Generation', 'Name', 'Total Tasks', 'Completed', 'Failed', 'Start Time']
-            overview_values = [
-                [str(g["num"]) for g in generations_to_show],
-                [g["name"] for g in generations_to_show],
-                [str(g["total"]) for g in generations_to_show],
-                [str(g["completed"]) for g in generations_to_show],
-                [str(g["failed"]) for g in generations_to_show],
-                [str(g["start_time"])[:16] if g["start_time"] != "N/A" else "N/A" for g in generations_to_show]
-            ]
-            # Color rows based on failures
-            row_colors = []
-            for g in generations_to_show:
-                if g["failed"] > 0:
-                    row_colors.append('#fdeaea')
-                elif g["completed"] == g["total"] and g["total"] > 0:
-                    row_colors.append('#e8f8e8')
-                else:
-                    row_colors.append('#f0f8ff')
-            
-            fig.add_trace(
-                go.Table(
-                    columnwidth=[100, 220, 120, 120, 100, 180],  # Even wider columns
-                    header=dict(
-                        values=overview_headers,
-                        fill_color='#2c3e50',
-                        font=dict(color='white', size=18),
-                        align='center',
-                        height=50
-                    ),
-                    cells=dict(
-                        values=overview_values,
-                        fill_color=[row_colors],
-                        font=dict(size=17),
-                        align='center',
-                        height=45
-                    )
-                ),
-                row=1, col=1
-            )
-        
-        current_row = 2
-        
-        # Rows for each generation
-        for gen in generations_to_show:
-            gen_num = gen["num"]
-            gen_name = gen["name"]
-            
-            # Get summary for this generation
-            gen_summary = get_verification_summary(db, gen_num)
-            completed = gen_summary.get("completed", 0)
-            failed = gen_summary.get("failed", 0) + gen_summary.get("mismatch", 0)
-            pending = gen_summary.get("pending", 0) + gen_summary.get("processing", 0)
-            
-            # Pie chart for this generation
-            pie_labels = []
-            pie_values = []
-            pie_colors = []
-            if completed > 0:
-                pie_labels.append(f"Completed ({completed})")
-                pie_values.append(completed)
-                pie_colors.append("#2ecc71")
-            if failed > 0:
-                pie_labels.append(f"Failed ({failed})")
-                pie_values.append(failed)
-                pie_colors.append("#e74c3c")
-            if pending > 0:
-                pie_labels.append(f"Pending ({pending})")
-                pie_values.append(pending)
-                pie_colors.append("#3498db")
-            
-            if not pie_values:
-                pie_labels = ["No Tasks"]
-                pie_values = [1]
-                pie_colors = ["#95a5a6"]
-            
-            fig.add_trace(
-                go.Pie(
-                    labels=pie_labels,
-                    values=pie_values,
-                    marker=dict(colors=pie_colors),
-                    textinfo='label+percent',
-                    textfont=dict(size=16),
-                    hole=0.35,
-                    showlegend=False,
-                    title=dict(
-                        text=f"<b>{gen_name}</b>",
-                        font=dict(size=18, color="#2c3e50"),
-                        position="top center"
-                    )
-                ),
-                row=current_row, col=1
-            )
-            
-            # Failed tasks table for this generation - show up to 100 failed tasks (limited for performance)
-            gen_failed_tasks = get_failed_tasks(db, gen_num, limit=100)
-            if gen_failed_tasks:
-                failed_headers = ['Type', 'Source NS', 'Dest NS', 'Mismatch Details']
-                
-                # Build detailed mismatch description based on task type
-                def get_mismatch_details(t):
-                    task_type = t.get("type", "")
-                    
-                    if task_type == "verifyCollection":
-                        # Collection/Index metadata mismatches - check mismatch.detail first
-                        mismatch = t.get("mismatch", {})
-                        if mismatch and isinstance(mismatch, dict):
-                            detail = mismatch.get("detail", {})
-                            if detail:
-                                idx_id = detail.get("id", "?")
-                                field_type = detail.get("field", "")
-                                details_str = detail.get("details", "")
-                                cluster = detail.get("cluster", "")
-                                
-                                # Extract key info from details string
-                                if "unique" in details_str.lower():
-                                    if "src:" in details_str and "unique\": true" in details_str:
-                                        if "dst:" in details_str and "unique" not in details_str.split("dst:")[1][:50]:
-                                            return f"Index '{idx_id}' ({field_type}): unique constraint missing on {cluster}"
-                                    return f"Index '{idx_id}' ({field_type}): Mismatch on {cluster}"
-                                elif "Missing" in details_str:
-                                    return f"Index '{idx_id}' ({field_type}): Missing on {cluster}"
-                                else:
-                                    return f"Index '{idx_id}' ({field_type}): {details_str[:60]}... ({cluster})"
-                        
-                        # Fallback to failed_docs
-                        failed_docs = t.get("failed_docs", [])
-                        if failed_docs:
-                            details = []
-                            for fd in failed_docs[:3]:
-                                idx_id = fd.get("id", "?")
-                                idx_details = fd.get("details", "")
-                                cluster = fd.get("cluster", "")
-                                if idx_details:
-                                    details.append(f"{idx_id}: {idx_details[:30]} ({cluster})")
-                                else:
-                                    details.append(f"{idx_id} ({cluster})")
-                            result = "; ".join(details)
-                            if len(failed_docs) > 3:
-                                result += f"... +{len(failed_docs)-3} more"
-                            return result
-                        return "Metadata mismatch (no details)"
-                    
-                    elif task_type in ["verify", "verifyDocuments"]:
-                        # Document mismatches - check mismatch.detail first
-                        mismatch = t.get("mismatch", {})
-                        if mismatch and isinstance(mismatch, dict):
-                            detail = mismatch.get("detail", {})
-                            if detail:
-                                doc_id = detail.get("id", "?")
-                                field = detail.get("field", "")
-                                details_str = detail.get("details", "")
-                                cluster = detail.get("cluster", "")
-                                if field:
-                                    return f"Doc '{doc_id}', field '{field}': {details_str[:40]}... ({cluster})"
-                                return f"Doc '{doc_id}': {details_str[:50]}... ({cluster})"
-                        
-                        # Fallback to _ids
-                        ids = t.get("_ids", [])
-                        if ids:
-                            count = len(ids)
-                            sample = ", ".join([str(i)[:20] for i in ids[:5]])
-                            if count > 5:
-                                return f"{count} docs mismatched: {sample}..."
-                            return f"{count} docs: {sample}"
-                        return "Document mismatch (no details)"
-                    
-                    else:
-                        # Other task types
-                        mismatch = t.get("mismatch", {})
-                        if mismatch and isinstance(mismatch, dict):
-                            detail = mismatch.get("detail", {})
-                            if detail:
-                                return f"{detail.get('id', '?')}: {detail.get('details', 'N/A')[:50]}..."
-                        if t.get("_ids"):
-                            return f"{len(t.get('_ids', []))} items"
-                        elif t.get("failed_docs"):
-                            return f"{len(t.get('failed_docs', []))} issues"
-                        return t.get("status", "N/A")
-                
-                # Extract namespace info
-                def get_source_ns(t):
-                    qf = t.get("query_filter", {})
-                    return qf.get("namespace", "N/A") or "N/A"
-                
-                def get_dest_ns(t):
-                    qf = t.get("query_filter", {})
-                    return qf.get("to", qf.get("namespace", "N/A")) or "N/A"
-                
-                failed_values = [
-                    [t.get("type", "N/A") for t in gen_failed_tasks],
-                    [get_source_ns(t) for t in gen_failed_tasks],
-                    [get_dest_ns(t) for t in gen_failed_tasks],
-                    [get_mismatch_details(t) for t in gen_failed_tasks]
-                ]
-                fig.add_trace(
-                    go.Table(
-                        columnwidth=[120, 200, 200, 350],  # Wider columns for details
-                        header=dict(
-                            values=failed_headers,
-                            fill_color='#c0392b',
-                            font=dict(color='white', size=13),
-                            align='center',
-                            height=32
-                        ),
-                        cells=dict(
-                            values=failed_values,
-                            fill_color='#fdf2f2',
-                            font=dict(size=11),
-                            align='left',
-                            height=30
-                        )
-                    ),
-                    row=current_row, col=2
-                )
-            else:
-                fig.add_trace(
-                    go.Table(
-                        header=dict(
-                            values=[f'✓ {gen_name}'],
-                            fill_color='#27ae60',
-                            font=dict(color='white', size=14),
-                            height=32
-                        ),
-                        cells=dict(
-                            values=[['No failed or mismatched tasks']],
-                            fill_color='#d5f5e3',
-                            font=dict(size=14, color='#27ae60'),
-                            height=35
-                        )
-                    ),
-                    row=current_row, col=2
-                )
-            
-            current_row += 1
-
-        # Namespace progress bar chart
-        max_namespaces = min(25, len(namespace_stats)) if namespace_stats else 0
-        if namespace_stats and max_namespaces > 0:
-            ns_labels = [ns["_id"] or "unknown" for ns in namespace_stats[:max_namespaces]]
-            ns_completed = [ns["completed"] for ns in namespace_stats[:max_namespaces]]
-            ns_failed = [ns["failed"] for ns in namespace_stats[:max_namespaces]]
-            ns_pending = [ns["pending"] for ns in namespace_stats[:max_namespaces]]
-            
-            fig.add_trace(
-                go.Bar(name='Completed', x=ns_completed, y=ns_labels, orientation='h', 
-                       marker=dict(color='#2ecc71'), showlegend=True),
-                row=current_row, col=1
-            )
-            fig.add_trace(
-                go.Bar(name='Failed', x=ns_failed, y=ns_labels, orientation='h', 
-                       marker=dict(color='#e74c3c'), showlegend=True),
-                row=current_row, col=1
-            )
-            fig.add_trace(
-                go.Bar(name='Pending', x=ns_pending, y=ns_labels, orientation='h', 
-                       marker=dict(color='#3498db'), showlegend=True),
-                row=current_row, col=1
-            )
-        else:
-            fig.add_trace(
-                go.Bar(name='No Data', x=[0], y=["No namespaces"], orientation='h', 
-                       marker=dict(color='#95a5a6'), showlegend=False),
-                row=current_row, col=1
-            )
-        
-        current_row += 1
-
-        # Collection metadata mismatches (from LAST generation only - the one that matters)
-        if all_collection_mismatches:
-            # Fetch mismatch details from mismatches collection
-            task_ids = [cm["_id"] for cm in all_collection_mismatches[:50]]
-            mismatch_details = {}
-            try:
-                mismatches = list(db.mismatches.find(
-                    {"task": {"$in": task_ids}},
-                    {"task": 1, "detail": 1}
-                ))
-                for m in mismatches:
-                    mismatch_details[m["task"]] = m.get("detail", {})
-            except Exception as e:
-                logger.warning(f"Failed to fetch mismatch details: {e}")
-            
-            coll_headers = ['Generation', 'Namespace', 'Index/Metadata Issues']
-            coll_gens = []
-            coll_namespaces = []
-            coll_details = []
-            
-            for cm in all_collection_mismatches[:100]:
-                coll_gens.append(get_generation_name(cm.get("generation")))
-                qf = cm.get("query_filter", {})
-                ns = qf.get("namespace", "N/A")
-                coll_namespaces.append(ns)
-                
-                # Try to get details from mismatches collection first
-                task_id = cm.get("_id")
-                if task_id in mismatch_details:
-                    detail = mismatch_details[task_id]
-                    idx_name = detail.get("id", "?")
-                    field_type = detail.get("field", "")
-                    details_str = detail.get("details", "")
-                    cluster = detail.get("cluster", "")
-                    
-                    # Parse the details to show meaningful info
-                    if "unique" in details_str.lower():
-                        if "unique\": true" in details_str and "unique" not in details_str.split("dst:")[1] if "dst:" in details_str else False:
-                            coll_details.append(f"Index '{idx_name}': unique constraint missing on {cluster}")
-                        else:
-                            coll_details.append(f"Index '{idx_name}' ({field_type}): property mismatch - {cluster}")
-                    elif "Missing" in details_str:
-                        coll_details.append(f"Index '{idx_name}': MISSING on {cluster}")
-                    else:
-                        # Show truncated details
-                        short_details = details_str[:80] + "..." if len(details_str) > 80 else details_str
-                        coll_details.append(f"Index '{idx_name}': {short_details}")
-                else:
-                    # Fallback to failed_docs
-                    failed_docs = cm.get("failed_docs", [])
-                    if failed_docs:
-                        details = [f"{fd.get('id', 'N/A')}: {fd.get('details', 'N/A')}"[:40] for fd in failed_docs[:2]]
-                        coll_details.append("; ".join(details))
-                    else:
-                        coll_details.append("Mismatch detected (check logs for details)")
-            
-            fig.add_trace(
-                go.Table(
-                    header=dict(
-                        values=coll_headers,
-                        fill_color='#8e44ad',
-                        font=dict(color='white', size=14),
-                        align='center',
-                        height=32
-                    ),
-                    cells=dict(
-                        values=[coll_gens, coll_namespaces, coll_details],
-                        fill_color='#f8f4fc',
-                        font=dict(size=13),
-                        align='left',
-                        height=28
-                    )
-                ),
-                row=current_row, col=1
-            )
-        else:
-            fig.add_trace(
-                go.Table(
-                    header=dict(
-                        values=['Collection Metadata Status (Final Generation)'],
-                        fill_color='#27ae60',
-                        font=dict(color='white', size=15),
-                        height=32
-                    ),
-                    cells=dict(
-                        values=[[f'✓ No collection metadata mismatches in {get_generation_name(last_gen_num)}']],
-                        fill_color='#d5f5e3',
-                        font=dict(size=15, color='#27ae60'),
-                        height=38
-                    )
-                ),
-                row=current_row, col=1
-            )
-
-        # Calculate dynamic height - account for data size
-        num_namespaces = len(namespace_stats) if namespace_stats else 1
-        num_gen_rows = max(1, len(generations_to_show))
-        # Get max failed tasks across generations for height calculation
-        max_failed = max([g["failed"] for g in generations_to_show]) if generations_to_show else 0
-        base_height = 600 + (num_gen_rows * 280)  # More base height
-        ns_height = max(0, (num_namespaces - 5) * 25)
-        failed_height = max(0, (max_failed - 10) * 25)
-        total_height = min(2200, base_height + ns_height + failed_height)
-        
-        tokens = theme_tokens(dark=False)
-        apply_mi_theme(
-            fig,
-            title="Migration Verifier Dashboard",
-            height=total_height,
-            width=1300,
-            showlegend=True,
-            autosize=True,
-            barmode='stack',
-            margin=dict(t=70, b=70, l=220, r=30),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=-0.03,
-                xanchor="center",
-                x=0.5,
-                bgcolor=tokens["legend_bg"],
-                bordercolor=tokens["legend_border"],
-                borderwidth=1,
-            ),
-        )
-        
-        # Update axes for namespace bar chart
-        ns_row = 1 + num_gens + 1
-        fig.update_xaxes(title_text="Tasks", row=ns_row, col=1, title_font=dict(size=11))
-        fig.update_yaxes(tickfont=dict(size=11), row=ns_row, col=1)
-
-        plot_json = json.dumps(fig, cls=PlotlyJSONEncoder)
-        return json.loads(plot_json)
-    
+        return result
     except Exception as e:
-        logger.error(f"Error gathering verifier metrics: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return {"error": f"Error gathering metrics: {str(e)}"}
+        logger.error("Unexpected error connecting to verifier database: %s", e)
+        result["error"] = "Could not connect to verifier database."
+        result["dataSources"] = _verifier_data_sources(
+            endpoint_url,
+            connection_string,
+            progress_status=None,
+            metadata_status=STATUS_UNAVAILABLE,
+        )
+        return result
+
+    try:
+        result["warnings"].extend(collect_verifier_metadata_warnings(db))
+    except Exception as e:
+        logger.error("Error reading verifier metadata warnings: %s", e)
+        result["error"] = "Could not load verifier metadata."
+        result["dataSources"] = _verifier_data_sources(
+            endpoint_url,
+            connection_string,
+            progress_status=None,
+            metadata_status=STATUS_UNAVAILABLE,
+        )
+        return result
+
+    display, section_warnings = _build_metadata_display(
+        db,
+        db_name,
+        include_verification_completeness=not bool(endpoint_url),
+        endpoint_configured=bool(endpoint_url),
+    )
+    result["warnings"].extend(section_warnings)
+    if display is not None:
+        display["metadataAvailable"] = True
+        result["display"] = display
+        metadata_status = STATUS_ACTIVE
+    else:
+        result["error"] = "Could not load verifier metadata."
+        metadata_status = STATUS_UNAVAILABLE
+    result["dataSources"] = _verifier_data_sources(
+        endpoint_url,
+        connection_string,
+        progress_status=None,
+        metadata_status=metadata_status,
+    )
+    return result
 
 
-def plot_verifier_metrics(db_name="migration_verification_metadata"):
+def _doc_completion_pct(ns):
+    total = ns.get("totalDocs") or 0
+    if total == 0:
+        return 100.0
+    return (ns.get("docsCompared") or 0) / total * 100
+
+
+def _percent(done, total):
+    if total == 0:
+        return None
+    return round(done / total * 100, 1)
+
+
+def get_verification_completeness(ns_doc_stats, task_summary, generation):
+    """Roll up verification completeness for the current generation."""
+    docs_compared = 0
+    total_docs = 0
+    bytes_compared = 0
+    total_bytes = 0
+    namespaces_complete = 0
+    partitions_done = 0
+    partitions_pending = 0
+
+    for ns in ns_doc_stats:
+        docs_compared += ns.get("docsCompared") or 0
+        total_docs += ns.get("totalDocs") or 0
+        bytes_compared += ns.get("bytesCompared") or 0
+        total_bytes += ns.get("totalBytes") or 0
+        p_done = ns.get("partitionsDone") or 0
+        p_pending = (ns.get("partitionsAdded") or 0) + (ns.get("partitionsProcessing") or 0)
+        partitions_done += p_done
+        partitions_pending += p_pending
+        if p_done > 0 and p_pending == 0:
+            namespaces_complete += 1
+
+    total_namespaces = len(ns_doc_stats)
+    partitions_total = partitions_done + partitions_pending
+
+    task_completed = task_summary.get("completed", 0)
+    task_failed = task_summary.get("failed", 0) + task_summary.get("mismatch", 0)
+    task_pending = task_summary.get("pending", 0) + task_summary.get("processing", 0)
+    task_total = task_completed + task_failed + task_pending
+
+    result = {
+        "generation": generation,
+        "generationName": get_generation_name(generation),
+        "isRecheckGeneration": generation > 0,
+        "documents": {
+            "compared": docs_compared,
+            "total": total_docs,
+            "percent": _percent(docs_compared, total_docs),
+        },
+        "namespaces": {
+            "complete": namespaces_complete,
+            "total": total_namespaces,
+            "percent": _percent(namespaces_complete, total_namespaces),
+        },
+        "partitions": {
+            "done": partitions_done,
+            "total": partitions_total,
+            "percent": _percent(partitions_done, partitions_total),
+        },
+        "tasks": {
+            "completed": task_completed,
+            "failed": task_failed,
+            "pending": task_pending,
+            "percentDone": _percent(task_completed + task_failed, task_total),
+        },
+    }
+
+    if generation == 0 and total_bytes > 0:
+        result["bytes"] = {
+            "compared": bytes_compared,
+            "total": total_bytes,
+            "percent": _percent(bytes_compared, total_bytes),
+        }
+
+    return result
+
+
+def collect_verifier_metadata_warnings(db):
+    """Return user-visible warnings when verifier metadata version does not match MI."""
+    from .app_config import VERIFIER_METADATA_VERSION
+
+    doc = _read_generation_doc(db)
+    if doc is None:
+        return []
+
+    version = _field_from_doc(doc, "metadataVersion", "MetadataVersion")
+    if version is None:
+        message = (
+            "Verifier metadata has no metadataVersion field; this layout may predate "
+            "migration-verifier metadata versioning. Dashboard fields may be incomplete "
+            "or misinterpreted."
+        )
+        logger.warning(message)
+        return [message]
+
+    if version != VERIFIER_METADATA_VERSION:
+        message = (
+            f"Verifier metadata version mismatch: database has {version}, but "
+            f"Mongosync Insights expects {VERIFIER_METADATA_VERSION}. Upgrade "
+            "migration-verifier or update VERIFIER_METADATA_VERSION in app_config.py "
+            "when using a newer Mongosync Insights release."
+        )
+        logger.warning(message)
+        return [message]
+
+    return []
+
+
+def plot_verifier_metrics(db_name=None):
     """Render the verifier metrics template."""
-    from .app_config import REFRESH_TIME
-    
-    refresh_time = REFRESH_TIME
-    refresh_time_ms = str(int(refresh_time) * 1000)
-    
+    from .app_config import (
+        MI_MIGRATION_VERIFIER_DB_NAME,
+        REFRESH_TIME,
+        VERIFIER_METADATA_REFRESH_TIME,
+        VERIFIER_PROGRESS_REFRESH_TIME,
+        VERIFIER_SUMMARY_REFRESH_TIME,
+    )
+
+    if db_name is None:
+        db_name = MI_MIGRATION_VERIFIER_DB_NAME
+
+    progress_refresh = VERIFIER_PROGRESS_REFRESH_TIME
+    summary_refresh = VERIFIER_SUMMARY_REFRESH_TIME
+    metadata_refresh = VERIFIER_METADATA_REFRESH_TIME
+
     return render_template(
         'verifier_metrics.html',
-        refresh_time=refresh_time,
-        refresh_time_ms=refresh_time_ms,
+        refresh_time=REFRESH_TIME,
+        refresh_time_ms=str(int(progress_refresh) * 1000),
+        progress_refresh_sec=progress_refresh,
+        summary_refresh_sec=summary_refresh,
+        metadata_refresh_sec=metadata_refresh,
+        progress_refresh_ms=str(int(progress_refresh) * 1000),
+        summary_refresh_ms=str(int(summary_refresh) * 1000),
+        metadata_refresh_ms=str(int(metadata_refresh) * 1000),
         db_name=db_name
     )

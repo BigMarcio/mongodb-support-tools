@@ -23,8 +23,8 @@ Maximum upload size defaults to **10 GB** (`MI_MAX_FILE_SIZE`).
 
 Mongosync Insights detects two kinds of content in the uploaded file:
 
-1. **Structured mongosync JSON log lines** — the main migration log (`mongosync.log` or rotated segments). These drive the **Mongosync Logs** tab and the info/error/log-viewer tabs.
-2. **Prometheus metrics lines** (when present) — typically from `mongosync_metrics.log`. These drive the **Mongosync Metrics** tab.
+1. **Structured mongosync JSON log lines** — the main migration log (`mongosync.log` or rotated segments). These drive the **Mongosync Logs**, **Errors and Warnings**, and **Log Viewer** tabs.
+2. **Prometheus metrics lines** — from `mongosync_metrics.log`. These drive the **Mongosync Metrics** tab.
 
 A single upload can contain log lines only, metrics only, or both. Tabs appear based on what was found.
 
@@ -68,7 +68,7 @@ After parsing, the results page shows one or more tabs:
 
 ### Mongosync Logs
 
-Interactive Plotly charts grouped by section (global migration, collection copy, CEA, indexes, verifier). Zoom, pan, and toggle series from the legend.
+Interactive Plotly charts grouped by section (global migration, collection copy, CEA, indexes, verifier). Zoom, pan, and toggle series from the legend. The **Mongosync Progress** table includes a **Copy as Markdown** badge on the chart for sharing phase and state-transition rows.
 
 ![Mongosync Logs tab — migration charts](images/mongosync_logs_logs.png)
 
@@ -112,6 +112,7 @@ Indexed log lines are stored in a SQLite **log store** for fast search without r
 
 - **Tail** — last N lines (default **2000**, `MI_LOG_VIEWER_MAX_LINES`)
 - **Search** — full-text search with level filter and pagination
+- **Date/time range** — **From** / **To** datetime filters (searched as entered, matching log `time` values); can be used alone or combined with text search across the full indexed log store
 - **Focus** — quick filters for errors, warnings, or custom text
 - **Download** — export the tail buffer as a `.log` file
 
@@ -140,7 +141,7 @@ export MI_LOG_STORE_DIR=/data/mongosync-insights/store
 export MI_LOG_STORE_MAX_AGE_HOURS=48
 ```
 
-Snapshots are removed on logout, app startup maintenance, and when TTL expires. Loading a snapshot refreshes its age.
+Expired snapshots (older than `MI_LOG_STORE_MAX_AGE_HOURS` by file modification time) are deleted during app startup and logout maintenance, and hidden from the **Previous Analyses** list once expired. Loading a snapshot resets the modification time on the snapshot files and companion log store, extending on-disk retention for another TTL period. The in-memory log store registry tracks registration time (`created_at`) separately; loading a snapshot does not reset that clock.
 
 ## Configuration
 
@@ -151,7 +152,6 @@ Snapshots are removed on logout, app startup maintenance, and when TTL expires. 
 | `MI_LOG_STORE_DIR` | OS temp | Snapshot and log-store directory |
 | `MI_LOG_STORE_MAX_AGE_HOURS` | `24` | Snapshot/log-store TTL |
 | `MI_LOG_VIEWER_MAX_LINES` | `2000` | Tail view line limit |
-| `MI_MAX_PARTITIONS_DISPLAY` | `10` | Max partitions shown per collection in tables |
 
 See **[CONFIGURATION.md](CONFIGURATION.md)** for examples (upload size, persistent snapshots, log viewer buffer).
 
