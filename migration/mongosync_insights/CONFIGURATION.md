@@ -56,7 +56,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MI_REFRESH_TIME` | `10` | Base refresh interval in seconds (sidebar **Settings** control). **Migration Monitoring** dashboard polls at this interval. **Migration Verifier** dashboard uses multiples of this value: **progress** = 3× (default 30s), **summary** = 12× (default 120s), **metadata** = 6× (default 60s). Changing the sidebar refresh updates Migration Monitoring directly and rescales all three verifier intervals proportionally. |
+| `MI_REFRESH_TIME` | `10` | Base refresh interval in seconds (sidebar **Settings** control). **Migration Monitoring** dashboard polls at this interval. **Migration Verifier** dashboard uses multiples of this value: **progress** = 3× (default 30s), **summary** = 12× (default 120s), **metadata** = 6× (default 60s). Changing the sidebar refresh updates Migration Monitoring directly and rescales all three verifier intervals proportionally. The sidebar **Settings** control overrides this per browser session (stored in `sessionStorage`); it does not update the server env var. |
 | `MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS` | `MI_REFRESH_TIME` | HTTP timeout in seconds for mongosync `/api/v1/progress` polling |
 | `MI_VERIFIER_PROGRESS_TIMEOUT_SECS` | `MI_REFRESH_TIME × 3` | HTTP timeout in seconds for migration-verifier `/api/v1/progress` polling |
 | `MI_VERIFIER_SUMMARY_TIMEOUT_SECS` | `MI_REFRESH_TIME × 12` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` polling |
@@ -84,7 +84,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_LOG_STORE_DIR` | System temp directory | Directory for SQLite log stores and analysis snapshot files |
 | `MI_LOG_STORE_MAX_AGE_HOURS` | `24` | TTL in hours for in-memory log store registry entries (`created_at`) and on-disk SQLite stores / snapshot files (file `mtime`) |
 
-> **Note**: By default, log store databases and snapshot files are saved to the OS temp directory (e.g., `/tmp` on Linux/macOS), which may be cleared on system reboot. Set `MI_LOG_STORE_DIR` to a persistent path (e.g., `/data/mongosync-insights/store`) to retain snapshots across restarts. Maintenance runs when the app is initialized (`create_app`, including packaged and `flask run` imports) and on logout: expired registry entries are removed, then old `mi_logstore_*.db` and snapshot files are deleted by age. Listing or loading a saved snapshot also hides or refreshes TTL for files still within the limit (snapshot/DB `mtime` is touched on load). Lower this value if multi-GB log stores accumulate during a session.
+> **Note**: By default, log store databases and snapshot files are saved to the OS temp directory (e.g., `/tmp` on Linux/macOS), which may be cleared on system reboot. Set `MI_LOG_STORE_DIR` to a persistent path (e.g., `/data/mongosync-insights/store`) to retain snapshots across restarts. Maintenance runs when the app is initialized (`create_app`, including packaged and `flask run` imports) and on logout: expired registry entries are removed, then on-disk `mi_logstore_*.db` and snapshot files older than `MI_LOG_STORE_MAX_AGE_HOURS` (by file `mtime`) are deleted. Expired snapshots are hidden from the **Previous Analyses** list before deletion. Loading a saved snapshot touches snapshot/DB `mtime`, extending on-disk retention for another TTL period; it does not reset in-memory registry `created_at`. Lower `MI_LOG_STORE_MAX_AGE_HOURS` if multi-GB log stores accumulate during a session.
 
 ### Security Settings
 
@@ -166,6 +166,9 @@ export MI_INDEX_BUILD_REFRESH_TIME=60
 
 # Faster refresh for active migrations
 export MI_REFRESH_TIME=5
+
+# Optional: HTTP timeout for mongosync /api/v1/progress (defaults to MI_REFRESH_TIME)
+export MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS=5
 
 # Run the application
 python3 mongosync_insights.py
@@ -263,8 +266,7 @@ export MI_VERIFIER_FAILED_TASKS_LIMIT=20
 # Optional: ignore short-lived doc mismatches in /summary (0 = no filter)
 export MI_VERIFIER_SUMMARY_MIN_DURATION_SECS=0
 
-# HTTP timeouts for endpoint polling (seconds; defaults follow refresh intervals)
-export MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS=10
+# HTTP timeouts for verifier endpoint polling (seconds; defaults follow refresh intervals)
 export MI_VERIFIER_PROGRESS_TIMEOUT_SECS=30
 export MI_VERIFIER_SUMMARY_TIMEOUT_SECS=120
 

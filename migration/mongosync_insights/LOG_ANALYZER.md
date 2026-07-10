@@ -23,8 +23,8 @@ Maximum upload size defaults to **10 GB** (`MI_MAX_FILE_SIZE`).
 
 Mongosync Insights detects two kinds of content in the uploaded file:
 
-1. **Structured mongosync JSON log lines** — the main migration log (`mongosync.log` or rotated segments). These drive the **Mongosync Logs** tab and the info/error/log-viewer tabs.
-2. **Prometheus metrics lines** (when present) — typically from `mongosync_metrics.log`. These drive the **Mongosync Metrics** tab.
+1. **Structured mongosync JSON log lines** — the main migration log (`mongosync.log` or rotated segments). These drive the **Mongosync Logs**, **Errors and Warnings**, and **Log Viewer** tabs.
+2. **Prometheus metrics lines** — from `mongosync_metrics.log`. These drive the **Mongosync Metrics** tab.
 
 A single upload can contain log lines only, metrics only, or both. Tabs appear based on what was found.
 
@@ -141,7 +141,7 @@ export MI_LOG_STORE_DIR=/data/mongosync-insights/store
 export MI_LOG_STORE_MAX_AGE_HOURS=48
 ```
 
-Snapshots are removed on logout, app startup maintenance, and when TTL expires. Loading a snapshot refreshes its age.
+Expired snapshots (older than `MI_LOG_STORE_MAX_AGE_HOURS` by file modification time) are deleted during app startup and logout maintenance, and hidden from the **Previous Analyses** list once expired. Loading a snapshot resets the modification time on the snapshot files and companion log store, extending on-disk retention for another TTL period. The in-memory log store registry tracks registration time (`created_at`) separately; loading a snapshot does not reset that clock.
 
 ## Configuration
 

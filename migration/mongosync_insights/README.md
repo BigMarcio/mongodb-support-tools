@@ -48,8 +48,9 @@ For **other installation options** (macOS/Windows standalone executables, Linux 
 To **configure** host, port, connection strings, refresh intervals, and other settings via environment variables, see **[CONFIGURATION.md](CONFIGURATION.md)**. Example pre-configuration before starting:
 
 ```bash
-export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 export MI_PROGRESS_ENDPOINT_URL="localhost:27182"
+# Optional: metadata fallback — destination cluster connection string
+export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 python3 mongosync_insights.py
 ```
 
