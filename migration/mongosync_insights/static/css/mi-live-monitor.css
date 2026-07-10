@@ -704,8 +704,7 @@
 .lm-verifier-progress-slot,
 .lm-verifier-summary-slot,
 .lm-verifier-warnings-slot,
-.lm-verifier-metadata-slot,
-.lm-verifier-connectivity-slot {
+.lm-verifier-metadata-slot {
     display: flex;
     flex-direction: column;
     gap: 20px;

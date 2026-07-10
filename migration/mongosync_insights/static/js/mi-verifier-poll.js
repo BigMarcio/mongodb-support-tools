@@ -20,6 +20,27 @@
         return merged;
     }
 
+    function mergeDataSourceBadges(dataSourcesById, payload) {
+        if (!payload || !payload.dataSources || !payload.dataSources.badges) return;
+        payload.dataSources.badges.forEach(function (b) {
+            dataSourcesById[b.id] = b;
+        });
+    }
+
+    function buildMergedDataSources(dataSourcesById) {
+        var badges = Object.keys(dataSourcesById).map(function (id) {
+            return dataSourcesById[id];
+        });
+        if (badges.length === 0) return null;
+        var hasProgress = dataSourcesById.progress != null;
+        var hasMetadata = dataSourcesById.metadata != null;
+        var mode = 'none';
+        if (hasProgress && hasMetadata) mode = 'both';
+        else if (hasProgress) mode = 'endpoint';
+        else if (hasMetadata) mode = 'metadata';
+        return { mode: mode, badges: badges };
+    }
+
     function miInitVerifierPolling(config) {
         var root = document.getElementById('verifier-monitor-root');
         var loading = document.getElementById('verifier-monitor-loading');
@@ -33,7 +54,7 @@
             stateBadge: null,
             warnings: [],
             warningsBySource: { progress: [], summary: [], metadata: [] },
-            connectivity: null,
+            dataSourcesById: {},
         };
 
         var inflight = { progress: false, summary: false, metadata: false };
@@ -56,21 +77,23 @@
             }
         }
 
+        function mergedDataSources() {
+            return buildMergedDataSources(state.dataSourcesById);
+        }
+
         function refreshAllSections() {
             global.miUpdateVerifierToolbar(
                 slots,
                 state.verificationProgress,
                 state.verificationSummary,
                 state.metadataDisplay,
-                state.stateBadge
+                state.stateBadge,
+                mergedDataSources()
             );
             global.miUpdateVerifierProgressSection(slots, state.verificationProgress);
             global.miUpdateVerifierSummarySection(slots, state.verificationSummary);
             global.miUpdateVerifierMetadataSection(slots, state.metadataDisplay);
             global.miUpdateVerifierWarnings(slots, state.warnings);
-            if (state.connectivity) {
-                global.miUpdateVerifierConnectivity(slots, state.connectivity);
-            }
         }
 
         function hideLoadingOnce() {
@@ -80,10 +103,8 @@
             root.style.display = 'block';
         }
 
-        function applyConnectivity(connectivity) {
-            if (!connectivity) return;
-            state.connectivity = connectivity;
-            global.miUpdateVerifierConnectivity(slots, state.connectivity);
+        function applyDataSources(payload) {
+            mergeDataSourceBadges(state.dataSourcesById, payload);
         }
 
         function setSourceWarnings(source, warnings) {
@@ -130,7 +151,7 @@
                     var sourceWarnings = warningsForSource(payload.warnings);
                     if (payload.error) sourceWarnings.push(payload.error);
                     setSourceWarnings(source, sourceWarnings);
-                    applyConnectivity(payload.connectivity);
+                    applyDataSources(payload);
 
                     var display = payload.display || {};
 
@@ -160,7 +181,8 @@
                         state.verificationProgress,
                         state.verificationSummary,
                         state.metadataDisplay,
-                        state.stateBadge
+                        state.stateBadge,
+                        mergedDataSources()
                     );
                     global.miUpdateVerifierWarnings(slots, state.warnings);
                 })

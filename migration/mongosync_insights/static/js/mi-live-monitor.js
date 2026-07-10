@@ -448,16 +448,14 @@
         return card('Warnings', null, [tight]);
     }
 
-    function renderConnectivity(conn) {
-        if (!conn || !conn.rows || conn.rows.length === 0) return null;
-        var body = el('div', 'lm-connectivity');
-        conn.rows.forEach(function (r) {
-            body.appendChild(kvRow(r.label, r.value));
+    function appendDataSourceBadges(title, dataSources) {
+        if (!dataSources || !dataSources.badges) return;
+        dataSources.badges.forEach(function (b) {
+            title.appendChild(badge(b.label, b.color, true));
         });
-        return card(conn.title || 'Connectivity', null, [body]);
     }
 
-    function renderToolbar(display) {
+    function renderToolbar(display, dataSources) {
         var toolbar = el('div', 'lm-toolbar');
         var textBlock = el('div', 'lm-toolbar-text');
 
@@ -468,9 +466,12 @@
                 badge(display.stateBadge.label, display.stateBadge.color, true)
             );
         }
-        (display.toolbarBadges || []).forEach(function (b) {
-            title.appendChild(badge(b.label, b.color, true));
-        });
+        if (display) {
+            (display.toolbarBadges || []).forEach(function (b) {
+                title.appendChild(badge(b.label, b.color, true));
+            });
+        }
+        appendDataSourceBadges(title, dataSources);
         textBlock.appendChild(title);
 
         toolbar.appendChild(textBlock);
@@ -482,16 +483,16 @@
         root.replaceChildren();
 
         if (payload.error && !payload.display) {
-            var shell = el('div', 'lm-stack');
-            shell.appendChild(banner('danger', payload.error));
-            var errConn = renderConnectivity(payload.connectivity);
-            if (errConn) shell.appendChild(errConn);
-            root.appendChild(shell);
+            var errShell = el('div', 'lm-stack');
+            errShell.appendChild(renderToolbar(null, payload.dataSources));
+            errShell.appendChild(banner('danger', payload.error));
+            root.appendChild(errShell);
             return;
         }
 
         if (!payload.display) {
             var infoShell = el('div', 'lm-stack');
+            infoShell.appendChild(renderToolbar(null, payload.dataSources));
             infoShell.appendChild(
                 banner(
                     'info',
@@ -499,15 +500,13 @@
                         'No progress data available. Configure a Mongosync Progress Endpoint URL from Migration monitoring home.'
                 )
             );
-            var infoConn = renderConnectivity(payload.connectivity);
-            if (infoConn) infoShell.appendChild(infoConn);
             root.appendChild(infoShell);
             return;
         }
 
         var display = payload.display;
 
-        root.appendChild(renderToolbar(display));
+        root.appendChild(renderToolbar(display, payload.dataSources));
 
         var stack = el('div', 'lm-stack lm-stack-after-toolbar');
         if (payload.progressWarning) {
@@ -536,9 +535,6 @@
 
         var warnCard = renderWarningsCard(payload.warnings);
         if (warnCard) stack.appendChild(warnCard);
-
-        var connCard = renderConnectivity(payload.connectivity);
-        if (connCard) stack.appendChild(connCard);
 
         root.appendChild(stack);
     }

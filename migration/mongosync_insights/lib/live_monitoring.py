@@ -10,7 +10,7 @@ from .app_config import (
     VERIFIER_PROGRESS_TIMEOUT_SECS,
     VERIFIER_SUMMARY_TIMEOUT_SECS,
 )
-from .connection_validator import sanitize_for_display
+from .data_sources import STATUS_ACTIVE, STATUS_UNAVAILABLE, build_data_sources
 from .live_metadata_status import (
     MetadataFetchError,
     describe_build_indexes_policy,
@@ -165,43 +165,6 @@ def _derive_state_badge_from_state(state):
     state_upper = (state or "").upper()
     label = state_upper or "—"
     return {"label": label, "color": _state_badge_color(state_upper)}
-
-
-def _api_base_url(endpoint_url):
-    """Build http URL for UI subtitle (host:port/api/v1/progress)."""
-    if not endpoint_url:
-        return None
-    return f"http://{endpoint_url}"
-
-
-def _endpoint_meta(endpoint_url):
-    """Shared endpoint fields for progress-monitor API responses."""
-    return {
-        "endpointDisplay": endpoint_url,
-        "apiBaseUrl": _api_base_url(endpoint_url),
-    }
-
-
-def _build_connectivity(endpoint_url=None, connection_string=None):
-    """Rows for the Connectivity card (endpoint URL and metadata connection string)."""
-    rows = []
-    if endpoint_url:
-        rows.append(
-            {
-                "label": "Progress endpoint URL",
-                "value": _api_base_url(endpoint_url),
-            }
-        )
-    if connection_string:
-        rows.append(
-            {
-                "label": "Metadata connection string",
-                "value": sanitize_for_display(connection_string),
-            }
-        )
-    if not rows:
-        return None
-    return {"title": "Connectivity", "rows": rows}
 
 
 def _display_or_dash(value):
@@ -797,14 +760,36 @@ def _progress_has_index_building(progress):
     return isinstance(index_building, dict) and bool(index_building)
 
 
+def _resolve_data_sources(endpoint_url, connection_string, *, progress_available, metadata, progress_warning, metadata_warning):
+    progress_status = None
+    if endpoint_url:
+        if progress_available:
+            progress_status = STATUS_ACTIVE
+        elif progress_warning:
+            progress_status = STATUS_UNAVAILABLE
+
+    metadata_status = None
+    if connection_string:
+        if metadata:
+            metadata_status = STATUS_ACTIVE
+        elif metadata_warning:
+            metadata_status = STATUS_UNAVAILABLE
+
+    return build_data_sources(
+        progress_configured=bool(endpoint_url),
+        metadata_configured=bool(connection_string),
+        progress_status=progress_status,
+        metadata_status=metadata_status,
+    )
+
+
 def build_live_monitor_payload(endpoint_url=None, connection_string=None):
     """
     Build the Live Monitoring tab payload from progress endpoint and/or metadata DB.
     """
     base = {
-        **_endpoint_meta(endpoint_url),
         "warnings": [],
-        "connectivity": _build_connectivity(endpoint_url, connection_string),
+        "dataSources": None,
         "progressWarning": None,
         "metadataWarning": None,
         "display": None,
@@ -856,6 +841,14 @@ def build_live_monitor_payload(endpoint_url=None, connection_string=None):
         base["error"] = " ".join(errors)
         base["progressWarning"] = progress_warning
         base["metadataWarning"] = metadata_warning
+        base["dataSources"] = _resolve_data_sources(
+            endpoint_url,
+            connection_string,
+            progress_available=progress_available,
+            metadata=metadata,
+            progress_warning=progress_warning,
+            metadata_warning=metadata_warning,
+        )
         return base
 
     base["warnings"] = warnings if progress_available else []
@@ -864,15 +857,27 @@ def build_live_monitor_payload(endpoint_url=None, connection_string=None):
     base["display"] = _build_display(
         progress, metadata, progress_available=progress_available
     )
+    base["dataSources"] = _resolve_data_sources(
+        endpoint_url,
+        connection_string,
+        progress_available=progress_available,
+        metadata=metadata,
+        progress_warning=progress_warning,
+        metadata_warning=metadata_warning,
+    )
     return base
 
 
 def progress_monitor_no_config_response(connection_string=None):
     """Response when neither progress endpoint nor metadata connection is configured."""
     return {
-        **_endpoint_meta(None),
         "warnings": [],
-        "connectivity": _build_connectivity(None, connection_string),
+        "dataSources": build_data_sources(
+            progress_configured=False,
+            metadata_configured=bool(connection_string),
+            progress_status=None,
+            metadata_status=STATUS_UNAVAILABLE if connection_string else None,
+        ),
         "progressWarning": None,
         "metadataWarning": None,
         "display": None,

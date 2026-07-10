@@ -540,7 +540,9 @@ class TestBuildVerifierMetadataPayload:
         assert result["display"]["failedTasksLimit"] == VERIFIER_FAILED_TASKS_LIMIT
         assert result["display"]["previousGeneration"] is None
         assert result["display"]["stateBadge"] == {"label": "IN PROGRESS", "color": "blue"}
-        assert "connectivity" in result
+        assert "dataSources" in result
+        assert result["dataSources"]["badges"][0]["label"] == "Verifier metadata"
+        assert result["dataSources"]["badges"][0]["status"] == "active"
 
     @patch("lib.migration_verifier.get_failed_tasks_for_display", return_value=[])
     @patch("lib.migration_verifier.get_generation_history")
@@ -858,7 +860,8 @@ class TestVerifierProgressEndpointPayload:
         )
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
         assert result["display"]["stateBadge"]["label"] == "PASS"
-        assert result["connectivity"]["rows"][0]["label"] == "Progress endpoint"
+        assert result["dataSources"]["badges"][0]["label"] == "Progress API"
+        assert "localhost" not in str(result["dataSources"])
 
     @patch("lib.migration_verifier._fetch_verifier_progress")
     def test_progress_payload_mismatches_badge(self, mock_progress):
@@ -912,7 +915,8 @@ class TestVerifierSlicePayloads:
         result = build_verifier_progress_payload("localhost:27020/api/v1/progress")
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
         assert result["display"]["stateBadge"]["label"] == "PASS"
-        assert result["connectivity"]["rows"][0]["label"] == "Progress endpoint"
+        assert result["dataSources"]["badges"][0]["label"] == "Progress API"
+        assert "localhost" not in str(result["dataSources"])
 
     @patch("lib.migration_verifier._fetch_verifier_summary")
     def test_summary_payload(self, mock_summary):

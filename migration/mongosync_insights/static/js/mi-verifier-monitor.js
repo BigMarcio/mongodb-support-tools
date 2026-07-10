@@ -116,7 +116,14 @@
         parent.appendChild(progressBar(percent, percent == null));
     }
 
-    function renderToolbar(display) {
+    function appendDataSourceBadges(title, dataSources) {
+        if (!dataSources || !dataSources.badges) return;
+        dataSources.badges.forEach(function (b) {
+            title.appendChild(badge(b.label, b.color, true));
+        });
+    }
+
+    function renderToolbar(display, dataSources) {
         var toolbar = el('div', 'lm-toolbar');
         var textBlock = el('div', 'lm-toolbar-text');
 
@@ -136,6 +143,7 @@
                 badge(display.stateBadge.label, display.stateBadge.color, true)
             );
         }
+        appendDataSourceBadges(title, dataSources);
         textBlock.appendChild(title);
 
         toolbar.appendChild(textBlock);
@@ -776,15 +784,6 @@
         return card('Namespace Mismatches Summary', desc, [table]);
     }
 
-    function renderConnectivity(conn) {
-        if (!conn || !conn.rows || conn.rows.length === 0) return null;
-        var body = el('div', 'lm-connectivity');
-        conn.rows.forEach(function (r) {
-            body.appendChild(kvRow(r.label, r.value));
-        });
-        return card(conn.title || 'Connectivity', null, [body]);
-    }
-
     function renderWarningsCard(warnings) {
         if (!warnings || warnings.length === 0) return null;
         var tight = el('div', 'lm-stack-tight');
@@ -829,12 +828,10 @@
         var summarySlot = el('div', 'lm-verifier-summary-slot');
         var warningsSlot = el('div', 'lm-verifier-warnings-slot');
         var metadataSlot = el('div', 'lm-verifier-metadata-slot');
-        var connectivitySlot = el('div', 'lm-verifier-connectivity-slot');
         stack.appendChild(progressSlot);
         stack.appendChild(summarySlot);
         stack.appendChild(warningsSlot);
         stack.appendChild(metadataSlot);
-        stack.appendChild(connectivitySlot);
         root.appendChild(toolbarSlot);
         root.appendChild(stack);
         return {
@@ -843,15 +840,14 @@
             summary: summarySlot,
             warnings: warningsSlot,
             metadata: metadataSlot,
-            connectivity: connectivitySlot,
         };
     }
 
-    function miUpdateVerifierToolbar(slots, progress, summary, metadataDisplay, stateBadge) {
+    function miUpdateVerifierToolbar(slots, progress, summary, metadataDisplay, stateBadge, dataSources) {
         if (!slots || !slots.toolbar) return;
         var display = buildToolbarDisplay(progress, summary, metadataDisplay, stateBadge);
         slots.toolbar.replaceChildren();
-        slots.toolbar.appendChild(renderToolbar(display));
+        slots.toolbar.appendChild(renderToolbar(display, dataSources));
     }
 
     function miUpdateVerifierProgressSection(slots, progress) {
@@ -914,18 +910,10 @@
         if (warnCard) slots.warnings.appendChild(warnCard);
     }
 
-    function miUpdateVerifierConnectivity(slots, connectivity) {
-        if (!slots || !slots.connectivity) return;
-        slots.connectivity.replaceChildren();
-        var connCard = renderConnectivity(connectivity);
-        if (connCard) slots.connectivity.appendChild(connCard);
-    }
-
     global.miInitVerifierMonitorShell = miInitVerifierMonitorShell;
     global.miUpdateVerifierToolbar = miUpdateVerifierToolbar;
     global.miUpdateVerifierProgressSection = miUpdateVerifierProgressSection;
     global.miUpdateVerifierSummarySection = miUpdateVerifierSummarySection;
     global.miUpdateVerifierMetadataSection = miUpdateVerifierMetadataSection;
     global.miUpdateVerifierWarnings = miUpdateVerifierWarnings;
-    global.miUpdateVerifierConnectivity = miUpdateVerifierConnectivity;
 })(typeof window !== 'undefined' ? window : this);

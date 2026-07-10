@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from flask import render_template
 from pymongo.errors import PyMongoError
 
-from .connection_validator import sanitize_for_display
+from .data_sources import STATUS_ACTIVE, STATUS_UNAVAILABLE, build_data_sources
 
 logger = logging.getLogger(__name__)
 
@@ -577,21 +577,20 @@ def _derive_state_badge(current_gen, previous_gen_stats, collection_mismatches):
     return {"label": "PASS", "color": "green"}
 
 
-def _build_connectivity(connection_string=None, db_name=None, endpoint_url=None):
-    rows = []
-    if endpoint_url:
-        rows.append({"label": "Progress endpoint", "value": endpoint_url})
-    if db_name:
-        rows.append({"label": "Verifier database", "value": db_name})
-    if connection_string:
-        rows.append({
-            "label": "Connection string",
-            "value": sanitize_for_display(connection_string),
-        })
-    return {
-        "title": "Connectivity",
-        "rows": rows,
-    }
+def _verifier_data_sources(
+    endpoint_url=None,
+    connection_string=None,
+    *,
+    progress_status=None,
+    metadata_status=None,
+):
+    return build_data_sources(
+        progress_configured=bool(endpoint_url),
+        metadata_configured=bool(connection_string),
+        progress_status=progress_status,
+        metadata_status=metadata_status,
+        metadata_label="Verifier metadata",
+    )
 
 
 def _safe_int(value, default=0):
@@ -1220,30 +1219,32 @@ def build_verifier_progress_payload(
     endpoint_url, connection_string=None, db_name=None,
 ):
     """Build JSON slice for verifier /progress polling."""
-    from .app_config import MI_MIGRATION_VERIFIER_DB_NAME
     from .live_monitoring import ProgressFetchError
-
-    if db_name is None:
-        db_name = MI_MIGRATION_VERIFIER_DB_NAME
 
     result = {
         "error": None,
         "warnings": [],
-        "connectivity": _build_connectivity(
-            connection_string, db_name if connection_string else None, endpoint_url,
-        ),
+        "dataSources": None,
         "display": {},
     }
+    progress_status = STATUS_UNAVAILABLE
     try:
         progress_display = _fetch_verifier_progress(endpoint_url)
         result["display"]["verificationProgress"] = progress_display
         result["display"]["stateBadge"] = _derive_state_badge_from_progress(
             progress_display,
         )
+        progress_status = STATUS_ACTIVE
     except ProgressFetchError as e:
         logger.warning("Verifier progress endpoint fetch failed: %s", e)
         result["warnings"].append(f"Verifier progress endpoint is not responding: {e}")
         result["display"]["stateBadge"] = {"label": "NO DATA", "color": "gray"}
+    result["dataSources"] = _verifier_data_sources(
+        endpoint_url,
+        connection_string,
+        progress_status=progress_status if endpoint_url else None,
+        metadata_status=None,
+    )
     return result
 
 
@@ -1254,14 +1255,23 @@ def build_verifier_summary_payload(endpoint_url):
     result = {
         "error": None,
         "warnings": [],
+        "dataSources": None,
         "display": {},
     }
+    progress_status = STATUS_UNAVAILABLE
     try:
         summary_display = _fetch_verifier_summary(endpoint_url)
         result["display"]["verificationSummary"] = summary_display
+        progress_status = STATUS_ACTIVE
     except ProgressFetchError as e:
         logger.warning("Verifier summary endpoint fetch failed: %s", e)
         result["warnings"].append(f"Verifier summary endpoint is not responding: {e}")
+    result["dataSources"] = build_data_sources(
+        progress_configured=bool(endpoint_url),
+        metadata_configured=False,
+        progress_status=progress_status if endpoint_url else None,
+        metadata_status=None,
+    )
     return result
 
 
@@ -1280,9 +1290,7 @@ def build_verifier_metadata_payload(
     result = {
         "error": None,
         "warnings": [],
-        "connectivity": _build_connectivity(
-            connection_string, db_name, endpoint_url,
-        ),
+        "dataSources": None,
         "display": None,
     }
 
@@ -1292,10 +1300,22 @@ def build_verifier_metadata_payload(
     except PyMongoError as e:
         logger.error("Failed to connect to verifier database: %s", e)
         result["error"] = "Could not connect to verifier database."
+        result["dataSources"] = _verifier_data_sources(
+            endpoint_url,
+            connection_string,
+            progress_status=None,
+            metadata_status=STATUS_UNAVAILABLE,
+        )
         return result
     except Exception as e:
         logger.error("Unexpected error connecting to verifier database: %s", e)
         result["error"] = "Could not connect to verifier database."
+        result["dataSources"] = _verifier_data_sources(
+            endpoint_url,
+            connection_string,
+            progress_status=None,
+            metadata_status=STATUS_UNAVAILABLE,
+        )
         return result
 
     try:
@@ -1303,6 +1323,12 @@ def build_verifier_metadata_payload(
     except Exception as e:
         logger.error("Error reading verifier metadata warnings: %s", e)
         result["error"] = "Could not load verifier metadata."
+        result["dataSources"] = _verifier_data_sources(
+            endpoint_url,
+            connection_string,
+            progress_status=None,
+            metadata_status=STATUS_UNAVAILABLE,
+        )
         return result
 
     display, section_warnings = _build_metadata_display(
@@ -1315,8 +1341,16 @@ def build_verifier_metadata_payload(
     if display is not None:
         display["metadataAvailable"] = True
         result["display"] = display
+        metadata_status = STATUS_ACTIVE
     else:
         result["error"] = "Could not load verifier metadata."
+        metadata_status = STATUS_UNAVAILABLE
+    result["dataSources"] = _verifier_data_sources(
+        endpoint_url,
+        connection_string,
+        progress_status=None,
+        metadata_status=metadata_status,
+    )
     return result
 
 

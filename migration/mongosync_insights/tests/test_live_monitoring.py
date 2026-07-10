@@ -11,12 +11,12 @@ from lib.app_config import (
 )
 from lib.live_monitoring import (
     ProgressFetchError,
-    _build_connectivity,
     _build_direction,
     _build_metadata_metrics,
     _build_progress_metrics,
     _derive_state_badge,
     _state_badge_color,
+    build_live_monitor_payload,
     fetch_progress,
     fetch_summary,
     fetch_verifier_progress,
@@ -158,16 +158,40 @@ class TestStateBadge:
 
 
 class TestBuildHelpers:
-    def test_build_connectivity(self):
-        card = _build_connectivity(
+    @patch("lib.live_monitoring.fetch_metadata_status")
+    @patch("lib.live_monitoring.fetch_progress")
+    def test_build_data_sources_both_active(self, mock_progress, mock_metadata):
+        mock_progress.return_value = ({"state": "running"}, [])
+        mock_metadata.return_value = {"state": "running"}
+        result = build_live_monitor_payload(
             endpoint_url="host:27182/api/v1/progress",
             connection_string="mongodb://localhost:27017",
         )
-        assert card["title"] == "Connectivity"
-        assert len(card["rows"]) == 2
+        assert result["dataSources"]["mode"] == "both"
+        assert len(result["dataSources"]["badges"]) == 2
+        assert result["dataSources"]["badges"][0]["id"] == "progress"
+        assert result["dataSources"]["badges"][0]["status"] == "active"
+        assert result["dataSources"]["badges"][1]["id"] == "metadata"
+        assert result["dataSources"]["badges"][1]["status"] == "active"
+        for badge in result["dataSources"]["badges"]:
+            assert "host" not in badge["label"].lower()
+            assert "localhost" not in str(badge)
 
-    def test_build_connectivity_none_when_empty(self):
-        assert _build_connectivity() is None
+    @patch("lib.live_monitoring.fetch_progress")
+    def test_build_data_sources_endpoint_unavailable(self, mock_progress):
+        mock_progress.side_effect = ProgressFetchError("timeout", kind="timeout")
+        result = build_live_monitor_payload(
+            endpoint_url="host:27182/api/v1/progress",
+            connection_string=None,
+        )
+        assert result["dataSources"]["mode"] == "endpoint"
+        assert result["dataSources"]["badges"][0]["status"] == "unavailable"
+        assert result["dataSources"]["badges"][0]["color"] == "yellow"
+
+    def test_build_data_sources_none_when_empty(self):
+        from lib.live_monitoring import progress_monitor_no_config_response
+
+        assert progress_monitor_no_config_response()["dataSources"] is None
 
     def test_build_metadata_metrics(self):
         metrics = _build_metadata_metrics({"start": "2026-01-01", "buildIndexes": "After Data Copy"})

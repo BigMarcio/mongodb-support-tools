@@ -55,7 +55,7 @@ See [CONFIGURATION.md](CONFIGURATION.md) for all available connection-related en
 
 ## Security Considerations
 
-- **Credentials are never displayed:** Connection strings are sanitized before display in the UI -- only host, port, and database name are shown
+- **Credentials are never displayed:** Live monitoring dashboards show data-source toolbar badges (Progress API / Metadata) without hostnames, ports, or database names. The migration monitoring home page still shows sanitized connection details when env vars are pre-configured.
 - **Credentials are never logged:** Connection strings with passwords are not written to log files
 - **Generic API errors:** Verifier metadata connection failures return generic messages in the browser (for example, `Could not connect to verifier database.`). Check `insights.log` for driver-level details
 - **HTTPS recommended:** For production deployments, always use HTTPS to protect connection strings in transit. See [HTTPS_SETUP.md](HTTPS_SETUP.md)
