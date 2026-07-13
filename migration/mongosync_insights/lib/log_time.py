@@ -47,4 +47,6 @@ def normalize_search_start(value: str) -> str:
 def normalize_search_end(value: str) -> str:
     """Normalize a search end bound for inclusive timestamp_lte comparison."""
     dt = parse_log_search_datetime(value)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S") + ".999999"
+    #return dt.strftime("%Y-%m-%dT%H:%M:%S") + ".999999"
+    # Use a high-sorting sentinel so this bound includes millisecond timestamps like "... .999Z".
+    return dt.strftime("%Y-%m-%dT%H:%M:%S") + ".999Z"
