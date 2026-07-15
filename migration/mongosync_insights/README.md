@@ -4,24 +4,40 @@ Web dashboard for **mongosync** migrations: log analysis, real-time **Migration 
 
 ## Workflows
 
-| Hub card | Description |
-|----------|-------------|
+| Section | Description |
+|---------|-------------|
 | **Log analyzer** | Upload and parse mongosync logs, search, and review saved analysis snapshots |
-| **Migration monitoring** | Real-time migration progress via mongosync progress API and/or destination metadata |
-
-See **[MIGRATION_MONITORING.md](MIGRATION_MONITORING.md)** for how Migration Monitoring works (inputs, data sources, index-building and verifier fallbacks).
+| **Migration monitoring** | Real-time mongosync migration progress via progress API and/or destination metadata; includes a second **Migration Verifier** form on the same `/live/` page for the standalone migration-verifier tool |
 
 See **[LOG_ANALYZER.md](LOG_ANALYZER.md)** for uploading logs, analysis tabs, snapshots, and the Log Viewer.
 
-## Quick start
+See **[MIGRATION_MONITORING.md](MIGRATION_MONITORING.md)** for how Migration Monitoring and Migration Verifier work (inputs, data sources, polling, index-building and verifier fallbacks).
 
-**Python 3.11+** required.
+## Prerequisites
+
+- **Python 3.11+** (required)
+- **mongosync** — see [mongosync compatibility](#mongosync-compatibility) below
+- **migration-verifier** (optional, for Migration Verifier monitoring) — see [Migration Verifier compatibility](#migration-verifier-compatibility) below
+
+## mongosync compatibility
+
+Mongosync Insights was developed and tested with **mongosync 1.21**.
+
+Earlier and later mongosync versions may work where log formats and APIs (for example `/api/v1/progress` and internal metadata databases) are unchanged. Behavior with untested versions is not guaranteed. Validate charts and monitoring panels against your mongosync version before relying on them in production.
+
+## Migration Verifier compatibility
+
+Migration Verifier monitoring in Mongosync Insights was developed and tested with **migration-verifier 0.2.2**.
+
+Earlier and later migration-verifier versions may work where metadata version and APIs (for example `/api/v1/progress` and internal metadata databases) are unchanged. Behavior with untested versions is not guaranteed. Validate the verifier dashboard against your migration-verifier version before relying on it in production.
+
+## Quick start
 
 Run from source:
 
 ```bash
 cd migration/mongosync_insights
-pip install -r requirements.txt   # if running from source
+pip3 install -r requirements.txt   # if running from source
 python3 mongosync_insights.py
 ```
 
@@ -32,10 +48,23 @@ For **other installation options** (macOS/Windows standalone executables, Linux 
 To **configure** host, port, connection strings, refresh intervals, and other settings via environment variables, see **[CONFIGURATION.md](CONFIGURATION.md)**. Example pre-configuration before starting:
 
 ```bash
-export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 export MI_PROGRESS_ENDPOINT_URL="localhost:27182"
+# Optional: metadata fallback — destination cluster connection string
+export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 python3 mongosync_insights.py
 ```
+
+## Development
+
+From source, install dev dependencies and run the test suite:
+
+```bash
+cd migration/mongosync_insights
+pip3 install -r requirements.txt -r requirements-dev.txt
+python3 -m pytest tests/ -q
+```
+
+CI runs the same tests on changes under `migration/mongosync_insights/` (see `.github/workflows/mongosync-insights-tests.yml`).
 
 ## Documentation
 

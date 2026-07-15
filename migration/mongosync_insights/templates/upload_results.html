@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% block sidebar_settings %}{% endblock %}
+
 {% block title %}Mongosync Insights - Log Analysis{% endblock %}
 
 {% block header_title %}Mongosync Insights - Logs{% endblock %}
@@ -314,50 +316,64 @@
     <div id="logviewer-tab" class="tab-content">
         <div class="lv-panel">
             <div class="lv-header">
-                <div class="lv-header-left">
-                    <span class="lv-title" id="lvTitle">Log Viewer</span>
-                    <div class="lv-severity-filter">
-                        <span class="lv-label">Filter:</span>
-                        <div class="lv-severity-buttons">
-                            <button class="lv-sev-btn info active" data-severity="info" onclick="lvToggleSeverity('info')">Info</button>
-                            <button class="lv-sev-btn debug active" data-severity="debug" onclick="lvToggleSeverity('debug')">Debug</button>
-                            <button class="lv-sev-btn trace active" data-severity="trace" onclick="lvToggleSeverity('trace')">Trace</button>
-                            <button class="lv-sev-btn warn active" data-severity="warn" onclick="lvToggleSeverity('warn')">Warn</button>
-                            <button class="lv-sev-btn error active" data-severity="error" onclick="lvToggleSeverity('error')">Error</button>
-                            <button class="lv-sev-btn fatal active" data-severity="fatal" onclick="lvToggleSeverity('fatal')">Fatal</button>
-                            <button class="lv-sev-btn panic active" data-severity="panic" onclick="lvToggleSeverity('panic')">Panic</button>
+                <div class="lv-header-row">
+                    <div class="lv-header-left">
+                        <span class="lv-title" id="lvTitle">Log Viewer</span>
+                        <div class="lv-severity-filter">
+                            <span class="lv-label">Filter:</span>
+                            <div class="lv-severity-buttons">
+                                <button class="lv-sev-btn info active" data-severity="info" onclick="lvToggleSeverity('info')">Info</button>
+                                <button class="lv-sev-btn debug active" data-severity="debug" onclick="lvToggleSeverity('debug')">Debug</button>
+                                <button class="lv-sev-btn trace active" data-severity="trace" onclick="lvToggleSeverity('trace')">Trace</button>
+                                <button class="lv-sev-btn warn active" data-severity="warn" onclick="lvToggleSeverity('warn')">Warn</button>
+                                <button class="lv-sev-btn error active" data-severity="error" onclick="lvToggleSeverity('error')">Error</button>
+                                <button class="lv-sev-btn fatal active" data-severity="fatal" onclick="lvToggleSeverity('fatal')">Fatal</button>
+                                <button class="lv-sev-btn panic active" data-severity="panic" onclick="lvToggleSeverity('panic')">Panic</button>
+                            </div>
+                        </div>
+                        <div class="lv-tools">
+                            <div class="lv-view-mode">
+                                <span class="lv-label">View:</span>
+                                <button class="lv-mode-btn active" data-log-mode="highlighted" onclick="lvSetViewMode('highlighted')">Highlighted</button>
+                                <button class="lv-mode-btn" data-log-mode="raw" onclick="lvSetViewMode('raw')">Raw</button>
+                                <button class="lv-mode-btn" data-log-mode="pretty" onclick="lvSetViewMode('pretty')">Pretty JSON</button>
+                                <button class="lv-mode-btn" data-log-mode="summary" onclick="lvSetViewMode('summary')">Summary</button>
+                            </div>
+                            <div class="lv-semantic-filter">
+                                <span class="lv-label">Focus:</span>
+                                <button class="lv-focus-btn" data-log-filter="errors" onclick="lvToggleFocus('errors')">Errors</button>
+                                <button class="lv-focus-btn" data-log-filter="warnings" onclick="lvToggleFocus('warnings')">Warnings</button>
+                                <button class="lv-focus-btn" data-log-filter="phases" onclick="lvToggleFocus('phases')">Phases</button>
+                                <button class="lv-focus-btn" data-log-filter="opStats" onclick="lvToggleFocus('opStats')">Op Stats</button>
+                            </div>
                         </div>
                     </div>
-                    <div class="lv-tools">
-                        <div class="lv-view-mode">
-                            <span class="lv-label">View:</span>
-                            <button class="lv-mode-btn active" data-log-mode="highlighted" onclick="lvSetViewMode('highlighted')">Highlighted</button>
-                            <button class="lv-mode-btn" data-log-mode="raw" onclick="lvSetViewMode('raw')">Raw</button>
-                            <button class="lv-mode-btn" data-log-mode="pretty" onclick="lvSetViewMode('pretty')">Pretty JSON</button>
-                            <button class="lv-mode-btn" data-log-mode="summary" onclick="lvSetViewMode('summary')">Summary</button>
-                        </div>
-                        <div class="lv-semantic-filter">
-                            <span class="lv-label">Focus:</span>
-                            <button class="lv-focus-btn" data-log-filter="errors" onclick="lvToggleFocus('errors')">Errors</button>
-                            <button class="lv-focus-btn" data-log-filter="warnings" onclick="lvToggleFocus('warnings')">Warnings</button>
-                            <button class="lv-focus-btn" data-log-filter="phases" onclick="lvToggleFocus('phases')">Phases</button>
-                            <button class="lv-focus-btn" data-log-filter="opStats" onclick="lvToggleFocus('opStats')">Op Stats</button>
-                        </div>
+                    <div class="lv-header-actions">
+                        <span id="lvLineCount" class="lv-line-count">0 lines</span>
+                        <button class="lv-action-btn" onclick="lvDownloadLogs()" title="Download logs">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                            </svg>
+                        </button>
+                        <button class="lv-action-btn" onclick="lvClear()" title="Clear logs">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                            </svg>
+                        </button>
                     </div>
                 </div>
-                <div class="lv-header-right">
+                <div class="lv-header-search">
+                    <div class="lv-datetime-range" title="Searched as entered (matches log timestamps)">
+                        <label class="lv-datetime-label" for="lvStartInput">From</label>
+                        <span class="lv-datetime-field">
+                            <input type="datetime-local" id="lvStartInput" class="lv-datetime-input" step="1" oninput="lvOnDateTimeInput()">
+                        </span>
+                        <label class="lv-datetime-label" for="lvEndInput">To</label>
+                        <span class="lv-datetime-field">
+                            <input type="datetime-local" id="lvEndInput" class="lv-datetime-input" step="1" oninput="lvOnDateTimeInput()">
+                        </span>
+                    </div>
                     <input type="text" id="lvSearchInput" class="lv-search" placeholder="Search logs..." oninput="lvOnSearchInput(this.value)">
-                    <span id="lvLineCount" class="lv-line-count">0 lines</span>
-                    <button class="lv-action-btn" onclick="lvDownloadLogs()" title="Download logs">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                        </svg>
-                    </button>
-                    <button class="lv-action-btn" onclick="lvClear()" title="Clear logs">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" width="16" height="16">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                        </svg>
-                    </button>
                 </div>
             </div>
             <div class="lv-viewer" id="lvViewer">
@@ -501,6 +517,78 @@ function buildInfoOverlay(plotElId) {
     });
 
     plotEl.appendChild(overlay);
+    return overlay;
+}
+
+function chartCopyIconHtml() {
+    return '<svg class="chart-copy-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+}
+
+function chartCopiedIconHtml() {
+    return '<svg class="chart-copy-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+}
+
+function showChartCopyFeedback(buttonElement) {
+    var originalHtml = buttonElement.innerHTML;
+    var originalTitle = buttonElement.title;
+    buttonElement.innerHTML = chartCopiedIconHtml();
+    buttonElement.classList.add('copied');
+    buttonElement.title = 'Copied!';
+
+    setTimeout(function() {
+        buttonElement.innerHTML = originalHtml;
+        buttonElement.classList.remove('copied');
+        buttonElement.title = originalTitle;
+    }, 2000);
+}
+
+function buildTableCopyOverlay(plotElId) {
+    var plotEl = document.getElementById(plotElId);
+    if (!plotEl || plotElId !== 'plot' || !plotEl._fullLayout || !plotEl._fullData) return;
+    var fullData = plotEl._fullData;
+    var size = plotEl._fullLayout._size;
+    if (!size) return;
+
+    var overlay = plotEl.querySelector('.chart-info-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'chart-info-overlay';
+        plotEl.appendChild(overlay);
+    }
+
+    overlay.querySelectorAll('.chart-copy-badge').forEach(function(btn) { btn.remove(); });
+
+    var tableTrace = fullData.find(function(trace) {
+        return trace.type === 'table'
+            && trace.meta
+            && trace.meta.markdownKey === 'progress';
+    });
+    if (!tableTrace) return;
+
+    var cellValues = tableTrace.cells && tableTrace.cells.values;
+    if (!cellValues || !cellValues[0] || cellValues[0].length === 0) return;
+
+    var domain = tableTrace.domain;
+    if (!domain || !Array.isArray(domain.x) || !Array.isArray(domain.y)) return;
+
+    var leftPx = size.l + domain.x[1] * size.w - 22;
+    var topPx = size.t + (1 - domain.y[1]) * size.h + 4;
+
+    var badge = document.createElement('button');
+    badge.type = 'button';
+    badge.className = 'chart-copy-badge';
+    badge.innerHTML = chartCopyIconHtml();
+    badge.title = 'Copy as Markdown';
+    badge.setAttribute('aria-label', 'Copy Mongosync Progress as Markdown');
+    badge.style.left = Math.max(0, leftPx) + 'px';
+    badge.style.top = Math.max(0, topPx) + 'px';
+
+    badge.addEventListener('click', function(e) {
+        e.stopPropagation();
+        copyProgressAsMarkdown(badge);
+    });
+
+    overlay.appendChild(badge);
 }
 
 function bindInfoOverlayEvents(plotElId) {
@@ -509,6 +597,7 @@ function bindInfoOverlayEvents(plotElId) {
     plotEl.dataset.infoOverlayBound = 'true';
     plotEl.on('plotly_relayout', function() {
         buildInfoOverlay(plotElId);
+        buildTableCopyOverlay(plotElId);
     });
     document.addEventListener('click', function(event) {
         var overlay = plotEl.querySelector('.chart-info-overlay');
@@ -526,6 +615,7 @@ if (plot && plot.data) {
     miRenderPlot('plot', plot, {
         onRendered: function(elId) {
             buildInfoOverlay(elId);
+            buildTableCopyOverlay(elId);
             bindInfoOverlayEvents(elId);
         }
     });
@@ -552,6 +642,7 @@ var startOptionsData = {{ start_options_data | tojson }};
 var naturalOrderData = {{ natural_order_data | tojson }};
 var errorsData = {{ errors_data | tojson }};
 var partitionInitData = {{ partition_init_data | tojson }};
+var progressData = {{ progress_data | default([]) | tojson }};
 
 function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -628,6 +719,11 @@ function fallbackCopyToClipboard(text, buttonElement) {
     
     try {
         document.execCommand('copy');
+        if (buttonElement.classList.contains('chart-copy-badge')) {
+            showChartCopyFeedback(buttonElement);
+            return;
+        }
+
         var originalText = buttonElement.textContent;
         buttonElement.textContent = 'Copied!';
         buttonElement.classList.add('copied');
@@ -638,10 +734,17 @@ function fallbackCopyToClipboard(text, buttonElement) {
         }, 2000);
     } catch (err) {
         console.error('Fallback copy failed: ', err);
-        buttonElement.textContent = 'Copy failed';
-        setTimeout(function() {
-            buttonElement.textContent = 'Copy as Markdown';
-        }, 2000);
+        if (buttonElement.classList.contains('chart-copy-badge')) {
+            buttonElement.title = 'Copy failed';
+            setTimeout(function() {
+                buttonElement.title = 'Copy as Markdown';
+            }, 2000);
+        } else {
+            buttonElement.textContent = 'Copy failed';
+            setTimeout(function() {
+                buttonElement.textContent = 'Copy as Markdown';
+            }, 2000);
+        }
     }
     
     document.body.removeChild(textArea);
@@ -732,6 +835,46 @@ function filterErrorsTable(searchText) {
     if (noResultsMsg) {
         noResultsMsg.style.display = (visibleCount === 0 && filter !== '') ? 'block' : 'none';
     }
+}
+
+function copyProgressAsMarkdown(buttonElement) {
+    if (!progressData || progressData.length === 0) {
+        return;
+    }
+
+    var markdown = '## Mongosync Progress\n\n';
+    markdown += '| Date Time | Event |\n';
+    markdown += '|-----------|-------|\n';
+
+    progressData.forEach(function(item) {
+        var time = String(item.time || '')
+            .replace(/\|/g, '\\|')
+            .replace(/\n/g, ' ');
+        var event = String(item.event || '')
+            .replace(/\|/g, '\\|')
+            .replace(/\n/g, ' ');
+
+        markdown += '| ' + time + ' | ' + event + ' |\n';
+    });
+
+    navigator.clipboard.writeText(markdown).then(function() {
+        if (buttonElement.classList.contains('chart-copy-badge')) {
+            showChartCopyFeedback(buttonElement);
+            return;
+        }
+
+        var originalText = buttonElement.textContent;
+        buttonElement.textContent = 'Copied!';
+        buttonElement.classList.add('copied');
+
+        setTimeout(function() {
+            buttonElement.textContent = originalText;
+            buttonElement.classList.remove('copied');
+        }, 2000);
+    }).catch(function(err) {
+        console.error('Failed to copy: ', err);
+        fallbackCopyToClipboard(markdown, buttonElement);
+    });
 }
 
 function copyErrorsAsMarkdown(buttonElement) {
@@ -962,6 +1105,8 @@ var lvLogLines = [];
 var lvInitialized = false;
 var lvViewerMode = sessionStorage.getItem('mi_lv_view_mode') || 'highlighted';
 var lvSearchText = '';
+var lvStartTime = '';
+var lvEndTime = '';
 var lvSearchDebounceTimer = null;
 var lvIsServerSearch = false;
 var lvCurrentPage = 1;
@@ -1277,6 +1422,16 @@ function lvUpdateControlsState() {
 
 function lvClear() {
     lvLogLines = [];
+    lvSearchText = '';
+    lvStartTime = '';
+    lvEndTime = '';
+    lvIsServerSearch = false;
+    var searchInput = document.getElementById('lvSearchInput');
+    if (searchInput) searchInput.value = '';
+    var startInput = document.getElementById('lvStartInput');
+    if (startInput) startInput.value = '';
+    var endInput = document.getElementById('lvEndInput');
+    if (endInput) endInput.value = '';
     var viewer = document.getElementById('lvViewer');
     var container = viewer.querySelector('.lv-lines-container');
     if (container) container.innerHTML = '';
@@ -1305,23 +1460,72 @@ function lvDownloadLogs() {
 
 // --- Server search ---
 
+function lvNormalizeDateTimeInput(value) {
+    if (!value) return '';
+    var normalized = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(normalized)) {
+        normalized += ':00';
+    }
+    return normalized;
+}
+
+function lvReadDateTimeFilters() {
+    var startInput = document.getElementById('lvStartInput');
+    var endInput = document.getElementById('lvEndInput');
+    lvStartTime = lvNormalizeDateTimeInput(startInput ? startInput.value : '');
+    lvEndTime = lvNormalizeDateTimeInput(endInput ? endInput.value : '');
+}
+
+function lvHasServerSearchFilters() {
+    return lvSearchText.length >= 3 || !!lvStartTime || !!lvEndTime;
+}
+
+function lvFormatDateTimeRangeLabel() {
+    var parts = [];
+    if (lvStartTime) parts.push(lvStartTime.slice(0, 19).replace('T', ' '));
+    if (lvEndTime) parts.push(lvEndTime.slice(0, 19).replace('T', ' '));
+    if (parts.length === 2) return parts[0] + ' – ' + parts[1];
+    if (parts.length === 1) return (lvStartTime ? 'from ' : 'until ') + parts[0];
+    return '';
+}
+
+function lvBuildSearchTitle(total) {
+    if (lvSearchText) {
+        return 'Log Viewer (Search: ' + total + ' results)';
+    }
+    var rangeLabel = lvFormatDateTimeRangeLabel();
+    if (rangeLabel) {
+        return 'Log Viewer (' + total + ' results, ' + rangeLabel + ')';
+    }
+    return 'Log Viewer (Search: ' + total + ' results)';
+}
+
+function lvTriggerSearch() {
+    lvReadDateTimeFilters();
+    if (LV_STORE_ID && lvHasServerSearchFilters()) {
+        lvCurrentPage = 1;
+        lvSearchServer(lvSearchText, '', lvCurrentPage);
+        return;
+    }
+
+    lvIsServerSearch = false;
+    if (!lvSearchText && !lvStartTime && !lvEndTime) {
+        lvDisplayStaticLogs(LV_INITIAL_LINES);
+    } else {
+        lvResetToLastPage();
+        lvRenderTailPage();
+    }
+}
+
 function lvOnSearchInput(value) {
     lvSearchText = (value || '').trim();
     if (lvSearchDebounceTimer) clearTimeout(lvSearchDebounceTimer);
-    lvSearchDebounceTimer = setTimeout(function() {
-        if (lvSearchText.length >= 3 && LV_STORE_ID) {
-            lvCurrentPage = 1;
-            lvSearchServer(lvSearchText, '', lvCurrentPage);
-        } else {
-            lvIsServerSearch = false;
-            if (lvSearchText === '') {
-                lvDisplayStaticLogs(LV_INITIAL_LINES);
-            } else {
-                lvResetToLastPage();
-                lvRenderTailPage();
-            }
-        }
-    }, 300);
+    lvSearchDebounceTimer = setTimeout(lvTriggerSearch, 300);
+}
+
+function lvOnDateTimeInput() {
+    if (lvSearchDebounceTimer) clearTimeout(lvSearchDebounceTimer);
+    lvSearchDebounceTimer = setTimeout(lvTriggerSearch, 300);
 }
 
 var LOGS_SEARCH_URL = {{ url_for('logs.search_logs')|tojson }};
@@ -1332,6 +1536,8 @@ function lvSearchServer(query, level, page) {
         + '&page=' + page
         + '&per_page=' + lvPerPage;
     if (level) url += '&level=' + encodeURIComponent(level);
+    if (lvStartTime) url += '&start=' + encodeURIComponent(lvStartTime);
+    if (lvEndTime) url += '&end=' + encodeURIComponent(lvEndTime);
 
     document.getElementById('lvTitle').textContent = 'Log Viewer (Searching...)';
 
@@ -1354,7 +1560,7 @@ function lvDisplaySearchResults(data) {
     lvLogLines = (data.results || []).map(function(r) { return r.raw; });
 
     var totalPages = Math.ceil(lvTotalResults / lvPerPage) || 1;
-    document.getElementById('lvTitle').textContent = 'Log Viewer (Search: ' + lvTotalResults + ' results)';
+    document.getElementById('lvTitle').textContent = lvBuildSearchTitle(lvTotalResults);
 
     lvRenderLines();
 
@@ -1401,8 +1607,14 @@ function lvNextPage() {
 function lvBackToTail() {
     lvIsServerSearch = false;
     lvSearchText = '';
+    lvStartTime = '';
+    lvEndTime = '';
     var searchInput = document.getElementById('lvSearchInput');
     if (searchInput) searchInput.value = '';
+    var startInput = document.getElementById('lvStartInput');
+    if (startInput) startInput.value = '';
+    var endInput = document.getElementById('lvEndInput');
+    if (endInput) endInput.value = '';
     lvDisplayStaticLogs(LV_INITIAL_LINES);
 }
 

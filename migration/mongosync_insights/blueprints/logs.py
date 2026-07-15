@@ -3,6 +3,7 @@ import os
 
 from flask import Blueprint, jsonify, render_template, request
 
+from lib.log_time import InvalidLogTimestamp, normalize_search_end, normalize_search_start
 from lib.logs_metrics import upload_file
 from lib.log_store_registry import log_store_registry
 from lib.snapshot_store import (
@@ -51,6 +52,8 @@ def search_logs():
 
     q = request.args.get("q", "").strip()
     level = request.args.get("level", "").strip()
+    start_raw = request.args.get("start", "").strip()
+    end_raw = request.args.get("end", "").strip()
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (ValueError, TypeError):
@@ -71,10 +74,23 @@ def search_logs():
         if q:
             query["$text"] = q
 
+        start_bound = None
+        end_bound = None
+        if start_raw:
+            start_bound = normalize_search_start(start_raw)
+            query["timestamp_gte"] = start_bound
+        if end_raw:
+            end_bound = normalize_search_end(end_raw)
+            query["timestamp_lte"] = end_bound
+        if start_bound and end_bound and start_bound > end_bound:
+            return jsonify({"error": "start must be before or equal to end"}), 400
+
         result = store.find(query, skip=(page - 1) * per_page, limit=per_page)
         result["page"] = page
         result["per_page"] = per_page
         return jsonify(result)
+    except InvalidLogTimestamp as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error("Log search error: %s", e)
         return jsonify({"error": "Search failed", "detail": str(e)}), 500

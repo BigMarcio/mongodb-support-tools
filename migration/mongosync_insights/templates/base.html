@@ -86,6 +86,7 @@
             transition: all 180ms ease-in-out;
             position: relative;
             padding: 0;
+            text-decoration: none;
         }
 
         .sidebar-btn:hover {
@@ -549,6 +550,16 @@
 <body>
     <!-- Left sidebar -->
     <nav class="sidebar">
+        <a class="sidebar-btn" id="homeBtn" href="/" title="Home">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+            </svg>
+            <span class="tooltip">Home</span>
+        </a>
+
+        <div class="sidebar-divider"></div>
+
+        {% block sidebar_upload %}
         <button class="sidebar-btn" id="uploadBtn" onclick="openUploadDialog()" title="Upload Log File">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
@@ -557,7 +568,9 @@
         </button>
 
         <div class="sidebar-divider"></div>
+        {% endblock %}
 
+        {% block sidebar_settings %}
         <button class="sidebar-btn" id="settingsBtn" onclick="openSettingsDialog()" title="Settings">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
@@ -565,6 +578,7 @@
             </svg>
             <span class="tooltip">Settings</span>
         </button>
+        {% endblock %}
 
         <button class="sidebar-btn" id="logoutBtn" onclick="confirmLogout()" title="Logout">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -595,10 +609,12 @@
         <span class="version-badge">v{{ app_version }}</span>
     </nav>
 
+    {% block upload_ui %}
     <!-- Hidden upload form -->
     <form id="sidebarUploadForm" method="post" action="{{ url_for('logs.upload_logs') }}" enctype="multipart/form-data" style="display:none">
         <input type="file" id="sidebarFileInput" name="file" accept=".log,.json,.out,.gz,.zip,.bz2,.tar.gz,.tgz,.tar.bz2">
     </form>
+    {% endblock %}
 
     <header>
         <h1>{% block header_title %}Mongosync Insights{% endblock %}</h1>
@@ -623,14 +639,6 @@
                 <div class="settings-row">
                     <label for="settingsRefresh">Refresh (sec):</label>
                     <input type="number" id="settingsRefresh" min="1" max="60" value="10">
-                </div>
-                <div class="settings-row">
-                    <label for="settingsTheme">Theme:</label>
-                    <select id="settingsTheme">
-                        <option value="light">Light</option>
-                        <option value="dark">Dark</option>
-                        <option value="system">System (follow OS)</option>
-                    </select>
                 </div>
             </div>
             <div class="settings-actions">
@@ -671,6 +679,7 @@
         </div>
     </div>
 
+    {% block upload_dialogs %}
     <!-- Upload dialog overlay -->
     <div id="uploadDialogOverlay" class="mi-overlay" onclick="if(event.target===this)closeUploadDialog()">
         <div class="upload-dialog">
@@ -711,13 +720,12 @@
     </div>
 
     <script src="/static/js/mi-snapshots.js"></script>
+    {% endblock %}
     <script>
     /* Settings dialog */
     function openSettingsDialog() {
         var refresh = sessionStorage.getItem('mi_refresh_time') || '10';
-        var theme = sessionStorage.getItem('mi_theme') || 'light';
         document.getElementById('settingsRefresh').value = refresh;
-        document.getElementById('settingsTheme').value = theme;
         document.getElementById('settingsOverlay').classList.add('active');
     }
 
@@ -727,18 +735,10 @@
 
     function applySettings() {
         var refresh = document.getElementById('settingsRefresh').value;
-        var theme = document.getElementById('settingsTheme').value;
         sessionStorage.setItem('mi_refresh_time', refresh);
-        sessionStorage.setItem('mi_theme', theme);
-        applyAppearance(theme);
         closeSettingsDialog();
         window.dispatchEvent(new CustomEvent('mi-refresh-changed', { detail: { refreshSec: parseInt(refresh, 10) } }));
     }
-
-    /* Live-apply theme as user changes select */
-    document.getElementById('settingsTheme').addEventListener('change', function() {
-        applyAppearance(this.value);
-    });
 
     /* Logout */
     function confirmLogout() {

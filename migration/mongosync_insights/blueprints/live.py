@@ -7,7 +7,12 @@ from lib.live_monitoring import (
     build_live_monitor_payload,
     progress_monitor_no_config_response,
 )
-from lib.migration_verifier import gather_verifier_metrics, plot_verifier_metrics
+from lib.migration_verifier import (
+    build_verifier_metadata_payload,
+    build_verifier_progress_payload,
+    build_verifier_summary_payload,
+    plot_verifier_metrics,
+)
 from lib.session_support import SESSION_COOKIE_NAME, store_session_data
 from lib.app_config import (
     CONNECTION_STRING,
@@ -16,7 +21,9 @@ from lib.app_config import (
     SECURE_COOKIES,
     SESSION_TIMEOUT,
     VERIFIER_CONNECTION_STRING,
+    VERIFIER_PROGRESS_ENDPOINT_URL,
     build_progress_endpoint_url,
+    build_verifier_progress_endpoint_url,
     clear_connection_cache,
     session_store,
     validate_connection,
@@ -32,29 +39,31 @@ logger = logging.getLogger(__name__)
 @bp.route("/")
 def live_home():
     if not CONNECTION_STRING:
-        connection_string_form = """<label for="connectionString">Atlas MongoDB Connection String:</label>  
+        connection_string_form = """<label for="connectionString">Destination MongoDB connection string (optional):</label>  
                                     <input type="text" id="connectionString" name="connectionString" size="47" autocomplete="off"
                                         placeholder="mongodb+srv://usr:pwd@cluster0.mongodb.net/"><br><br>"""
     else:
         sanitized_connection = sanitize_for_display(CONNECTION_STRING)
-        connection_string_form = f"<p><b>Connecting to Destination Cluster at: </b>{sanitized_connection}</p>"
+        connection_string_form = f"<p><b>Destination cluster (metadata fallback): </b>{sanitized_connection}</p>"
 
     progress_endpoint_configured = bool(PROGRESS_ENDPOINT_URL)
-
-    if not VERIFIER_CONNECTION_STRING:
-        verifier_connection_string_form = """<label for="verifierConnectionString">Verifier MongoDB Connection String:</label>  
-                                    <input type="text" id="verifierConnectionString" name="verifierConnectionString" size="47" autocomplete="off"
-                                        placeholder="mongodb+srv://usr:pwd@cluster0.mongodb.net/"><br><br>"""
-    else:
-        sanitized_connection = sanitize_for_display(VERIFIER_CONNECTION_STRING)
-        verifier_connection_string_form = f"<p><b>Connecting to Verifier DB at: </b>{sanitized_connection}</p>"
+    verifier_progress_endpoint_configured = bool(VERIFIER_PROGRESS_ENDPOINT_URL)
+    verifier_connection_string_configured = bool(VERIFIER_CONNECTION_STRING)
+    verifier_connection_string_display = (
+        sanitize_for_display(VERIFIER_CONNECTION_STRING)
+        if verifier_connection_string_configured
+        else ""
+    )
 
     return render_template(
         "live/home.html",
         connection_string_form=connection_string_form,
         progress_endpoint_configured=progress_endpoint_configured,
         progress_endpoint_url=PROGRESS_ENDPOINT_URL,
-        verifier_connection_string_form=verifier_connection_string_form,
+        verifier_progress_endpoint_configured=verifier_progress_endpoint_configured,
+        verifier_progress_endpoint_url=VERIFIER_PROGRESS_ENDPOINT_URL,
+        verifier_connection_string_configured=verifier_connection_string_configured,
+        verifier_connection_string_display=verifier_connection_string_display,
     )
 
 
@@ -76,15 +85,20 @@ def live_monitoring():
             progress_url = build_progress_endpoint_url(
                 progress_host, progress_port or None
             )
-        except ValueError:
-            progress_url = None
+        except ValueError as e:
+            logger.error("Invalid progress endpoint port: %s", e)
+            return render_template(
+                "error.html",
+                error_title="Invalid Progress Endpoint",
+                error_message=str(e),
+            )
 
     if not target_mongo_uri and not progress_url:
         logger.error("No connection string or progress endpoint URL provided")
         return render_template(
             "error.html",
             error_title="No Input Provided",
-            error_message="Please provide at least one of the following: MongoDB Connection String or Mongosync Progress Endpoint (host and port, or both).",
+            error_message="Please provide at least one of the following: Mongosync Progress Endpoint or MongoDB connection string (or both).",
         )
 
     if progress_url and not validate_progress_endpoint_url(progress_url):
@@ -175,6 +189,23 @@ def get_progress_monitor():
 
 @bp.route("/verifier", methods=["POST"])
 def verifier():
+    if VERIFIER_PROGRESS_ENDPOINT_URL:
+        verifier_progress_url = VERIFIER_PROGRESS_ENDPOINT_URL
+    else:
+        progress_host = (request.form.get("verifierProgressHost") or "").strip()
+        progress_port = (request.form.get("verifierProgressPort") or "").strip()
+        try:
+            verifier_progress_url = build_verifier_progress_endpoint_url(
+                progress_host, progress_port or None
+            )
+        except ValueError as e:
+            logger.error("Invalid verifier progress endpoint port: %s", e)
+            return render_template(
+                "error.html",
+                error_title="Invalid Progress Endpoint",
+                error_message=str(e),
+            )
+
     if VERIFIER_CONNECTION_STRING:
         target_mongo_uri = VERIFIER_CONNECTION_STRING
     else:
@@ -182,52 +213,63 @@ def verifier():
         if target_mongo_uri:
             target_mongo_uri = target_mongo_uri.strip() if target_mongo_uri.strip() else None
 
-    db_name = request.form.get("verifierDbName", "migration_verification_metadata")
-    if db_name:
-        db_name = db_name.strip() if db_name.strip() else "migration_verification_metadata"
-
-    if not target_mongo_uri:
-        logger.error("No connection string provided for migration verifier")
+    if not target_mongo_uri and not verifier_progress_url:
+        logger.error("No connection string or verifier progress endpoint URL provided")
         return render_template(
             "error.html",
-            error_title="No Connection String",
-            error_message="Please provide a MongoDB Connection String for the migration verifier database.",
+            error_title="No Input Provided",
+            error_message=(
+                "Please provide at least one of the following: Migration Verifier "
+                "progress endpoint or MongoDB connection string (or both)."
+            ),
         )
 
-    try:
-        validate_connection(target_mongo_uri)
-    except InvalidURI as e:
-        logger.error("Invalid connection string format: %s", e)
-        clear_connection_cache()
+    if verifier_progress_url and not validate_progress_endpoint_url(verifier_progress_url):
+        logger.error("Invalid verifier progress endpoint URL format: %s", verifier_progress_url)
         return render_template(
             "error.html",
-            error_title="Invalid Connection String",
-            error_message="The connection string format is invalid. Please check your MongoDB connection string and try again.",
+            error_title="Invalid Progress Endpoint",
+            error_message=(
+                "The progress endpoint format is invalid. Enter a host and port "
+                "(default 27020); the path /api/v1/progress is fixed."
+            ),
         )
-    except PyMongoError as e:
-        logger.error("Failed to connect: %s", e)
-        clear_connection_cache()
-        return render_template(
-            "error.html",
-            error_title="Connection Failed",
-            error_message="Could not connect to MongoDB. Please verify your credentials, network connectivity, and that the cluster is accessible.",
-        )
-    except Exception as e:
-        logger.error("Unexpected error during connection validation: %s", e)
-        clear_connection_cache()
-        return render_template(
-            "error.html",
-            error_title="Connection Error",
-            error_message="An unexpected error occurred. Please try again.",
-        )
+
+    if target_mongo_uri:
+        try:
+            validate_connection(target_mongo_uri)
+        except InvalidURI as e:
+            logger.error("Invalid connection string format: %s", e)
+            clear_connection_cache()
+            return render_template(
+                "error.html",
+                error_title="Invalid Connection String",
+                error_message="The connection string format is invalid. Please check your MongoDB connection string and try again.",
+            )
+        except PyMongoError as e:
+            logger.error("Failed to connect: %s", e)
+            clear_connection_cache()
+            return render_template(
+                "error.html",
+                error_title="Connection Failed",
+                error_message="Could not connect to MongoDB. Please verify your credentials, network connectivity, and that the cluster is accessible.",
+            )
+        except Exception as e:
+            logger.error("Unexpected error during connection validation: %s", e)
+            clear_connection_cache()
+            return render_template(
+                "error.html",
+                error_title="Connection Error",
+                error_message="An unexpected error occurred. Please try again.",
+            )
 
     session_data = {
         "verifier_connection_string": target_mongo_uri,
-        "verifier_db_name": db_name,
+        "verifier_endpoint_url": verifier_progress_url,
     }
     session_id = store_session_data(session_data)
 
-    response = make_response(plot_verifier_metrics(db_name=db_name))
+    response = make_response(plot_verifier_metrics())
 
     response.set_cookie(
         SESSION_COOKIE_NAME,
@@ -240,23 +282,62 @@ def verifier():
     return response
 
 
-@bp.route("/get_verifier_data", methods=["POST"])
-def get_verifier_data():
+def _verifier_session_context():
+    """Resolve verifier connection string and progress endpoint from env or session."""
     session_id = request.cookies.get(SESSION_COOKIE_NAME)
     session_data = session_store.get_session(session_id)
+
+    if VERIFIER_PROGRESS_ENDPOINT_URL:
+        endpoint_url = VERIFIER_PROGRESS_ENDPOINT_URL
+    else:
+        endpoint_url = (session_data or {}).get("verifier_endpoint_url")
 
     if VERIFIER_CONNECTION_STRING:
         connection_string = VERIFIER_CONNECTION_STRING
     else:
         connection_string = (session_data or {}).get("verifier_connection_string")
 
-    if not connection_string:
-        logger.error("No connection string available for verifier metrics refresh")
-        return jsonify(
-            {
-                "error": "No connection string available. Please refresh the page and re-enter your credentials."
-            }
-        ), 400
+    return connection_string, endpoint_url
 
-    db_name = (session_data or {}).get("verifier_db_name", "migration_verification_metadata")
-    return jsonify(gather_verifier_metrics(connection_string, db_name))
+
+def _verifier_no_config_response():
+    logger.error("No connection string or verifier progress endpoint available")
+    return jsonify(
+        {
+            "error": (
+                "No progress endpoint or connection string is configured. "
+                "Return to Migration monitoring home and provide a Migration Verifier "
+                "progress endpoint or MongoDB connection string."
+            )
+        }
+    ), 400
+
+
+@bp.route("/get_verifier_progress", methods=["POST"])
+def get_verifier_progress():
+    connection_string, endpoint_url = _verifier_session_context()
+    if not endpoint_url:
+        return jsonify({"error": "No verifier progress endpoint is configured."}), 400
+    return jsonify(
+        build_verifier_progress_payload(endpoint_url, connection_string),
+    )
+
+
+@bp.route("/get_verifier_summary", methods=["POST"])
+def get_verifier_summary():
+    _connection_string, endpoint_url = _verifier_session_context()
+    if not endpoint_url:
+        return jsonify({"error": "No verifier progress endpoint is configured."}), 400
+    return jsonify(build_verifier_summary_payload(endpoint_url))
+
+
+@bp.route("/get_verifier_metadata", methods=["POST"])
+def get_verifier_metadata():
+    connection_string, endpoint_url = _verifier_session_context()
+    if not connection_string:
+        return jsonify({"error": "No verifier connection string is configured."}), 400
+    return jsonify(
+        build_verifier_metadata_payload(
+            connection_string, endpoint_url=endpoint_url,
+        ),
+    )

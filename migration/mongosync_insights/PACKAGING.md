@@ -191,10 +191,25 @@ Edit `/etc/mongosync-insights/env`:
 ```bash
 MI_HOST=0.0.0.0
 MI_PORT=8080
-MI_CONNECTION_STRING=mongodb+srv://user:pass@cluster.mongodb.net/
+
+# Mongosync monitoring
 MI_PROGRESS_ENDPOINT_URL=localhost:27182
+# Optional: metadata fallback — destination cluster connection string
+MI_CONNECTION_STRING=mongodb+srv://user:pass@cluster.mongodb.net/
+
+# Migration Verifier
+MI_VERIFIER_PROGRESS_ENDPOINT_URL=localhost:27020
+# Optional: metadata fallback on a different cluster (falls back to MI_CONNECTION_STRING when omitted)
+MI_VERIFIER_CONNECTION_STRING=mongodb+srv://user:pass@verifier-cluster.mongodb.net/
+MI_MIGRATION_VERIFIER_DB_NAME=__mdb_internal_migration_verifier
+
 MI_REFRESH_TIME=5
 MI_INDEX_BUILD_REFRESH_TIME=60
+MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS=10
+MI_VERIFIER_PROGRESS_TIMEOUT_SECS=30
+MI_VERIFIER_SUMMARY_TIMEOUT_SECS=120
+MI_VERIFIER_METADATA_TIMEOUT_MS=120000
+MI_ERROR_PATTERNS_FILE=/etc/mongosync-insights/error_patterns.json
 MI_SSL_ENABLED=true
 MI_SSL_CERT=/etc/mongosync-insights/cert.pem
 MI_SSL_KEY=/etc/mongosync-insights/key.pem

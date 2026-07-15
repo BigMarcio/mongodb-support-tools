@@ -56,7 +56,7 @@ PORT = parse_env_int('MI_PORT', 3030, min_value=1, max_value=65535)
 
 # Application constants
 APP_NAME = "Mongosync Insights"
-APP_VERSION = "0.9.0.16"
+APP_VERSION = "0.9.1.15"
 
 DEVELOPER_CREDITS = {
     "copyright": "\u00a9 MongoDB Inc.",
@@ -106,49 +106,61 @@ EXTENSION_TO_COMPRESSION = {
     '.tar.bz2': 'tar_bzip2'
 }
 
-# File type patterns for identification
-# mongosync logs: mongosync.log or mongosync-* (but NOT mongosync_metrics*) or liveimport_*
-MONGOSYNC_LOG_PATTERN = re.compile(r'^mongosync\.log$|^mongosync-(?!metrics).*|^liveimport_.*', re.IGNORECASE)
-# mongosync metrics: mongosync_metrics.log or mongosync_metrics-*
-MONGOSYNC_METRICS_PATTERN = re.compile(r'^mongosync_metrics\.log$|^mongosync_metrics-.*', re.IGNORECASE)
+# Filename substring rules for log/metrics identification (see classify_file_type)
+UNRECOGNIZED_FILENAME_ERROR_MESSAGE = (
+    "No mongosync log or metrics file was recognized from the filename. "
+    "Metrics files must include 'metrics' in the name; "
+    "log files must include 'mongosync' or 'liveimport'."
+)
 
 
-def classify_file_type(filename: str) -> str:
+def classify_file_type(filename: str):
     """
-    Classify a file as mongosync logs, mongosync metrics, or unknown based on filename pattern.
-    
+    Classify a file as mongosync logs, mongosync metrics, or unknown based on filename.
+
+    Metrics: basename contains 'metrics' (case-insensitive).
+    Logs: basename contains 'mongosync' or 'liveimport' (case-insensitive).
+    Metrics is checked before mongosync/liveimport when both appear in the name.
+
     Args:
         filename: The filename to classify (can include path, only basename is used)
-        
+
     Returns:
         'logs' for mongosync log files
         'metrics' for mongosync metrics files
         None for unrecognized files
     """
     import os
-    # Extract just the filename without path
     basename = os.path.basename(filename)
-    
-    # Remove compression extensions to get the base name
-    # Handle compound extensions like .log.gz, .log.1.gz, etc.
+
     name_without_compression = basename
-    for ext in ['.gz', '.bz2', '.zip']:
+    for ext in ('.gz', '.bz2', '.zip'):
         if name_without_compression.lower().endswith(ext):
             name_without_compression = name_without_compression[:-len(ext)]
-    
-    # Check patterns against the name without compression extension
-    if MONGOSYNC_METRICS_PATTERN.match(name_without_compression):
-        return 'metrics'
-    elif MONGOSYNC_LOG_PATTERN.match(name_without_compression):
-        return 'logs'
-    
-    # Also check the original basename in case pattern includes extension
-    if MONGOSYNC_METRICS_PATTERN.match(basename):
-        return 'metrics'
-    elif MONGOSYNC_LOG_PATTERN.match(basename):
-        return 'logs'
-    
+
+    for name in (name_without_compression, basename):
+        lower = name.lower()
+        if 'metrics' in lower:
+            return 'metrics'
+        if 'mongosync' in lower or 'liveimport' in lower:
+            return 'logs'
+
     return None
+
+
+def is_multi_file_archive(filename: str, mime_type: str) -> bool:
+    """True for zip/tar archives where inner members are classified individually."""
+    import os
+    filename_lower = (filename or '').lower()
+    for ext in ('.tar.gz', '.tar.bz2', '.tgz'):
+        if filename_lower.endswith(ext):
+            return True
+    ext = os.path.splitext(filename_lower)[1]
+    if ext in ('.zip',):
+        return True
+    if mime_type in ('application/zip', 'application/x-zip-compressed'):
+        return True
+    return False
 
 
 # SSL/TLS settings
@@ -162,25 +174,84 @@ SSL_KEY_PATH = os.getenv('MI_SSL_KEY', '/etc/letsencrypt/live/your-domain/privke
 # Live monitoring settings
 REFRESH_TIME = parse_env_int('MI_REFRESH_TIME', 10, min_value=1)
 INDEX_BUILD_REFRESH_TIME = parse_env_int('MI_INDEX_BUILD_REFRESH_TIME', 60, min_value=1)
+VERIFIER_PROGRESS_REFRESH_TIME = REFRESH_TIME * 3 
+VERIFIER_SUMMARY_REFRESH_TIME = REFRESH_TIME * 12
+VERIFIER_METADATA_REFRESH_TIME = REFRESH_TIME * 6
+MONGOSYNC_PROGRESS_TIMEOUT_SECS = parse_env_int(
+    'MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS', REFRESH_TIME, min_value=1,
+)
+VERIFIER_PROGRESS_TIMEOUT_SECS = parse_env_int(
+    'MI_VERIFIER_PROGRESS_TIMEOUT_SECS', VERIFIER_PROGRESS_REFRESH_TIME, min_value=1,
+)
+VERIFIER_SUMMARY_TIMEOUT_SECS = parse_env_int(
+    'MI_VERIFIER_SUMMARY_TIMEOUT_SECS', VERIFIER_SUMMARY_REFRESH_TIME, min_value=1,
+)
 CONNECTION_STRING = os.getenv('MI_CONNECTION_STRING', '')
 VERIFIER_CONNECTION_STRING = os.getenv('MI_VERIFIER_CONNECTION_STRING', '') or CONNECTION_STRING
 
 PROGRESS_API_PATH = "/api/v1/progress"
+VERIFIER_SUMMARY_API_PATH = "/api/v1/summary"
 DEFAULT_PROGRESS_PORT = 27182
+DEFAULT_VERIFIER_PROGRESS_PORT = 27020
+PROGRESS_PORT_MIN = 1
+PROGRESS_PORT_MAX = 65535
 
 
-def build_progress_endpoint_url(host, port=None):
+def _parse_progress_port(port_str: str) -> int:
+    """Parse and validate a TCP port for the progress endpoint."""
+    try:
+        port_num = int(port_str.strip())
+    except (ValueError, AttributeError) as e:
+        raise ValueError(
+            f"Invalid progress endpoint port: {port_str!r}. Must be an integer."
+        ) from e
+    if port_num < PROGRESS_PORT_MIN or port_num > PROGRESS_PORT_MAX:
+        raise ValueError(
+            f"Invalid progress endpoint port: {port_num}. "
+            f"Must be between {PROGRESS_PORT_MIN} and {PROGRESS_PORT_MAX}."
+        )
+    return port_num
+
+
+def _build_progress_endpoint_url(host, port=None, *, default_port):
     """
     Build canonical progress endpoint URL from host and port.
 
     Returns None when host is empty (progress endpoint not configured).
+    Raises ValueError when port is non-numeric or outside 1-65535.
     """
     host = (host or "").strip()
     if not host:
         return None
     port_str = str(port).strip() if port is not None else ""
-    port_num = DEFAULT_PROGRESS_PORT if not port_str else int(port_str)
+    port_num = default_port if not port_str else _parse_progress_port(port_str)
     return f"{host}:{port_num}{PROGRESS_API_PATH}"
+
+
+def build_progress_endpoint_url(host, port=None):
+    """Build Mongosync progress endpoint URL (default port 27182)."""
+    return _build_progress_endpoint_url(host, port, default_port=DEFAULT_PROGRESS_PORT)
+
+
+def build_verifier_progress_endpoint_url(host, port=None):
+    """Build migration-verifier progress endpoint URL (default port 27020)."""
+    return _build_progress_endpoint_url(
+        host, port, default_port=DEFAULT_VERIFIER_PROGRESS_PORT
+    )
+
+
+def build_verifier_summary_endpoint_url(progress_endpoint_url):
+    """Derive migration-verifier /summary URL from a progress endpoint URL."""
+    raw = (progress_endpoint_url or "").strip().rstrip("/")
+    if not raw:
+        return None
+    if raw.endswith(PROGRESS_API_PATH):
+        return raw[: -len(PROGRESS_API_PATH)] + VERIFIER_SUMMARY_API_PATH
+    if re.match(r"^[\w\.\-]+:\d+$", raw):
+        return f"{raw}{VERIFIER_SUMMARY_API_PATH}"
+    if raw.endswith(VERIFIER_SUMMARY_API_PATH):
+        return raw
+    return raw
 
 
 def normalize_progress_endpoint_url(raw):
@@ -201,15 +272,52 @@ PROGRESS_ENDPOINT_URL = (
     else ""
 )
 
-# MongoDB settings
-INTERNAL_DB_NAME = os.getenv('MI_INTERNAL_DB_NAME', "mongosync_reserved_for_internal_use")
-INTERNAL_DB_NAME_NEW = "__mdb_internal_mongosync"
-VERIFIER_SRC_NAMESPACE = "__mdb_internal_mongosync_verifier_src"
-VERIFIER_DST_NAMESPACE = "__mdb_internal_mongosync_verifier_dst"
+_raw_verifier_progress_endpoint = os.getenv("MI_VERIFIER_PROGRESS_ENDPOINT_URL", "")
+VERIFIER_PROGRESS_ENDPOINT_URL = (
+    normalize_progress_endpoint_url(_raw_verifier_progress_endpoint)
+    if _raw_verifier_progress_endpoint.strip()
+    else ""
+)
 
-# Error patterns file
-ERROR_PATTERNS_FILE = os.getenv('MI_ERROR_PATTERNS_FILE', 
-                                 os.path.join(os.path.dirname(__file__), 'error_patterns.json'))
+# MongoDB settings
+MI_MONGOSYNC_DB_NAME = "mongosync_reserved_for_internal_use"
+MI_MONGOSYNC_DB_NAME_NEW = "__mdb_internal_mongosync"
+MI_MIGRATION_VERIFIER_DB_NAME = os.getenv(
+    "MI_MIGRATION_VERIFIER_DB_NAME", "__mdb_internal_migration_verifier"
+)
+MI_EMBEDDED_VERIFIER_SRC_DB_NAME = os.getenv(
+    "MI_EMBEDDED_VERIFIER_SRC_DB_NAME", "__mdb_internal_mongosync_verifier_src"
+)
+MI_EMBEDDED_VERIFIER_DST_DB_NAME = os.getenv(
+    "MI_EMBEDDED_VERIFIER_DST_DB_NAME", "__mdb_internal_mongosync_verifier_dst"
+)
+VERIFIER_GENERATION_LIMIT = parse_env_int(
+    "MI_VERIFIER_GENERATION_LIMIT", 5, min_value=1, max_value=20
+)
+VERIFIER_FAILED_TASKS_LIMIT = parse_env_int(
+    "MI_VERIFIER_FAILED_TASKS_LIMIT", 20, min_value=1, max_value=100
+)
+VERIFIER_SUMMARY_MIN_DURATION_SECS = parse_env_int(
+    "MI_VERIFIER_SUMMARY_MIN_DURATION_SECS", 0, min_value=0, max_value=86400
+)
+# Keep in sync with migration-verifier internal/verifier/metadata.go (verifierMetadataVersion).
+# Not configurable via environment — change only here when MV bumps the schema version.
+VERIFIER_METADATA_VERSION = 7
+
+# Error patterns file (Log Analyzer)
+_DEFAULT_ERROR_PATTERNS_FILE = os.path.join(
+    os.path.dirname(__file__), 'error_patterns.json',
+)
+
+
+def resolve_error_patterns_file() -> str:
+    """Resolve error patterns JSON path from MI_ERROR_PATTERNS_FILE or the bundled default."""
+    configured = os.getenv('MI_ERROR_PATTERNS_FILE', '').strip()
+    return configured or _DEFAULT_ERROR_PATTERNS_FILE
+
+
+ERROR_PATTERNS_FILE = resolve_error_patterns_file()
+
 
 def load_error_patterns():
     """
@@ -221,14 +329,15 @@ def load_error_patterns():
     """
     import json
     logger = logging.getLogger(__name__)
+    patterns_file = resolve_error_patterns_file()
     
     try:
-        with open(ERROR_PATTERNS_FILE, 'r') as f:
+        with open(patterns_file, 'r') as f:
             patterns = json.load(f)
-            logger.info(f"Loaded {len(patterns)} error patterns from {ERROR_PATTERNS_FILE}")
+            logger.info(f"Loaded {len(patterns)} error patterns from {patterns_file}")
             return patterns
     except FileNotFoundError:
-        logger.warning(f"Error patterns file not found: {ERROR_PATTERNS_FILE}")
+        logger.warning(f"Error patterns file not found: {patterns_file}")
         return []
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in error patterns file: {e}")
@@ -275,6 +384,21 @@ def validate_config():
             f"Must be one of: {', '.join(sorted(VALID_LOG_LEVELS))}."
         )
 
+    if PROGRESS_ENDPOINT_URL and not validate_progress_endpoint_url(PROGRESS_ENDPOINT_URL):
+        raise ValueError(
+            f"Invalid MI_PROGRESS_ENDPOINT_URL: {_raw_progress_endpoint!r}. "
+            "Use host:port or host:port/api/v1/progress with port between 1 and 65535."
+        )
+
+    if (
+        VERIFIER_PROGRESS_ENDPOINT_URL
+        and not validate_progress_endpoint_url(VERIFIER_PROGRESS_ENDPOINT_URL)
+    ):
+        raise ValueError(
+            f"Invalid MI_VERIFIER_PROGRESS_ENDPOINT_URL: {_raw_verifier_progress_endpoint!r}. "
+            "Use host:port or host:port/api/v1/progress with port between 1 and 65535."
+        )
+
     return True
 
 def validate_progress_endpoint_url(url):
@@ -285,17 +409,84 @@ def validate_progress_endpoint_url(url):
         url (str): URL to validate in format host:port/api/v1/progress
         
     Returns:
-        bool: True if URL matches the expected format
+        bool: True if URL matches the expected format and port is 1-65535
     """
     if not url:
         return False
-    pattern = r'^[\w\.\-]+:\d+/api/v1/progress$'
-    return bool(re.match(pattern, url))
+    pattern = r'^[\w\.\-]+:(\d+)' + re.escape(PROGRESS_API_PATH) + r'$'
+    match = re.match(pattern, url)
+    if not match:
+        return False
+    try:
+        _parse_progress_port(match.group(1))
+    except ValueError:
+        return False
+    return True
 
 # Database Connection Management
 # Connection pool settings
 CONNECTION_POOL_SIZE = parse_env_int('MI_POOL_SIZE', 10, min_value=1)
 CONNECTION_TIMEOUT_MS = parse_env_int('MI_TIMEOUT_MS', 30000, min_value=1)
+VERIFIER_METADATA_TIMEOUT_MS = parse_env_int(
+    'MI_VERIFIER_METADATA_TIMEOUT_MS', 120000, min_value=1000,
+)
+
+def _create_mongo_client(connection_string, *, timeout_ms):
+    """
+    Create a MongoDB client with connection pooling and the given timeout settings.
+
+    Args:
+        connection_string (str): MongoDB connection string
+        timeout_ms (int): Socket/connect/server-selection timeout in milliseconds
+
+    Returns:
+        MongoClient: MongoDB client instance
+    """
+    logger = logging.getLogger(__name__)
+
+    try:
+        from pymongo.uri_parser import parse_uri
+        parsed = parse_uri(connection_string)
+
+        uri_tls_options = parsed.get('options', {})
+        is_srv = connection_string.strip().lower().startswith('mongodb+srv://')
+        tls_explicitly_set = 'tls' in uri_tls_options or 'ssl' in uri_tls_options
+        tls_disabled = uri_tls_options.get('tls', uri_tls_options.get('ssl', True)) is False
+        use_tls_ca = is_srv or (tls_explicitly_set and not tls_disabled)
+
+        client_kwargs = dict(
+            maxPoolSize=CONNECTION_POOL_SIZE,
+            minPoolSize=1,
+            maxIdleTimeMS=30000,
+            serverSelectionTimeoutMS=timeout_ms,
+            connectTimeoutMS=timeout_ms,
+            socketTimeoutMS=timeout_ms,
+            retryWrites=True,
+            retryReads=True,
+        )
+        if use_tls_ca:
+            client_kwargs['tlsCAFile'] = certifi.where()
+
+        client = MongoClient(connection_string, **client_kwargs)
+
+        client.admin.command('ping', read_preference=ReadPreference.SECONDARY_PREFERRED)
+        logger.info(
+            "Successfully connected to MongoDB with pool size %s (timeout_ms=%s)",
+            CONNECTION_POOL_SIZE,
+            timeout_ms,
+        )
+
+        return client
+
+    except InvalidURI as e:
+        logger.error(f"Invalid MongoDB connection string: {e}")
+        raise
+    except PyMongoError as e:
+        logger.error(f"Failed to connect to MongoDB: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error connecting to MongoDB: {e}")
+        raise PyMongoError(f"Connection failed: {e}") from e
 
 @lru_cache(maxsize=4)
 def get_mongo_client(connection_string):
@@ -312,52 +503,14 @@ def get_mongo_client(connection_string):
         InvalidURI: If the connection string is invalid
         PyMongoError: If connection fails
     """
-    logger = logging.getLogger(__name__)
-    
-    try:
-        # Validate connection string format
-        from pymongo.uri_parser import parse_uri
-        parsed = parse_uri(connection_string)
-        
-        # Only set tlsCAFile for SRV connections (Atlas) or when TLS is explicitly enabled.
-        # Plain mongodb:// URIs to local/on-prem instances often don't use TLS.
-        uri_tls_options = parsed.get('options', {})
-        is_srv = connection_string.strip().lower().startswith('mongodb+srv://')
-        tls_explicitly_set = 'tls' in uri_tls_options or 'ssl' in uri_tls_options
-        tls_disabled = uri_tls_options.get('tls', uri_tls_options.get('ssl', True)) is False
-        use_tls_ca = is_srv or (tls_explicitly_set and not tls_disabled)
+    return _create_mongo_client(connection_string, timeout_ms=CONNECTION_TIMEOUT_MS)
 
-        client_kwargs = dict(
-            maxPoolSize=CONNECTION_POOL_SIZE,
-            minPoolSize=1,
-            maxIdleTimeMS=30000,
-            serverSelectionTimeoutMS=CONNECTION_TIMEOUT_MS,
-            connectTimeoutMS=CONNECTION_TIMEOUT_MS,
-            socketTimeoutMS=CONNECTION_TIMEOUT_MS,
-            retryWrites=True,
-            retryReads=True,
-        )
-        if use_tls_ca:
-            client_kwargs['tlsCAFile'] = certifi.where()
-
-        # Create client with connection pooling
-        client = MongoClient(connection_string, **client_kwargs)
-        
-        # Test the connection (secondaryPreferred: reachable when primary node is slow/unavailable)
-        client.admin.command('ping', read_preference=ReadPreference.SECONDARY_PREFERRED)
-        logger.info(f"Successfully connected to MongoDB with pool size {CONNECTION_POOL_SIZE}")
-        
-        return client
-        
-    except InvalidURI as e:
-        logger.error(f"Invalid MongoDB connection string: {e}")
-        raise
-    except PyMongoError as e:
-        logger.error(f"Failed to connect to MongoDB: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error connecting to MongoDB: {e}")
-        raise PyMongoError(f"Connection failed: {e}")
+@lru_cache(maxsize=4)
+def get_verifier_metadata_mongo_client(connection_string):
+    """Cached MongoDB client for verifier metadata reads (extended timeout)."""
+    return _create_mongo_client(
+        connection_string, timeout_ms=VERIFIER_METADATA_TIMEOUT_MS,
+    )
 
 def get_database(connection_string, database_name):
     """
@@ -373,26 +526,33 @@ def get_database(connection_string, database_name):
     client = get_mongo_client(connection_string)
     return client[database_name]
 
+def get_verifier_metadata_database(connection_string, database_name):
+    """
+    Get a verifier metadata database with an extended socket timeout.
+
+    Uses MI_VERIFIER_METADATA_TIMEOUT_MS (default 120s) instead of MI_TIMEOUT_MS
+    for metadata aggregation reads only.
+    """
+    client = get_verifier_metadata_mongo_client(connection_string)
+    return client[database_name]
+
 _resolved_internal_db_cache = {}
 _resolved_internal_db_lock = threading.Lock()
 
-def resolve_internal_db_name(connection_string):
+def resolve_mongosync_db_name(connection_string):
     """
     Auto-detect which mongosync internal database name exists on the cluster.
-    
+
     Checks for the new name first (__mdb_internal_mongosync), then falls back
     to the legacy name (mongosync_reserved_for_internal_use). Results are cached
-    per connection string. The MI_INTERNAL_DB_NAME env var acts as a hard override.
-    
+    per connection string.
+
     Args:
         connection_string (str): MongoDB connection string
-        
+
     Returns:
         str: The resolved internal database name
     """
-    if os.getenv('MI_INTERNAL_DB_NAME'):
-        return INTERNAL_DB_NAME
-
     with _resolved_internal_db_lock:
         if connection_string in _resolved_internal_db_cache:
             return _resolved_internal_db_cache[connection_string]
@@ -401,17 +561,17 @@ def resolve_internal_db_name(connection_string):
     try:
         client = get_mongo_client(connection_string)
         db_names = client.list_database_names()
-        if INTERNAL_DB_NAME_NEW in db_names:
-            resolved = INTERNAL_DB_NAME_NEW
+        if MI_MONGOSYNC_DB_NAME_NEW in db_names:
+            resolved = MI_MONGOSYNC_DB_NAME_NEW
         else:
-            resolved = INTERNAL_DB_NAME
+            resolved = MI_MONGOSYNC_DB_NAME
         with _resolved_internal_db_lock:
             _resolved_internal_db_cache[connection_string] = resolved
         logger.info(f"Resolved internal DB name: {resolved}")
         return resolved
     except Exception as e:
         logger.warning(f"Could not auto-detect internal DB name, using default: {e}")
-        return INTERNAL_DB_NAME
+        return MI_MONGOSYNC_DB_NAME
 
 def validate_connection(connection_string):
     """
@@ -443,6 +603,7 @@ def clear_connection_cache():
     """
     logger = logging.getLogger(__name__)
     get_mongo_client.cache_clear()
+    get_verifier_metadata_mongo_client.cache_clear()
     with _resolved_internal_db_lock:
         _resolved_internal_db_cache.clear()
     logger.info("MongoDB connection cache cleared")

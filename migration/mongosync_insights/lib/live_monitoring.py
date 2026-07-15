@@ -5,7 +5,12 @@ import logging
 
 import requests
 
-from .connection_validator import sanitize_for_display
+from .app_config import (
+    MONGOSYNC_PROGRESS_TIMEOUT_SECS,
+    VERIFIER_PROGRESS_TIMEOUT_SECS,
+    VERIFIER_SUMMARY_TIMEOUT_SECS,
+)
+from .data_sources import STATUS_ACTIVE, STATUS_UNAVAILABLE, build_data_sources
 from .live_metadata_status import (
     MetadataFetchError,
     describe_build_indexes_policy,
@@ -25,8 +30,6 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
-_PROGRESS_FETCH_TIMEOUT = 10
-
 
 class ProgressFetchError(Exception):
     """Raised when the progress endpoint cannot be reached or returns invalid data."""
@@ -36,7 +39,7 @@ class ProgressFetchError(Exception):
         self.kind = kind
 
 
-def fetch_progress(endpoint_url):
+def fetch_progress(endpoint_url, *, timeout_secs=None):
     """
     GET mongosync progress JSON from host:port/api/v1/progress.
 
@@ -46,10 +49,12 @@ def fetch_progress(endpoint_url):
     Raises:
         ProgressFetchError: on timeout, connection, HTTP, or JSON errors.
     """
+    if timeout_secs is None:
+        timeout_secs = MONGOSYNC_PROGRESS_TIMEOUT_SECS
     url = f"http://{endpoint_url}"
     logger.info("Fetching progress from endpoint: %s", url)
     try:
-        response = requests.get(url, timeout=_PROGRESS_FETCH_TIMEOUT)
+        response = requests.get(url, timeout=timeout_secs)
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.Timeout as e:
@@ -80,6 +85,62 @@ def fetch_progress(endpoint_url):
     return progress, warnings
 
 
+def fetch_verifier_progress(endpoint_url):
+    """GET migration-verifier /api/v1/progress."""
+    return fetch_progress(endpoint_url, timeout_secs=VERIFIER_PROGRESS_TIMEOUT_SECS)
+
+
+def fetch_summary(endpoint_url, *, min_duration_secs=0):
+    """
+    GET migration-verifier summary JSON from host:port/api/v1/summary.
+
+    Returns:
+        dict: summary response (top-level BSON ext JSON)
+
+    Raises:
+        ProgressFetchError: on timeout, connection, HTTP, JSON, or API errors.
+    """
+    url = f"http://{endpoint_url}"
+    params = {}
+    if min_duration_secs and min_duration_secs > 0:
+        params["minDurationSecs"] = min_duration_secs
+    logger.info("Fetching summary from endpoint: %s", url)
+    try:
+        response = requests.get(
+            url, params=params or None, timeout=VERIFIER_SUMMARY_TIMEOUT_SECS,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.Timeout as e:
+        raise ProgressFetchError(
+            "Timeout — could not reach the summary endpoint.", kind="timeout"
+        ) from e
+    except requests.exceptions.ConnectionError as e:
+        raise ProgressFetchError(
+            "Connection error — could not reach the summary endpoint.", kind="connection"
+        ) from e
+    except requests.exceptions.HTTPError as e:
+        raise ProgressFetchError(
+            f"HTTP error from summary endpoint ({e.response.status_code}).", kind="http"
+        ) from e
+    except requests.exceptions.RequestException as e:
+        raise ProgressFetchError(
+            f"Request failed: {e}", kind="request"
+        ) from e
+    except json.JSONDecodeError as e:
+        raise ProgressFetchError(
+            "Invalid JSON response from summary endpoint.", kind="json"
+        ) from e
+
+    if not isinstance(data, dict):
+        raise ProgressFetchError(
+            "Invalid JSON response from summary endpoint.", kind="json"
+        )
+    if data.get("error"):
+        raise ProgressFetchError(str(data["error"]), kind="api")
+    return data
+
+
 def _state_badge_color(state_upper):
     mapping = {
         "RUNNING": "green",
@@ -104,43 +165,6 @@ def _derive_state_badge_from_state(state):
     state_upper = (state or "").upper()
     label = state_upper or "—"
     return {"label": label, "color": _state_badge_color(state_upper)}
-
-
-def _api_base_url(endpoint_url):
-    """Build http URL for UI subtitle (host:port/api/v1/progress)."""
-    if not endpoint_url:
-        return None
-    return f"http://{endpoint_url}"
-
-
-def _endpoint_meta(endpoint_url):
-    """Shared endpoint fields for progress-monitor API responses."""
-    return {
-        "endpointDisplay": endpoint_url,
-        "apiBaseUrl": _api_base_url(endpoint_url),
-    }
-
-
-def _build_connectivity(endpoint_url=None, connection_string=None):
-    """Rows for the Connectivity card (endpoint URL and metadata connection string)."""
-    rows = []
-    if endpoint_url:
-        rows.append(
-            {
-                "label": "Progress endpoint URL",
-                "value": _api_base_url(endpoint_url),
-            }
-        )
-    if connection_string:
-        rows.append(
-            {
-                "label": "Metadata connection string",
-                "value": sanitize_for_display(connection_string),
-            }
-        )
-    if not rows:
-        return None
-    return {"title": "Connectivity", "rows": rows}
 
 
 def _display_or_dash(value):
@@ -736,14 +760,36 @@ def _progress_has_index_building(progress):
     return isinstance(index_building, dict) and bool(index_building)
 
 
+def _resolve_data_sources(endpoint_url, connection_string, *, progress_available, metadata, progress_warning, metadata_warning):
+    progress_status = None
+    if endpoint_url:
+        if progress_available:
+            progress_status = STATUS_ACTIVE
+        elif progress_warning:
+            progress_status = STATUS_UNAVAILABLE
+
+    metadata_status = None
+    if connection_string:
+        if metadata:
+            metadata_status = STATUS_ACTIVE
+        elif metadata_warning:
+            metadata_status = STATUS_UNAVAILABLE
+
+    return build_data_sources(
+        progress_configured=bool(endpoint_url),
+        metadata_configured=bool(connection_string),
+        progress_status=progress_status,
+        metadata_status=metadata_status,
+    )
+
+
 def build_live_monitor_payload(endpoint_url=None, connection_string=None):
     """
     Build the Live Monitoring tab payload from progress endpoint and/or metadata DB.
     """
     base = {
-        **_endpoint_meta(endpoint_url),
         "warnings": [],
-        "connectivity": _build_connectivity(endpoint_url, connection_string),
+        "dataSources": None,
         "progressWarning": None,
         "metadataWarning": None,
         "display": None,
@@ -795,6 +841,14 @@ def build_live_monitor_payload(endpoint_url=None, connection_string=None):
         base["error"] = " ".join(errors)
         base["progressWarning"] = progress_warning
         base["metadataWarning"] = metadata_warning
+        base["dataSources"] = _resolve_data_sources(
+            endpoint_url,
+            connection_string,
+            progress_available=progress_available,
+            metadata=metadata,
+            progress_warning=progress_warning,
+            metadata_warning=metadata_warning,
+        )
         return base
 
     base["warnings"] = warnings if progress_available else []
@@ -803,15 +857,27 @@ def build_live_monitor_payload(endpoint_url=None, connection_string=None):
     base["display"] = _build_display(
         progress, metadata, progress_available=progress_available
     )
+    base["dataSources"] = _resolve_data_sources(
+        endpoint_url,
+        connection_string,
+        progress_available=progress_available,
+        metadata=metadata,
+        progress_warning=progress_warning,
+        metadata_warning=metadata_warning,
+    )
     return base
 
 
 def progress_monitor_no_config_response(connection_string=None):
     """Response when neither progress endpoint nor metadata connection is configured."""
     return {
-        **_endpoint_meta(None),
         "warnings": [],
-        "connectivity": _build_connectivity(None, connection_string),
+        "dataSources": build_data_sources(
+            progress_configured=False,
+            metadata_configured=bool(connection_string),
+            progress_status=None,
+            metadata_status=STATUS_UNAVAILABLE if connection_string else None,
+        ),
         "progressWarning": None,
         "metadataWarning": None,
         "display": None,
