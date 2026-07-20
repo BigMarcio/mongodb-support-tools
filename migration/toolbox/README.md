@@ -30,6 +30,10 @@ Gets the busiest collections in terms of writes (delete/insert/replace/update) a
 
 Audits query planner customizations across all databases and collections, reporting only the namespaces where a setting is present. Supports two modes: `indexFilters` (legacy `planCacheListFilters`, all versions) and `querySettings` (the `$querySettings` aggregation, MongoDB 8.0+). Useful as a pre-migration check so planner customizations can be reviewed and re-created on the destination. For full documentation and examples, see [plannerSettingsChecker README](plannerSettingsChecker/README.md).
 
+## [Hot Doc Spread Check](hotDocSpreadCheck)
+
+Scans recent change-stream write activity and identifies documents that are hot enough to plausibly explain high applier spread disparity. The script applies a spread-disparity threshold plus per-document and total-window changes-per-second gates to reduce low-traffic false positives. For full documentation and examples, see [hotDocSpreadCheck README](hotDocSpreadCheck/hot_doc_spread_check_readme.md).
+
 ### License
 
 [Apache 2.0](http://www.apache.org/licenses/LICENSE-2.0)
