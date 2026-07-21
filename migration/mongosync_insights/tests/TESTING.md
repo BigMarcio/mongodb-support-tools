@@ -3,7 +3,7 @@
 **Scope:** `migration/mongosync_insights/tests/`  
 **Framework:** pytest (with some `unittest.TestCase` classes)  
 **CI:** [`.github/workflows/mongosync-insights-tests.yml`](../../../.github/workflows/mongosync-insights-tests.yml) — runs `python -m pytest tests/ -q` on Python 3.11  
-**Total:** **509 tests** across **30 test files** (+ `conftest.py` shared fixtures)
+**Total:** **516 tests** across **30 test files** (+ `conftest.py` shared fixtures)
 
 ---
 
@@ -15,10 +15,10 @@
 | Security & paths | 2 | 22 | Connection string sanitization, store ID validation, path traversal |
 | Log storage & routes | 7 | 69 | Upload, search, decompress, snapshots, FTS, timestamps |
 | Metrics & OTEL parsing | 2 | 39 | MIME detection, phase events, Prometheus/OTEL log parsing |
-| Live monitoring | 6 | 103 | Progress/verifier API clients, routes, metadata, formatting, charts |
+| Live monitoring | 6 | 109 | Progress/verifier API clients, routes, metadata, formatting, charts |
 | Migration metadata UI | 8 | 114 | Verification mode, index building, filters, natural order, phases |
 | Migration verifier | 1 | 75 | MongoDB verifier queries, badges, payloads, generation history |
-| **Total** | **30** | **509** | |
+| **Total** | **30** | **516** | |
 
 ---
 
@@ -27,8 +27,8 @@
 ```bash
 cd migration/mongosync_insights
 pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest tests/ -q          # all 509 tests
-python -m pytest tests/ --collect-only -q   # list without running
+python -m pytest tests/ -q          # all 516 tests
+python -m pytest tests/ --collect-only -q   # list without running (verify current count)
 python -m pytest tests/test_log_time.py -v  # single file
 ```
 
@@ -56,11 +56,11 @@ python -m pytest tests/test_log_time.py -v  # single file
 
 | File | Tests | Validates |
 |------|------:|-----------|
-| `test_log_store.py` | 11 | Insert, FTS search, pagination, timestamp range queries, delete |
+| `test_log_store.py` | 14 | Insert, FTS search, pagination, timestamp range queries (with/without Z), delete |
 | `test_log_store_registry.py` | 4 | Store open/cache hit-miss, expiry, maintenance cleanup |
-| `test_log_time.py` | 5 | Log search datetime parsing, start/end bound normalization |
+| `test_log_time.py` | 7 | Log search datetime parsing, start/end bound normalization |
 | `test_file_decompressor.py` | 20 | gzip/bzip2/tar/zip decompression, macOS metadata skipping, MIME routing |
-| `test_logs_routes.py` | 15 | `/logs` home, upload, search (text + timestamp), snapshot list/load/delete |
+| `test_logs_routes.py` | 17 | `/logs` home, upload, search (text + timestamp, no-Z stored logs), snapshot list/load/delete |
 | `test_upload_fixtures.py` | 3 | End-to-end upload + search with sample fixtures |
 | `test_snapshot_store.py` | 4 | Save/load round-trip, list by mtime, delete, cleanup |
 
@@ -71,7 +71,7 @@ python -m pytest tests/test_log_time.py -v  # single file
 | `test_logs_metrics.py` | 21 | MIME sniffing, phase event extraction from logs/API, merge logic, commit/write flags |
 | `test_otel_metrics.py` | 18 | Prometheus label/message parsing, metrics log lines, collector histograms, config/titles |
 
-### 5. Live monitoring (103 tests)
+### 5. Live monitoring (109 tests)
 
 | File | Tests | Validates |
 |------|------:|-----------|
@@ -118,7 +118,7 @@ Fixtures under `tests/fixtures/`:
 
 ---
 
-## Full Test Inventory (509 tests)
+## Full Test Inventory (516 tests)
 
 ### `test_app_config.py` (80)
 
@@ -191,15 +191,15 @@ Fixtures under `tests/fixtures/`:
 
 - Live home, monitoring POST validation, progress monitor, verifier POST/GET endpoints
 
-### `test_log_store.py` (11)
+### `test_log_store.py` (14)
 
-- Insert, FTS, pagination, timestamp gte/lte/range, latest lines, delete
+- Insert, FTS, pagination, timestamp gte/lte/range, no-Z stored timestamp gte, exact-boundary inclusion, latest lines, delete
 
 ### `test_log_store_registry.py` (4)
 
 - Open hit/miss, duplicate register, expired entry, maintenance cleanup
 
-### `test_log_time.py` (5)
+### `test_log_time.py` (7)
 
 - Parse datetime, Z suffix, reject empty, normalize start/end bounds
 
@@ -207,9 +207,9 @@ Fixtures under `tests/fixtures/`:
 
 - MIME detection (7 parametrized), phase events from info/in-memory/API, merge, progress flags
 
-### `test_logs_routes.py` (15)
+### `test_logs_routes.py` (17)
 
-- Logs home, upload (plain/reject/no file), search (happy path, timestamps, validation), snapshots
+- Logs home, upload (plain/reject/no file), search (happy path, timestamps, no-Z stored logs, validation), snapshots
 
 ### `test_migration_verifier.py` (75)
 

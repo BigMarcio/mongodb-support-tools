@@ -6,7 +6,7 @@ on:
       - "MIv*"
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -72,6 +72,9 @@ jobs:
   build-macos-arm64:
     needs: test
     runs-on: macos-latest
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -96,6 +99,9 @@ jobs:
   build-ubuntu-amd64:
     needs: test
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -110,6 +116,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             python3.11 python3.11-venv python3-pip ruby-rubygems build-essential
+          sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
           sudo gem install fpm
 
       - name: Build Ubuntu amd64 package
@@ -127,6 +134,9 @@ jobs:
   build-amazonlinux-x86_64:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     container:
       image: amazonlinux:2023
     steps:
@@ -157,6 +167,9 @@ jobs:
   build-rhel8-x86_64:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     container:
       image: rockylinux:8
     steps:
@@ -187,6 +200,9 @@ jobs:
   build-rhel9-x86_64:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     container:
       image: rockylinux:9
     steps:
@@ -223,6 +239,9 @@ jobs:
       - build-rhel8-x86_64
       - build-rhel9-x86_64
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
     defaults:
       run:
         working-directory: .

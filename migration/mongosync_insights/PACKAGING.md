@@ -173,7 +173,7 @@ Packages install under `/opt/mongosync-insights` with systemd and `/etc/mongosyn
 
 | Tool | RPM distros | Ubuntu |
 |---|---|---|
-| Python 3.11+ | `python3.11`, `python3.11-pip` | `python3.11`, `python3.11-venv`, `python3-pip` |
+| Python 3.11+ | `python3.11`, `python3.11-pip` | `python3.11`, `python3.11-venv`, `python3-pip`; point `python3` at 3.11 via `update-alternatives` |
 | fpm | `sudo gem install fpm` | `sudo gem install fpm` |
 | Ruby | `ruby`, `rubygems` | `ruby-rubygems` |
 | rpmbuild | `rpm-build` (RPM only) | not required for `.deb` |
@@ -207,6 +207,7 @@ sudo gem install fpm
 cd migration/mongosync_insights
 sudo apt-get update
 sudo apt-get install -y python3.11 python3.11-venv python3-pip ruby-rubygems build-essential
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 sudo gem install fpm
 ./build_ubuntu.sh
 ```

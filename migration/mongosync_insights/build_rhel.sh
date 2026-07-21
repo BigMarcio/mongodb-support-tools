@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h | --help)
-            sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
