@@ -63,6 +63,29 @@ class TestLogStoreSearch:
         messages = {row["message"] for row in result["results"]}
         assert messages == {"middle", "late"}
 
+    def test_find_by_timestamp_gte_without_z_stored(self, store):
+        store.insert_many([
+            _doc(time="2026-01-01T10:00:00.000", message="early"),
+            _doc(time="2026-01-01T10:30:00.000", message="middle"),
+            _doc(time="2026-01-01T11:00:00.000", message="late"),
+        ])
+        store.build_fts_index()
+        result = store.find({"timestamp_gte": "2026-01-01T10:30:00.000"})
+        assert result["total"] == 2
+        messages = {row["message"] for row in result["results"]}
+        assert messages == {"middle", "late"}
+
+    def test_find_by_timestamp_gte_includes_exact_boundary_without_z(self, store):
+        store.insert_many([
+            _doc(time="2026-01-01T10:00:00.000", message="at-boundary"),
+            _doc(time="2026-01-01T10:30:00.000", message="later"),
+        ])
+        store.build_fts_index()
+        result = store.find({"timestamp_gte": "2026-01-01T10:00:00.000"})
+        assert result["total"] == 2
+        messages = {row["message"] for row in result["results"]}
+        assert messages == {"at-boundary", "later"}
+
     def test_find_by_timestamp_lte(self, store):
         store.insert_many([
             _doc(time="2026-01-01T10:00:00.000Z", message="early"),
@@ -70,7 +93,7 @@ class TestLogStoreSearch:
             _doc(time="2026-01-01T11:00:00.000Z", message="late"),
         ])
         store.build_fts_index()
-        result = store.find({"timestamp_lte": "2026-01-01T10:30:00.999999Z"})
+        result = store.find({"timestamp_lte": "2026-01-01T10:30:00Z"})
         assert result["total"] == 2
         messages = {row["message"] for row in result["results"]}
         assert messages == {"early", "middle"}
@@ -84,10 +107,22 @@ class TestLogStoreSearch:
         store.build_fts_index()
         result = store.find({
             "timestamp_gte": "2026-01-01T10:15:00.000Z",
-            "timestamp_lte": "2026-01-01T10:45:00.999999Z",
+            "timestamp_lte": "2026-01-01T10:45:00Z",
         })
         assert result["total"] == 1
         assert result["results"][0]["message"] == "middle"
+
+    def test_find_by_timestamp_lte_includes_high_millisecond_in_second(self, store):
+        store.insert_many([
+            _doc(time="2026-01-01T10:00:00.000Z", message="early"),
+            _doc(time="2026-01-01T10:30:00.999Z", message="at-end-of-second"),
+            _doc(time="2026-01-01T11:00:00.000Z", message="late"),
+        ])
+        store.build_fts_index()
+        result = store.find({"timestamp_lte": "2026-01-01T10:30:00Z"})
+        assert result["total"] == 2
+        messages = {row["message"] for row in result["results"]}
+        assert messages == {"early", "at-end-of-second"}
 
     def test_find_by_timestamp_range_and_text(self, store):
         store.insert_many([
@@ -99,7 +134,7 @@ class TestLogStoreSearch:
         result = store.find({
             "$text": "Replication",
             "timestamp_gte": "2026-01-01T10:20:00.000Z",
-            "timestamp_lte": "2026-01-01T10:45:00.999999Z",
+            "timestamp_lte": "2026-01-01T10:45:00Z",
         })
         assert result["total"] == 1
         assert result["results"][0]["message"] == "Replication middle"

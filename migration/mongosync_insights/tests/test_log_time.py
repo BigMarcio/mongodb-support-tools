@@ -27,8 +27,16 @@ class TestParseLogSearchDatetime:
 
 
 class TestNormalizeSearchBounds:
+    # Start bounds omit Z so gte matches stored timestamps with or without Z.
+
     def test_normalize_start_without_fraction(self):
         assert normalize_search_start("2026-01-01T10:30:45") == "2026-01-01T10:30:45.000"
 
+    def test_normalize_start_preserves_fractional_input(self):
+        assert normalize_search_start("2026-01-01T10:30:45.500Z") == "2026-01-01T10:30:45.500"
+
     def test_normalize_end_includes_selected_second(self):
-        assert normalize_search_end("2026-01-01T10:30:45") == "2026-01-01T10:30:45.999999"
+        assert normalize_search_end("2026-01-01T10:30:45") == "2026-01-01T10:30:45Z"
+
+    def test_normalize_end_ignores_fractional_input(self):
+        assert normalize_search_end("2026-01-01T10:30:45.500Z") == "2026-01-01T10:30:45Z"

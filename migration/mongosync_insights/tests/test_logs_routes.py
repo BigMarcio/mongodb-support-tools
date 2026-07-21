@@ -94,6 +94,51 @@ class TestSearchLogs:
         assert body["total"] == 1
         assert body["results"][0]["message"] == "middle"
 
+    def test_search_end_includes_bare_z_and_high_millisecond_logs(self, app_client, tmp_path):
+        store_id = str(uuid.uuid4())
+        db_path = snapshot_store.logstore_path(store_id)
+        store = LogStore(db_path)
+        store.insert_many([
+            {"time": "2026-01-01T10:00:00Z", "level": "info", "message": "bare-z"},
+            {"time": "2026-01-01T10:30:00.999Z", "level": "info", "message": "high-ms"},
+            {"time": "2026-01-01T11:00:00.000Z", "level": "info", "message": "late"},
+        ])
+        store.build_fts_index()
+        store.close()
+        log_store_registry.register(store_id, db_path)
+
+        r = app_client.get(
+            "/logs/search_logs"
+            f"?store_id={store_id}"
+            "&end=2026-01-01T10:30:00"
+        )
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["total"] == 2
+        messages = {row["message"] for row in body["results"]}
+        assert messages == {"bare-z", "high-ms"}
+
+    def test_search_start_includes_no_z_stored_logs(self, app_client, tmp_path):
+        store_id = str(uuid.uuid4())
+        db_path = snapshot_store.logstore_path(store_id)
+        store = LogStore(db_path)
+        store.insert_many([
+            {"time": "2026-01-01T10:00:00.000", "level": "info", "message": "at-boundary"},
+            {"time": "2026-01-01T10:30:00.000", "level": "info", "message": "later"},
+        ])
+        store.build_fts_index()
+        store.close()
+        log_store_registry.register(store_id, db_path)
+
+        r = app_client.get(
+            f"/logs/search_logs?store_id={store_id}&start=2026-01-01T10:00:00"
+        )
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["total"] == 2
+        messages = {row["message"] for row in body["results"]}
+        assert messages == {"at-boundary", "later"}
+
     def test_search_date_only_without_text(self, app_client, tmp_path):
         store_id = str(uuid.uuid4())
         db_path = snapshot_store.logstore_path(store_id)
