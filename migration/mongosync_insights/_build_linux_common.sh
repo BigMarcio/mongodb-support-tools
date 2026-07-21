@@ -81,7 +81,8 @@ EOF
 Install build prerequisites (example):
 
   sudo apt-get update
-  sudo apt-get install -y python3.11 python3.11-venv ruby-rubygems build-essential
+  sudo apt-get install -y python3.11 python3.11-venv python3-pip ruby-rubygems build-essential
+  sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
   sudo gem install fpm
 EOF
             ;;
@@ -90,11 +91,17 @@ EOF
 
 linux_check_prereqs() {
     local missing=()
-    for cmd in python3 pip3 fpm; do
+    for cmd in python3 fpm; do
         if ! command -v "$cmd" &>/dev/null; then
             missing+=("$cmd")
         fi
     done
+    if ! python3 -m pip --version &>/dev/null; then
+        missing+=("pip (python3 -m pip)")
+    fi
+    if ! python3 -c 'import venv' 2>/dev/null; then
+        missing+=("venv (python3 -m venv; on Ubuntu: python3.11-venv)")
+    fi
     if [[ "$PACKAGE_FORMAT" == "rpm" ]]; then
         if ! command -v rpmbuild &>/dev/null; then
             missing+=("rpmbuild")
@@ -216,7 +223,13 @@ SCRIPT
 linux_fpm_iteration() {
     case "$LINUX_DISTRO" in
         amazonlinux) echo "1.amzn" ;;
-        rhel) echo "1.el" ;;
+        rhel)
+            if [[ -n "${RHEL_EL_MAJOR:-}" ]]; then
+                echo "1.el${RHEL_EL_MAJOR}"
+            else
+                echo "1.el"
+            fi
+            ;;
         ubuntu) echo "1.ubuntu" ;;
         *) echo "1" ;;
     esac
@@ -290,7 +303,7 @@ linux_print_success() {
         pattern="$SCRIPT_DIR/dist/mongosync-insights-*.rpm"
         install_cmd="sudo rpm -i"
     else
-        pattern="$SCRIPT_DIR/dist/mongosync-insights-*.deb"
+        pattern="$SCRIPT_DIR/dist/mongosync-insights_*.deb"
         install_cmd="sudo apt install ./"
     fi
 

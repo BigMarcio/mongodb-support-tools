@@ -1,4 +1,9 @@
-"""ISO-8601 helpers for log timestamp search bounds (literal, no timezone conversion)."""
+"""ISO-8601 helpers for log timestamp search bounds (literal, no timezone conversion).
+
+Start bounds use millisecond-prefixed strings without a ``Z`` suffix so SQLite
+string comparison matches stored mongosync log ``time`` values with or without
+``Z``. End bounds use a ``Z`` suffix on the selected second (no fraction).
+"""
 from datetime import datetime
 
 
@@ -47,6 +52,4 @@ def normalize_search_start(value: str) -> str:
 def normalize_search_end(value: str) -> str:
     """Normalize a search end bound for inclusive timestamp_lte comparison."""
     dt = parse_log_search_datetime(value)
-    #return dt.strftime("%Y-%m-%dT%H:%M:%S") + ".999999"
-    # Use a high-sorting sentinel so this bound includes millisecond timestamps like "... .999Z".
-    return dt.strftime("%Y-%m-%dT%H:%M:%S") + ".999Z"
+    return dt.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
