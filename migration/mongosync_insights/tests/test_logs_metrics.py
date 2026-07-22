@@ -49,6 +49,15 @@ class TestPhaseEventFromInfo:
     def test_unknown_message_returns_none(self):
         assert _phase_event_from_info({"time": "2026-01-01T12:00:00Z", "message": "other"}) is None
 
+    def test_trailing_period_in_message(self):
+        obj = {
+            "time": "2026-01-01T12:00:00.123456Z",
+            "message": "Starting collection copy phase.",
+        }
+        event = _phase_event_from_info(obj)
+        assert event is not None
+        assert event[1] == "collection copy"
+
 
 class TestPhaseEventFromInMemory:
     def test_parses_phase_update(self):

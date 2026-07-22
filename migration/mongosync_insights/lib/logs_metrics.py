@@ -85,7 +85,7 @@ PHASES_EXCLUDED_FROM_MERGE = frozenset({"uninitialized"})
 def _phase_event_from_info(json_obj):
     """Return (time, canonical, canonical) from an info-level phase log line, or None."""
     message = (json_obj.get("message") or "").strip()
-    canonical = INFO_PHASE_TO_CANONICAL.get(message.lower())
+    canonical = INFO_PHASE_TO_CANONICAL.get(message.lower().rstrip("."))
     if not canonical:
         return None
     t = (json_obj.get("time") or "")[:26]
