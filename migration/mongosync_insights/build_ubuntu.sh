@@ -6,7 +6,8 @@
 #
 # Prerequisites:
 #   sudo apt-get update
-#   sudo apt-get install -y python3.11 python3.11-venv ruby-rubygems build-essential
+#   sudo apt-get install -y python3.11 python3.11-venv python3-pip ruby-rubygems build-essential
+#   sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 #   sudo gem install fpm
 #
 # Usage:
