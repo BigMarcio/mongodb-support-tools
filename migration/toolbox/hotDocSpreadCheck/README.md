@@ -357,7 +357,7 @@ The script stops when any of these happens:
 
 ## Output
 
-The script writes a JSON file and also prints a console summary.
+The script writes a report file (JSON and/or Markdown, depending on `outputFormat`) and also prints a console summary.
 
 ### JSON output
 
