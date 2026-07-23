@@ -98,7 +98,7 @@ Start with these sections in the console output:
 The following example shows what a successful run can look like:
 
 ```bash
-mongosh "mongodb+srv://Admin:Qwerty123@cluster0.jrmrq.mongodb.net/" --file hot-doc-spread-check.js
+mongosh "mongodb+srv://user:password@cluster0.name.mongodb.net/" --file hot-doc-spread-check.js
 Reading change stream for ALL namespaces from 2026-07-22T13:17:50.000Z ...
 Stream closed. Reason: idle-timeout. Matched events: 20595. Qualified doc events: 20595.
 Wrote results to hot-doc-spread-check.json
