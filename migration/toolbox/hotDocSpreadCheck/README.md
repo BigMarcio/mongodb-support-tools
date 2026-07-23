@@ -10,6 +10,128 @@ In this script, a document is considered a hot-doc candidate only if it passes a
 * per-document changes-per-second gate
 * total-window changes-per-second gate
 
+## Quick start
+
+### 1. Run with defaults against all user namespaces
+
+Use this when you want a fast first pass over recent write activity across the deployment:
+
+```bash
+mongosh "mongodb://user:password@host/admin" \
+  --file hot-doc-spread-check.js
+```
+
+Defaults:
+
+* 5-minute lookback window
+* 128 appliers
+* spread disparity threshold 5
+* minimum 2 doc changes/sec
+* minimum 10 total changes/sec
+* top 5 documents included in proxy analysis
+
+### 2. Run against one namespace
+
+Use this when you already know which collection is suspect:
+
+```bash
+mongosh "mongodb://user:password@host/admin" \
+  --eval 'globalThis.MONITOR_ARGS = { namespaces: ["sdtest5.events"] }' \
+  --file hot-doc-spread-check.js
+```
+
+### 3. Run with custom tuning
+
+Use this when you want a different proxy depth, a different window, or more conservative thresholds:
+
+```bash
+mongosh "mongodb://user:password@host/admin" \
+  --eval 'globalThis.MONITOR_ARGS = {
+    namespaces: ["sdtest5.events"],
+    appliers: 128,
+    spreadDisparityThreshold: 5,
+    minDocCps: 2,
+    minTotalCps: 10,
+    topDocCountForProxy: 10,
+    lookbackMs: 300000,
+    outputFormat: "json"
+  }' \
+  --file hot-doc-spread-check.js
+```
+
+### 4. Generate Markdown output
+
+Use this when you want a shareable Markdown report:
+
+```bash
+mongosh "mongodb://user:password@host/admin" \
+  --eval 'globalThis.MONITOR_ARGS = {
+    namespaces: ["sdtest5.events"],
+    outputFormat: "markdown"
+  }' \
+  --file hot-doc-spread-check.js
+```
+
+### 5. Generate both JSON and Markdown output
+
+Use this when you want machine-readable and human-readable output in one run:
+
+```bash
+mongosh "mongodb://user:password@host/admin" \
+  --eval 'globalThis.MONITOR_ARGS = {
+    namespaces: ["sdtest5.events"],
+    outputFormat: "both"
+  }' \
+  --file hot-doc-spread-check.js
+```
+
+### 6. Read the output quickly
+
+Start with these sections in the console output:
+
+* `TOP-N COMBINED SHARE` to understand how much of the window is concentrated in the busiest documents
+* `TOP-N DOCUMENTS` to see which documents dominate the sample even if they do not pass the hot-doc gates
+* `HOT DOCUMENTS` to see which documents passed all thresholds
+
+## Example output
+
+The following example shows what a successful run can look like:
+
+```bash
+mongosh "mongodb+srv://Admin:Qwerty123@cluster0.jrmrq.mongodb.net/" --file hot-doc-spread-check.js
+Reading change stream for ALL namespaces from 2026-07-22T13:17:50.000Z ...
+Stream closed. Reason: idle-timeout. Matched events: 20595. Qualified doc events: 20595.
+Wrote results to hot-doc-spread-check.json
+
+================================================================================================================
+TOP-5 COMBINED SHARE
+================================================================================================================
+Appliers: 128  SpreadDisparityThreshold: 5  RequiredShare(single-doc): 44.37%
+MinDocCps: 2  MinTotalCps: 10
+CPS means changes per second.
+Qualified changes in window: 20595  Total changes/sec: 68.650
+Top-5 combined ops   : 20595
+Top-5 combined share : 100.00%
+Top-5 single-doc spread equivalent : 11.269
+
+================================================================================================================
+TOP-5 DOCUMENTS (BY OP COUNT)
+================================================================================================================
+rank  opCount   insert  delete  update   share%   spreadDisp   docCps   totalCps   namespace               _id
+  1     9231       1       0    9230    44.82       5.051   30.770    68.650   sdtest5.events          "hot-doc-1"
+  2     9231       1       0    9230    44.82       5.051   30.770    68.650   sdtest5.events          "hot-doc-2"
+  3      711       1       0     710     3.45       0.389    2.370    68.650   sdtest5.events          "hot-doc-3"
+  4      711       1       0     710     3.45       0.389    2.370    68.650   sdtest5.events          "hot-doc-4"
+  5      711       1       0     710     3.45       0.389    2.370    68.650   sdtest5.events          "hot-doc-5"
+
+================================================================================================================
+HOT DOCUMENTS
+================================================================================================================
+rank  opCount   insert  delete  update   share%   spreadDisp   docCps   totalCps   namespace               _id
+  1     9231       1       0    9230    44.82       5.051   30.770    68.650   sdtest5.events          "hot-doc-1"
+  2     9231       1       0    9230    44.82       5.051   30.770    68.650   sdtest5.events          "hot-doc-2"
+```
+
 The spread-disparity part is based on the internal hot-doc detection proposal, which models the single-hot-document case as:
 
 $$
@@ -59,6 +181,8 @@ These are the current defaults used by the script in this README:
   spreadThreshold: 5,
   minDocCps: 2,
   minTotalCps: 10,
+  topDocCountForProxy: 5,
+  outputFormat: "json",
   outputFile: "hot-doc-spread-check.json"
 }
 ```
@@ -77,10 +201,20 @@ Meaning:
   * used in the spread-disparity math
 * `spreadThreshold: 5`
   * the spread-disparity activation threshold used by the proposal
+  * alias: `spreadDisparityThreshold` (same meaning)
 * `minDocCps: 2`
   * a document must average at least 2 changes/sec in the window
 * `minTotalCps: 10`
   * the whole window must average at least 10 changes/sec
+* `topDocCountForProxy: 5`
+  * number of top documents used for combined proxy analysis (integer range 1..100)
+* `outputFormat: "json"`
+  * controls report file format
+  * valid values: `json`, `markdown`, `both`
+  * legacy alias: `outputMarkdown: true` is treated as `outputFormat: "markdown"`
+* `outputFile: "hot-doc-spread-check.json"`
+  * output path for single-format runs
+  * if `outputFormat: "markdown"` and `outputFile` is left at the default, the script writes `hot-doc-spread-check.md`
 
 ## How the script works
 
@@ -159,7 +293,7 @@ The spread formula and the threshold logic come directly from the internal propo
 A document is returned in `hotDocuments` only if all three are true:
 
 ```text
-spreadDisparityEstimate >= spreadThreshold
+spreadDisparityEstimate >= spreadDisparityThreshold
 docChangesPerSec >= minDocCps
 totalChangesPerSec >= minTotalCps
 ```
@@ -233,7 +367,8 @@ Top-level fields include:
 * `namespacesRequested`
 * `lookbackMs`
 * `appliers`
-* `spreadThreshold`
+* `spreadDisparityThreshold`
+* `spreadThreshold` (legacy alias)
 * `minShareRequired`
 * `minDocCps`
 * `minTotalCps`
@@ -243,7 +378,22 @@ Top-level fields include:
 * `stopReason`
 * `lastClusterTime`
 * `hotDocuments`
-* `top5Combined.singleDocSpreadEquivalent`
+* `topCombined`
+  * `requestedDocCount`
+  * `effectiveDocCount`
+  * `opCount`
+  * `share`
+  * `singleDocSpreadEquivalent`
+  * `documents`
+
+When `outputFormat` is:
+
+* `json`
+  * writes JSON output to `outputFile` (default: `hot-doc-spread-check.json`)
+* `markdown`
+  * writes Markdown output to `outputFile` or `hot-doc-spread-check.md` when default outputFile is unchanged
+* `both`
+  * writes JSON to `hot-doc-spread-check.json` and Markdown to `hot-doc-spread-check.md`
 
 Each `hotDocuments` entry includes:
 
@@ -273,8 +423,9 @@ The console output prints:
 
 * overall window stats
 * threshold values
+* top-N combined share and single-doc spread equivalent
+* top-N documents (same columns as hot-doc output)
 * hot documents that passed all gates
-* the top-5 single-doc spread equivalent heuristic
 
 ## How to run it
 
@@ -300,10 +451,12 @@ mongosh "mongodb://user:password@host/admin" \
   --eval 'globalThis.MONITOR_ARGS = {
     namespaces: ["sdtest5.events"],
     appliers: 128,
-    spreadThreshold: 5,
+    spreadDisparityThreshold: 5,
     minDocCps: 2,
     minTotalCps: 10,
-    lookbackMs: 300000
+    topDocCountForProxy: 10,
+    lookbackMs: 300000,
+    outputFormat: "json"
   }' \
   --file hot-doc-spread-check.js
 ```

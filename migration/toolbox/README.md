@@ -32,7 +32,7 @@ Audits query planner customizations across all databases and collections, report
 
 ## [Hot Doc Spread Check](hotDocSpreadCheck)
 
-Scans recent change-stream write activity and identifies documents that are hot enough to plausibly explain high applier spread disparity. The script applies a spread-disparity threshold plus per-document and total-window changes-per-second gates to reduce low-traffic false positives. For full documentation and examples, see [hotDocSpreadCheck README](hotDocSpreadCheck/hot_doc_spread_check_readme.md).
+Scans recent change-stream write activity and identifies documents that are hot enough to plausibly explain high applier spread disparity. The script applies a spread-disparity threshold plus per-document and total-window changes-per-second gates to reduce low-traffic false positives. For full documentation and examples, see [hotDocSpreadCheck README](hotDocSpreadCheck/README.md).
 
 ### License
 

@@ -15,11 +15,19 @@
     spreadThreshold: 5,
     minDocCps: 2,
     minTotalCps: 10,
+    topDocCountForProxy: 5,
+    outputFormat: "json",
     outputFile: "hot-doc-spread-check.json"
   };
 
   const INPUT = globalThis.MONITOR_ARGS || {};
   const CFG = Object.assign({}, DEFAULTS, INPUT);
+  if (INPUT.outputMarkdown === true) {
+    CFG.outputFormat = "markdown";
+  }
+  if (INPUT.spreadDisparityThreshold !== undefined) {
+    CFG.spreadThreshold = INPUT.spreadDisparityThreshold;
+  }
 
   function validateNumber(name, value, allowZero) {
     if (!Number.isFinite(value) || (!allowZero && value <= 0) || (allowZero && value < 0)) {
@@ -31,16 +39,32 @@
   validateNumber("runMs", CFG.runMs, false);
   validateNumber("idleMs", CFG.idleMs, true);
   validateNumber("appliers", CFG.appliers, false);
-  validateNumber("spreadThreshold", CFG.spreadThreshold, false);
+  validateNumber("spreadDisparityThreshold", CFG.spreadThreshold, false);
   validateNumber("minDocCps", CFG.minDocCps, false);
   validateNumber("minTotalCps", CFG.minTotalCps, true);
+  validateNumber("topDocCountForProxy", CFG.topDocCountForProxy, false);
 
   if (CFG.appliers < 2) {
     throw new Error(`Invalid appliers: ${CFG.appliers}. Expected a value of at least 2.`);
   }
 
+  if (!Number.isInteger(CFG.topDocCountForProxy) || CFG.topDocCountForProxy < 1 || CFG.topDocCountForProxy > 100) {
+    throw new Error(`Invalid topDocCountForProxy: ${CFG.topDocCountForProxy}. Expected an integer between 1 and 100.`);
+  }
+
   if (!Array.isArray(CFG.namespaces)) {
     throw new Error('namespaces must be an array, e.g. ["db1.coll1", "db2.coll2"]');
+  }
+
+  function formatDurationMs(ms) {
+    if (ms % 60000 === 0) return `${ms / 60000}m`;
+    if (ms % 1000 === 0) return `${ms / 1000}s`;
+    return `${ms}ms`;
+  }
+
+  const outputFormat = String(CFG.outputFormat || "json").toLowerCase();
+  if (!["json", "markdown", "both"].includes(outputFormat)) {
+    throw new Error(`Invalid outputFormat: ${CFG.outputFormat}. Expected one of: json, markdown, both.`);
   }
 
   function parseNamespace(ns) {
@@ -121,14 +145,19 @@
   let lastClusterTime = null;
   let stopReason = "unknown";
 
+  const spreadDisparityThreshold = CFG.spreadThreshold;
   const sqrtAppliersMinusOne = Math.sqrt(CFG.appliers - 1);
-  const minShareRequired = CFG.spreadThreshold / sqrtAppliersMinusOne;
+  const minShareRequired = spreadDisparityThreshold / sqrtAppliersMinusOne;
+  const lookbackCurrentLabel = formatDurationMs(CFG.lookbackMs);
+  const lookbackDefaultLabel = formatDurationMs(DEFAULTS.lookbackMs);
 
+  print("");
   if (watchAllNamespaces) {
-    print(`Reading change stream for ALL namespaces from ${new Date(startSec * 1000).toISOString()} ...`);
+    print(`Reading change stream for ALL namespaces from ${new Date(startSec * 1000).toISOString()} (lookback interval: current=${lookbackCurrentLabel}, default=${lookbackDefaultLabel}) ...`);
   } else {
-    print(`Reading change stream for namespaces [${watchedNamespaces.join(", ")}] from ${new Date(startSec * 1000).toISOString()} ...`);
+    print(`Reading change stream for namespaces [${watchedNamespaces.join(", ")}] from ${new Date(startSec * 1000).toISOString()} (lookback interval: current=${lookbackCurrentLabel}, default=${lookbackDefaultLabel}) ...`);
   }
+  print("");
 
   while (true) {
     if (Date.now() > deadline) {
@@ -230,7 +259,7 @@
           const eventShare = d.opCount / qualifiedEventsSeen;
           const spreadDisparityEstimate = eventShare * sqrtAppliersMinusOne;
           const docChangesPerSec = windowSeconds > 0 ? d.opCount / windowSeconds : 0;
-          const passesSpreadGate = spreadDisparityEstimate >= CFG.spreadThreshold;
+          const passesSpreadGate = spreadDisparityEstimate >= spreadDisparityThreshold;
           const passesDocCpsGate = docChangesPerSec >= CFG.minDocCps;
           const passesTotalCpsGate = totalChangesPerSec >= CFG.minTotalCps;
           const qualifies = passesSpreadGate && passesDocCpsGate && passesTotalCpsGate;
@@ -260,17 +289,19 @@
 
   const hotDocuments = allDocs.filter((d) => d.qualifies);
 
-  const top5Documents = allDocs.slice(0, 5);
-  const top5CombinedOps = top5Documents.reduce((sum, d) => sum + d.opCount, 0);
-  const top5CombinedShare = qualifiedEventsSeen === 0 ? 0 : top5CombinedOps / qualifiedEventsSeen;
-  const top5CombinedSingleDocSpreadEquivalent = top5CombinedShare * sqrtAppliersMinusOne;
+  const topDocCountForProxy = CFG.topDocCountForProxy;
+  const topDocuments = allDocs.slice(0, topDocCountForProxy);
+  const topCombinedOps = topDocuments.reduce((sum, d) => sum + d.opCount, 0);
+  const topCombinedShare = qualifiedEventsSeen === 0 ? 0 : topCombinedOps / qualifiedEventsSeen;
+  const topCombinedSingleDocSpreadEquivalent = topCombinedShare * sqrtAppliersMinusOne;
 
   const output = {
     generatedAt: new Date().toISOString(),
     namespacesRequested: watchAllNamespaces ? "ALL" : watchedNamespaces,
     lookbackMs: CFG.lookbackMs,
     appliers: CFG.appliers,
-    spreadThreshold: CFG.spreadThreshold,
+    spreadDisparityThreshold,
+    spreadThreshold: spreadDisparityThreshold,
     minShareRequired,
     minDocCps: CFG.minDocCps,
     minTotalCps: CFG.minTotalCps,
@@ -279,55 +310,190 @@
     totalChangesPerSec,
     stopReason,
     lastClusterTime,
-    top5Combined: {
-      opCount: top5CombinedOps,
-      share: top5CombinedShare,
-      singleDocSpreadEquivalent: top5CombinedSingleDocSpreadEquivalent,
-      documents: top5Documents
+    topCombined: {
+      requestedDocCount: topDocCountForProxy,
+      effectiveDocCount: topDocuments.length,
+      opCount: topCombinedOps,
+      share: topCombinedShare,
+      singleDocSpreadEquivalent: topCombinedSingleDocSpreadEquivalent,
+      documents: topDocuments
     },
     hotDocuments
   };
 
-  fs.writeFileSync(
-    "./" + CFG.outputFile,
-    EJSON.stringify(output, null, 2, { relaxed: false })
-  );
-  print(`Wrote results to ${CFG.outputFile}`);
+  function toFixedNumber(v, digits) {
+    return Number(v).toFixed(digits);
+  }
+
+  function toPct(v, digits) {
+    return `${(v * 100).toFixed(digits)}%`;
+  }
+
+  function mdEscape(v) {
+    return String(v).replace(/\|/g, "\\|");
+  }
+
+  function buildMarkdownTableRows(docs) {
+    return docs
+      .map((d, i) => {
+        return `| ${i + 1} | ${d.opCount} | ${d.insert} | ${d.delete} | ${d.update} | ${toPct(d.eventShare, 2)} | ${toFixedNumber(d.spreadDisparityEstimate, 3)} | ${toFixedNumber(d.docChangesPerSec, 3)} | ${toFixedNumber(d.totalChangesPerSec, 3)} | ${mdEscape(d.ns)} | ${mdEscape(bsonString(d.docId))} |`;
+      })
+      .join("\n");
+  }
+
+  function buildMarkdownReport() {
+    const scopeValue = watchAllNamespaces ? "ALL" : watchedNamespaces.join(", ");
+    const topTableRows = buildMarkdownTableRows(topDocuments);
+    const hotTableRows = buildMarkdownTableRows(hotDocuments);
+    const topTable = topTableRows || "| - | - | - | - | - | - | - | - | - | - | - |";
+    const hotTable = hotTableRows || "| - | - | - | - | - | - | - | - | - | - | - |";
+
+    return [
+      "# Hot Doc Spread Check Report",
+      "",
+      `Generated at: ${output.generatedAt}`,
+      `Namespaces requested: ${scopeValue}`,
+      `Stop reason: ${stopReason}`,
+      "",
+      "## Summary",
+      "",
+      `- Appliers: ${CFG.appliers}`,
+      `- SpreadDisparityThreshold: ${spreadDisparityThreshold}`,
+      `- RequiredShare(single-doc): ${toPct(minShareRequired, 2)}`,
+      `- MinDocCps: ${CFG.minDocCps}  MinTotalCps: ${CFG.minTotalCps} (Cps means changes per second)`,
+      `- Qualified changes in window: ${qualifiedEventsSeen}`,
+      `- Total changes/sec: ${toFixedNumber(totalChangesPerSec, 3)}`,
+      `- Top-${topDocCountForProxy} combined ops: ${topCombinedOps}`,
+      `- Top-${topDocCountForProxy} combined share: ${toPct(topCombinedShare, 2)}`,
+      `- Top-${topDocCountForProxy} single-doc spread equivalent: ${toFixedNumber(topCombinedSingleDocSpreadEquivalent, 3)}`,
+      "",
+      `## Top-${topDocCountForProxy} Documents (By Op Count)`,
+      "",
+      "| rank | opCount | insert | delete | update | share% | spreadDisp | docCps | totalCps | namespace | _id |",
+      "| ---: | ------: | -----: | -----: | -----: | -----: | ---------: | -----: | -------: | :-------- | :-- |",
+      topTable,
+      "",
+      "## Hot Documents",
+      "",
+      "| rank | opCount | insert | delete | update | share% | spreadDisp | docCps | totalCps | namespace | _id |",
+      "| ---: | ------: | -----: | -----: | -----: | -----: | ---------: | -----: | -------: | :-------- | :-- |",
+      hotTable,
+      ""
+    ].join("\n");
+  }
+
+  function deriveOutputPath(format) {
+    if (format === "json") {
+      return CFG.outputFile;
+    }
+    if (format === "markdown") {
+      if (CFG.outputFile === DEFAULTS.outputFile) {
+        return "hot-doc-spread-check.md";
+      }
+      return CFG.outputFile;
+    }
+    return null;
+  }
+
+  if (outputFormat === "json" || outputFormat === "both") {
+    const jsonPath = outputFormat === "json" ? deriveOutputPath("json") : DEFAULTS.outputFile;
+    fs.writeFileSync(
+      "./" + jsonPath,
+      EJSON.stringify(output, null, 2, { relaxed: false })
+    );
+    print(`Wrote JSON results to ${jsonPath}`);
+  }
+
+  if (outputFormat === "markdown" || outputFormat === "both") {
+    const markdownPath = outputFormat === "markdown" ? deriveOutputPath("markdown") : "hot-doc-spread-check.md";
+    fs.writeFileSync("./" + markdownPath, buildMarkdownReport());
+    print(`Wrote Markdown results to ${markdownPath}`);
+  }
 
   print("");
   print("=".repeat(112));
-  print("TOP-5 COMBINED SHARE");
+  print(`TOP-${topDocCountForProxy} COMBINED SHARE`);
   print("=".repeat(112));
-  print(`Appliers: ${CFG.appliers}  SpreadThreshold: ${CFG.spreadThreshold}  RequiredShare(single-doc): ${(minShareRequired * 100).toFixed(2)}%`);
-  print(`MinDocCps: ${CFG.minDocCps}  MinTotalCps: ${CFG.minTotalCps}`);
+  print(`Appliers: ${CFG.appliers}  SpreadDisparityThreshold: ${spreadDisparityThreshold}  RequiredShare(single-doc): ${(minShareRequired * 100).toFixed(2)}%`);
+  print(`MinDocCps: ${CFG.minDocCps}  MinTotalCps: ${CFG.minTotalCps} (Cps means changes per second)`);
   print(`Qualified changes in window: ${qualifiedEventsSeen}  Total changes/sec: ${totalChangesPerSec.toFixed(3)}`);
-  print(`Top-5 combined ops   : ${top5CombinedOps}`);
-  print(`Top-5 combined share : ${(top5CombinedShare * 100).toFixed(2)}%`);
-  print(`Top-5 single-doc spread equivalent : ${top5CombinedSingleDocSpreadEquivalent.toFixed(3)}`);
+  print(`Top-${topDocCountForProxy} combined ops   : ${topCombinedOps}`);
+  print(`Top-${topDocCountForProxy} combined share : ${(topCombinedShare * 100).toFixed(2)}%`);
+  print(`Top-${topDocCountForProxy} single-doc spread equivalent : ${topCombinedSingleDocSpreadEquivalent.toFixed(3)}`);
+
+  print("");
+  print("=".repeat(112));
+  print(`TOP-${topDocCountForProxy} DOCUMENTS (BY OP COUNT)`);
+  print("=".repeat(112));
+  const col = {
+    rank: 4,
+    opCount: 7,
+    insert: 6,
+    delete: 6,
+    update: 6,
+    sharePct: 7,
+    spreadDisp: 10,
+    docCps: 7,
+    totalCps: 8,
+    namespace: 22
+  };
+
+  function makeTableHeader() {
+    return (
+      `${"rank".padStart(col.rank)}  ` +
+      `${"opCount".padStart(col.opCount)}  ` +
+      `${"insert".padStart(col.insert)}  ` +
+      `${"delete".padStart(col.delete)}  ` +
+      `${"update".padStart(col.update)}  ` +
+      `${"share%".padStart(col.sharePct)}  ` +
+      `${"spreadDisp".padStart(col.spreadDisp)}  ` +
+      `${"docCps".padStart(col.docCps)}  ` +
+      `${"totalCps".padStart(col.totalCps)}  ` +
+      `${"namespace".padEnd(col.namespace)}  _id`
+    );
+  }
+
+  function makeTableRow(d, rank) {
+    return (
+      `${String(rank).padStart(col.rank)}  ` +
+      `${String(d.opCount).padStart(col.opCount)}  ` +
+      `${String(d.insert).padStart(col.insert)}  ` +
+      `${String(d.delete).padStart(col.delete)}  ` +
+      `${String(d.update).padStart(col.update)}  ` +
+      `${(d.eventShare * 100).toFixed(2).padStart(col.sharePct)}  ` +
+      `${d.spreadDisparityEstimate.toFixed(3).padStart(col.spreadDisp)}  ` +
+      `${d.docChangesPerSec.toFixed(3).padStart(col.docCps)}  ` +
+      `${d.totalChangesPerSec.toFixed(3).padStart(col.totalCps)}  ` +
+      `${d.ns.padEnd(col.namespace)}  ` +
+      `${bsonString(d.docId)}`
+    );
+  }
+
+  print(makeTableHeader());
+
+  topDocuments.forEach((d, i) => {
+    print(makeTableRow(d, i + 1));
+  });
+
+  if (topDocuments.length === 0) {
+    print("No documents found in this sample.");
+  }
+
+  print("");
 
   print("");
   print("=".repeat(112));
   print("HOT DOCUMENTS");
   print("=".repeat(112));
-  print("rank  opCount   insert  delete  update   share%   spreadDisp   docCps   totalCps   namespace               _id");
+  print(makeTableHeader());
 
   hotDocuments.forEach((d, i) => {
-    print(
-      `${String(i + 1).padStart(4)}  ` +
-      `${String(d.opCount).padStart(7)}  ` +
-      `${String(d.insert).padStart(6)}  ` +
-      `${String(d.delete).padStart(6)}  ` +
-      `${String(d.update).padStart(6)}  ` +
-      `${(d.eventShare * 100).toFixed(2).padStart(7)}  ` +
-      `${d.spreadDisparityEstimate.toFixed(3).padStart(10)}  ` +
-      `${d.docChangesPerSec.toFixed(3).padStart(7)}  ` +
-      `${d.totalChangesPerSec.toFixed(3).padStart(8)}   ` +
-      `${d.ns.padEnd(22)}  ` +
-      `${bsonString(d.docId)}`
-    );
+    print(makeTableRow(d, i + 1));
   });
 
   if (hotDocuments.length === 0) {
     print("No documents passed all gates in this sample.");
   }
+
+  print("");
 })();
