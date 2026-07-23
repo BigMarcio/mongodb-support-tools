@@ -35,7 +35,7 @@
     }
   }
 
-  validateNumber("lookbackMs", CFG.lookbackMs, true);
+  validateNumber("lookbackMs", CFG.lookbackMs, false);
   validateNumber("runMs", CFG.runMs, false);
   validateNumber("idleMs", CFG.idleMs, true);
   validateNumber("appliers", CFG.appliers, false);
