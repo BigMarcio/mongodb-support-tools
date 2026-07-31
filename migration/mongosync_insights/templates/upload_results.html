@@ -25,6 +25,9 @@
         {% if has_logs_data %}
         <button class="tab-btn" onclick="switchTab('options')" id="tab-options">Mongosync Options</button>
         <button class="tab-btn" onclick="switchTab('collections')" id="tab-collections">Collections and Partitions</button>
+        {% if has_busiest_collections_data %}
+        <button class="tab-btn" onclick="switchTab('busiest')" id="tab-busiest">CEA Busiest Collections{% if busiest_collections_data %} ({{ busiest_collections_data|length }}){% endif %}</button>
+        {% endif %}
         <button class="tab-btn" onclick="switchTab('errors')" id="tab-errors">Errors and Warnings{% if errors_data %} ({{ errors_data|length }}){% endif %}</button>
         <button class="tab-btn" onclick="switchTab('logviewer')" id="tab-logviewer">Log Viewer</button>
         {% endif %}
@@ -249,6 +252,114 @@
             </div>
         </div>
     </div>
+
+    {% if has_busiest_collections_data %}
+    <div id="busiest-tab" class="tab-content">
+        <div class="plot-container">
+            <div class="busiest-info-banner" role="note">
+                <strong>About this data:</strong>
+                Aggregated from mongosync CEA (change event application) statistics logged every
+                {{ busiest_collections_meta.intervalSecs }}s. Each interval reports only the top
+                {{ busiest_collections_meta.topNPerInterval }} busiest collections, so totals are
+                approximate and may under-count namespaces outside that window.
+                Requires the log segment that includes CEA at default <code>info</code> verbosity.
+            </div>
+
+            {% if busiest_collections_plot_json %}
+            <div class="busiest-chart-wrapper">
+                <div id="busiest-collections-plot"></div>
+            </div>
+            {% endif %}
+
+            <div class="filter-container">
+                <input type="text" id="busiest-filter" class="filter-input"
+                       placeholder="Filter by namespace..."
+                       oninput="filterBusiestCollectionsTable(this.value)">
+            </div>
+
+            <div class="options-container">
+                <div class="options-table-wrapper" style="max-width: 100%; min-width: 100%;">
+                    <div class="table-header">
+                        <h3>Namespace write activity (CEA)</h3>
+                        {% if busiest_collections_data %}
+                        <button class="copy-btn" onclick="copyBusiestCollectionsAsMarkdown(this)">Copy as Markdown</button>
+                        {% endif %}
+                    </div>
+                    {% if busiest_collections_data %}
+                    <table class="options-table" id="busiest-collections-table">
+                        <thead>
+                            <tr>
+                                <th class="sortable-th" data-label="Namespace" onclick="sortTableByColumn('busiest-collections-table', 0, 'text')" title="Click to sort">Namespace</th>
+                                <th class="sortable-th" data-label="Total Write Ops" onclick="sortTableByColumn('busiest-collections-table', 1, 'numeric')" title="Click to sort">Total Write Ops</th>
+                                {% for event_type in busiest_collections_event_types %}
+                                <th class="sortable-th" data-label="{{ event_type }}" onclick="sortTableByColumn('busiest-collections-table', {{ loop.index + 2 }}, 'numeric')" title="Click to sort">{{ event_type }}</th>
+                                {% endfor %}
+                                <th class="sortable-th" data-label="Warnings" onclick="sortTableByColumn('busiest-collections-table', {{ busiest_collections_event_types|length + 2 }}, 'numeric')" title="Click to sort">Warnings</th>
+                                <th class="sortable-th" data-label="Max Spread Disparity" onclick="sortTableByColumn('busiest-collections-table', {{ busiest_collections_event_types|length + 3 }}, 'numeric')" title="Click to sort">Max Spread Disparity</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in busiest_collections_data %}
+                            <tr>
+                                <td class="key-cell">{{ row.namespace }}</td>
+                                <td>{{ "{:,}".format(row.totalEvents) }}</td>
+                                {% for event_type in busiest_collections_event_types %}
+                                <td>{{ "{:,}".format(row.totalEventsPerType.get(event_type, 0)) }}</td>
+                                {% endfor %}
+                                <td>{{ row.warningCount }}</td>
+                                <td>{{ row.maxSpreadDisparity if row.maxSpreadDisparity is not none else '—' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    <div class="no-results" id="busiest-no-results">No matching namespaces found</div>
+                    {% else %}
+                    <div class="no-data-message">No namespace summary data found in the uploaded log.</div>
+                    {% endif %}
+                </div>
+
+                {% if busiest_collections_warnings %}
+                <div class="options-table-wrapper" style="max-width: 100%; min-width: 100%;">
+                    <div class="table-header">
+                        <h3>CEA workload warnings</h3>
+                    </div>
+                    <table class="options-table" id="busiest-warnings-table">
+                        <thead>
+                            <tr>
+                                <th class="sortable-th" data-label="Time" onclick="sortTableByColumn('busiest-warnings-table', 0, 'date')" title="Click to sort">Time</th>
+                                <th class="sortable-th" data-label="Namespace" onclick="sortTableByColumn('busiest-warnings-table', 1, 'text')" title="Click to sort">Namespace</th>
+                                <th class="sortable-th" data-label="Type" onclick="sortTableByColumn('busiest-warnings-table', 2, 'text')" title="Click to sort">Type</th>
+                                <th class="sortable-th" data-label="Spread Disparity" onclick="sortTableByColumn('busiest-warnings-table', 3, 'numeric')" title="Click to sort">Spread Disparity</th>
+                                <th class="sortable-th" data-label="Total Events" onclick="sortTableByColumn('busiest-warnings-table', 4, 'numeric')" title="Click to sort">Total Events</th>
+                                <th class="sortable-th" data-label="Message" onclick="sortTableByColumn('busiest-warnings-table', 5, 'text')" title="Click to sort">Message</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for warning in busiest_collections_warnings %}
+                            <tr>
+                                <td>{{ warning.time }}</td>
+                                <td class="key-cell">{{ warning.namespace }}</td>
+                                <td>{{ 'Hot document' if warning.warningType == 'hot_doc' else '$out aggregation' }}</td>
+                                <td>{{ warning.spreadDisparity if warning.spreadDisparity is not none else '—' }}</td>
+                                <td>{{ "{:,}".format(warning.totalEvents) }}</td>
+                                <td class="value-cell">{{ warning.message }}</td>
+                                <td>
+                                    <button type="button" class="copy-btn busiest-logviewer-btn"
+                                            onclick="lvFocusNamespace({{ warning.namespace | tojson }})">
+                                        View in Log Viewer
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <div id="errors-tab" class="tab-content">
         <div class="plot-container">
@@ -635,6 +746,11 @@ if (metricsPlot && metricsPlot.data) {
 }
 {% endif %}
 
+{% if busiest_collections_plot_json %}
+var busiestCollectionsPlot = {{ busiest_collections_plot_json | safe }};
+var busiestCollectionsPlotRendered = false;
+{% endif %}
+
 // Store table data for Markdown conversion
 var optionsData = {{ options_data | tojson }};
 var hiddenOptionsData = {{ hidden_options_data | tojson }};
@@ -643,6 +759,24 @@ var naturalOrderData = {{ natural_order_data | tojson }};
 var errorsData = {{ errors_data | tojson }};
 var partitionInitData = {{ partition_init_data | tojson }};
 var progressData = {{ progress_data | default([]) | tojson }};
+var busiestCollectionsData = {{ busiest_collections_data | default([]) | tojson }};
+var busiestCollectionsEventTypes = {{ busiest_collections_event_types | default([]) | tojson }};
+
+function renderBusiestCollectionsPlot() {
+    if (typeof busiestCollectionsPlot === 'undefined' || busiestCollectionsPlotRendered) {
+        return;
+    }
+    if (!busiestCollectionsPlot || !busiestCollectionsPlot.data) {
+        return;
+    }
+    busiestCollectionsPlotRendered = true;
+    miRenderPlot('busiest-collections-plot', busiestCollectionsPlot, {
+        onRendered: function(elId) {
+            buildInfoOverlay(elId);
+            bindInfoOverlayEvents(elId);
+        }
+    });
+}
 
 function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -650,6 +784,10 @@ function switchTab(tabName) {
 
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
     document.getElementById(tabName + '-tab').classList.add('active');
+
+    if (tabName === 'busiest') {
+        renderBusiestCollectionsPlot();
+    }
 
     if (tabName === 'logviewer' && !lvInitialized && LV_INITIAL_LINES && LV_INITIAL_LINES.length > 0) {
         lvInitialized = true;
@@ -1060,6 +1198,90 @@ function copyPartitionInitAsMarkdown(buttonElement) {
         console.error('Failed to copy: ', err);
         fallbackCopyToClipboard(markdown, buttonElement);
     });
+}
+
+function filterBusiestCollectionsTable(searchText) {
+    var filter = searchText.toLowerCase().trim();
+    var table = document.getElementById('busiest-collections-table');
+    if (!table) return;
+
+    var rows = table.querySelectorAll('tbody tr');
+    var visibleCount = 0;
+
+    rows.forEach(function(row) {
+        var match = false;
+        row.querySelectorAll('td').forEach(function(cell) {
+            if (cell.textContent.toLowerCase().includes(filter)) {
+                match = true;
+            }
+        });
+        if (filter === '' || match) {
+            row.style.display = '';
+            visibleCount++;
+        } else {
+            row.style.display = 'none';
+        }
+    });
+
+    var noResultsMsg = document.getElementById('busiest-no-results');
+    if (noResultsMsg) {
+        noResultsMsg.style.display = (visibleCount === 0 && filter !== '') ? 'block' : 'none';
+    }
+}
+
+function copyBusiestCollectionsAsMarkdown(buttonElement) {
+    if (!busiestCollectionsData || busiestCollectionsData.length === 0) {
+        return;
+    }
+
+    var headers = ['Namespace', 'Total Write Ops'].concat(busiestCollectionsEventTypes || [])
+        .concat(['Warnings', 'Max Spread Disparity']);
+    var markdown = '## CEA Busiest Collections\n\n';
+    markdown += '| ' + headers.join(' | ') + ' |\n';
+    markdown += '|' + headers.map(function() { return '---'; }).join('|') + '|\n';
+
+    busiestCollectionsData.forEach(function(row) {
+        var cells = [
+            row.namespace,
+            String(row.totalEvents),
+        ];
+        (busiestCollectionsEventTypes || []).forEach(function(eventType) {
+            var counts = row.totalEventsPerType || {};
+            cells.push(String(counts[eventType] || 0));
+        });
+        cells.push(String(row.warningCount || 0));
+        cells.push(
+            row.maxSpreadDisparity !== null && row.maxSpreadDisparity !== undefined
+                ? String(row.maxSpreadDisparity)
+                : '—'
+        );
+        markdown += '| ' + cells.map(function(cell) {
+            return String(cell).replace(/\|/g, '\\|');
+        }).join(' | ') + ' |\n';
+    });
+
+    navigator.clipboard.writeText(markdown).then(function() {
+        var originalText = buttonElement.textContent;
+        buttonElement.textContent = 'Copied!';
+        buttonElement.classList.add('copied');
+        setTimeout(function() {
+            buttonElement.textContent = originalText;
+            buttonElement.classList.remove('copied');
+        }, 2000);
+    }).catch(function(err) {
+        console.error('Failed to copy: ', err);
+        fallbackCopyToClipboard(markdown, buttonElement);
+    });
+}
+
+function lvFocusNamespace(namespace) {
+    if (!namespace) return;
+    switchTab('logviewer');
+    var searchInput = document.getElementById('lvSearchInput');
+    if (searchInput) {
+        searchInput.value = namespace;
+        lvOnSearchInput(namespace);
+    }
 }
 
 function copyNaturalOrderAsMarkdown(buttonElement) {

@@ -63,6 +63,7 @@ The table below lists every chart and panel in Mongosync Insights, the minimum v
 | Events Rate per Second | `info` (default) | `"Replication progress"` → `eventApplicationRatePerSecond` |
 | CEA Source Read — avg / max / ops | `info` (default) | `"Operation duration stats"` → `CEASourceRead` |
 | CEA Destination Write — avg / max / ops | `info` (default) | `"Operation duration stats"` → `CEADestinationWrite` |
+| CEA Busiest Collections (tab) | `info` (default) | `"Recent CRUD change event statistics."` → `recentCRUDStatistics.busiestCollections`; warn lines with `recentCRUDStatistics` for hot-document / `$out` workload |
 
 ### Indexes Metrics
 

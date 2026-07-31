@@ -63,6 +63,7 @@ After parsing, the results page shows one or more tabs:
 | **Mongosync Metrics** | Prometheus metrics found | Charts from `mongosync_metrics.json` (OTel/Prometheus exposition in log lines) |
 | **Mongosync Options** | Log lines found | Version info, startup options, hidden flags, `/api/v1/start` request body |
 | **Collections and Partitions** | Log lines found | Natural-order collections and per-collection partition tables |
+| **CEA Busiest Collections** | CEA CRUD statistics found in log | Per-namespace CEA write rankings, time-series chart, and workload warnings |
 | **Errors and Warnings** | Log lines found | Pattern-matched errors with optional recommendations |
 | **Log Viewer** | Log lines found | Tail view and full-text search over indexed log lines |
 
@@ -97,6 +98,16 @@ Read-only tables for:
 - **Collection Partitions** — per-collection partition progress tables (searchable, exportable as Markdown)
 
 ![Collections and Partitions tab](images/mongosync_logs_collections_partitions.png)
+
+### CEA Busiest Collections
+
+Shown when the uploaded log contains mongosync **CEA (change event application)** CRUD statistics.
+
+- **Time-series chart** — top namespaces by write volume per 10-second interval
+- **Namespace write activity table** — cumulative write ops by type (insert, update, delete, replace, etc.), sortable and searchable, with **Copy as Markdown**
+- **CEA workload warnings** — hot-document and `$out` aggregation warnings with spread disparity; **View in Log Viewer** jumps to that namespace
+
+> **Note:** Mongosync logs only the **top 20** busiest collections per 10-second interval. Totals are approximate and may under-count namespaces that were never in that window. The tab requires log segments that include CEA at default `info` verbosity.
 
 ### Errors and Warnings
 

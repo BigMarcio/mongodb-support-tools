@@ -76,6 +76,12 @@ def minimal_template_data():
         "log_viewer_lines": [],
         "log_viewer_max_lines": 1000,
         "log_store_id": "",
+        "busiest_collections_data": [],
+        "busiest_collections_warnings": [],
+        "busiest_collections_meta": {},
+        "busiest_collections_event_types": [],
+        "busiest_collections_plot_json": "",
+        "has_busiest_collections_data": False,
     }
 
 

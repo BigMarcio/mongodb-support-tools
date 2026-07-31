@@ -30,6 +30,11 @@ from .plot_theme import apply_mi_theme, section_label_style
 from .log_store import LogStore
 from .log_store_registry import log_store_registry
 from .snapshot_store import save_snapshot
+from .busiest_collections import (
+    BusiestCollectionsAccumulator,
+    build_busiest_collections_plot,
+    update_in_cea_phase,
+)
 
 _DECOMPRESS_ERRORS = (
     ValueError,
@@ -306,6 +311,9 @@ def upload_file():
         db_path = logstore_path(store_id)
         log_store = LogStore(db_path)
         
+        busiest_collections_accumulator = BusiestCollectionsAccumulator()
+        in_cea_phase = False
+        
         # Single pass through the file with streaming
         line_count = 0
         logs_line_count = 0
@@ -407,9 +415,19 @@ def upload_file():
                 
                     if patterns['phase_transitions'].search(message):
                         phase_transitions_json.append(json_obj)
+                        phase_event = _phase_event_from_info(json_obj)
+                        if phase_event:
+                            in_cea_phase = update_in_cea_phase(
+                                in_cea_phase, phase_event[1],
+                            )
 
                     if patterns['phase_in_memory'].search(message):
                         phase_in_memory_json.append(json_obj)
+                        phase_event = _phase_event_from_in_memory(json_obj)
+                        if phase_event:
+                            in_cea_phase = update_in_cea_phase(
+                                in_cea_phase, phase_event[1],
+                            )
                 
                     if patterns['mongosync_options'].search(message):
                         # Filter out time and level fields for options
@@ -471,6 +489,10 @@ def upload_file():
                                 'full_log': json.dumps(json_obj, indent=2)
                             })
                             break  # Only match first pattern per message
+
+                    busiest_collections_accumulator.ingest_line(
+                        json_obj, in_cea_phase=in_cea_phase,
+                    )
                     
                 except json.JSONDecodeError as e:
                     invalid_json_count += 1
@@ -1567,6 +1589,23 @@ def upload_file():
         has_logs_data = logs_line_count > 0 and len(data) > 0
         has_metrics_data = metrics_collector.metrics_count > 0
 
+        busiest_collections_result = busiest_collections_accumulator.finalize()
+        busiest_collections_data = busiest_collections_result["summary"]
+        busiest_collections_warnings = busiest_collections_result["warnings"]
+        busiest_collections_meta = busiest_collections_result["meta"]
+        busiest_collections_event_types = busiest_collections_result["eventTypes"]
+        busiest_collections_plot_json = ""
+        if busiest_collections_result["timeseries"]["times"]:
+            busiest_collections_plot_json = build_busiest_collections_plot(
+                busiest_collections_result["timeseries"],
+                busiest_collections_meta,
+            )
+        has_busiest_collections_data = bool(
+            busiest_collections_data
+            or busiest_collections_warnings
+            or busiest_collections_plot_json
+        )
+
         template_data = {
             'plot_json': plot_json,
             'metrics_plot_json': metrics_plot_json,
@@ -1582,6 +1621,12 @@ def upload_file():
             'log_viewer_lines': log_viewer_lines_out,
             'log_viewer_max_lines': LOG_VIEWER_MAX_LINES,
             'log_store_id': store_id,
+            'busiest_collections_data': busiest_collections_data,
+            'busiest_collections_warnings': busiest_collections_warnings,
+            'busiest_collections_meta': busiest_collections_meta,
+            'busiest_collections_event_types': busiest_collections_event_types,
+            'busiest_collections_plot_json': busiest_collections_plot_json,
+            'has_busiest_collections_data': has_busiest_collections_data,
         }
 
         snapshot_id = str(uuid_mod.uuid4())
