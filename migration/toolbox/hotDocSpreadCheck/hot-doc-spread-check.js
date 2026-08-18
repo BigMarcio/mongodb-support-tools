@@ -86,13 +86,22 @@
     return { db: dbName, coll: collName };
   }
 
+  function isTimestampAtOrAfter(left, right) {
+    return left.t > right.t || (left.t === right.t && left.i >= right.i);
+  }
+
   const watchedNamespaces = CFG.namespaces.map(String);
   const watchAllNamespaces = watchedNamespaces.length === 0;
   const namespaceFilters = watchedNamespaces.map(parseNamespace);
 
+  const helloResult = db.adminCommand({ hello: 1 });
+  const caughtUpWatermark = helloResult.operationTime || (helloResult.$clusterTime && helloResult.$clusterTime.clusterTime);
+  if (!caughtUpWatermark) {
+    throw new Error("Unable to determine server-derived caught-up watermark from hello response.");
+  }
+
   const startSec = Math.floor((Date.now() - CFG.lookbackMs) / 1000);
   const startAt = Timestamp(startSec, 0);
-  const stopAtMs = Date.now();
   const deadline = Date.now() + CFG.runMs;
 
   const matchStage = {
@@ -194,7 +203,7 @@
     lastEventAt = Date.now();
     lastClusterTime = evt.clusterTime;
 
-    if (evt.clusterTime && evt.clusterTime.t * 1000 >= stopAtMs) {
+    if (evt.clusterTime && isTimestampAtOrAfter(evt.clusterTime, caughtUpWatermark)) {
       stopReason = "caught-up";
     }
 

@@ -360,7 +360,7 @@ That is a limitation of the underlying approximation, not a bug in the script.
 The script stops when any of these happens:
 
 * `caught-up`
-  * it observed a matching event with `clusterTime` at or beyond the “now” watermark captured when the stream was opened
+  * it observed a matching event with `clusterTime` at or beyond the server-derived logical-time watermark captured when the stream was opened
 * `idle-timeout`
   * no matching events arrive for `idleMs` after activity has started
 * `run-ms-exceeded`
@@ -371,6 +371,8 @@ The script stops when any of these happens:
 ## Output
 
 The script writes report files according to `outputFormat` (`json`, `markdown`, or `both`) and also prints a console summary.
+
+Note: the `json` output file is emitted as strict MongoDB Extended JSON (EJSON). If you are consuming the file programmatically, prefer `EJSON.parse()`.
 
 ### JSON output
 
@@ -405,11 +407,11 @@ Top-level fields include:
 When `outputFormat` is:
 
 * `json`
-  * writes JSON output to `outputFile` (default: `hot-doc-spread-check.json`)
+  * writes strict EJSON output to `outputFile` (default: `hot-doc-spread-check.json`)
 * `markdown`
   * writes Markdown output to `outputFile` or `hot-doc-spread-check.md` when default outputFile is unchanged
 * `both`
-  * writes JSON to `hot-doc-spread-check.json` and Markdown to `hot-doc-spread-check.md`
+  * writes strict EJSON to `hot-doc-spread-check.json` and Markdown to `hot-doc-spread-check.md`
 
 Each `hotDocuments` entry includes:
 
