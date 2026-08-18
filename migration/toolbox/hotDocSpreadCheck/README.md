@@ -257,7 +257,7 @@ Only `insert`, `update`, `replace`, and `delete` are counted.
 
 Events without a document `_id` are ignored.
 
-System collections are ignored.
+Internal namespaces are always ignored: `admin`, `config`, `local`, and `system.*`.
 
 ### 4. It aggregates counts per document
 
@@ -361,6 +361,8 @@ The script stops when any of these happens:
   * no matching events arrive for `idleMs` after activity has started
 * `run-ms-exceeded`
   * hard max runtime reached
+* `max-unique-docs-reached`
+  * reached `maxUniqueDocs` safety cap for unique namespace+_id rows
 
 ## Output
 
@@ -379,10 +381,13 @@ Top-level fields include:
 * `minShareRequired`
 * `minDocCps`
 * `minTotalCps`
+* `maxUniqueDocs`
 * `matchedEventsSeen`
 * `qualifiedEventsSeen`
+* `uniqueDocsTracked`
 * `totalChangesPerSec`
 * `stopReason`
+* `cappedByMaxUniqueDocs`
 * `lastClusterTime`
 * `hotDocuments`
 * `topCombined`
