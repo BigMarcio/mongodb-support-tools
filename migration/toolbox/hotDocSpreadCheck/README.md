@@ -206,6 +206,7 @@ Meaning:
   * when reached, the run stops early with stop reason `max-unique-docs-reached`
 * `appliers: 128`
   * used in the spread-disparity math
+  * must be an integer greater than or equal to 2
 * `spreadThreshold: 5`
   * the spread-disparity activation threshold used by the proposal
   * alias: `spreadDisparityThreshold` (same meaning)
@@ -359,17 +360,17 @@ That is a limitation of the underlying approximation, not a bug in the script.
 The script stops when any of these happens:
 
 * `caught-up`
-  * it has replayed forward to the “now” that existed when the stream was opened
+  * it observed a matching event with `clusterTime` at or beyond the “now” watermark captured when the stream was opened
 * `idle-timeout`
   * no matching events arrive for `idleMs` after activity has started
 * `run-ms-exceeded`
-  * hard max runtime reached
+  * hard max runtime reached (this can occur on quiet workloads where no matching event is observed at or beyond the open-time watermark)
 * `max-unique-docs-reached`
   * reached `maxUniqueDocs` safety cap for unique namespace+_id rows
 
 ## Output
 
-The script writes a JSON file and also prints a console summary.
+The script writes report files according to `outputFormat` (`json`, `markdown`, or `both`) and also prints a console summary.
 
 ### JSON output
 

@@ -50,8 +50,8 @@
     throw new Error(`Invalid maxUniqueDocs: ${CFG.maxUniqueDocs}. Expected an integer greater than or equal to 1.`);
   }
 
-  if (CFG.appliers < 2) {
-    throw new Error(`Invalid appliers: ${CFG.appliers}. Expected a value of at least 2.`);
+  if (!Number.isInteger(CFG.appliers) || CFG.appliers < 2) {
+    throw new Error(`Invalid appliers: ${CFG.appliers}. Expected an integer greater than or equal to 2.`);
   }
 
   if (!Number.isInteger(CFG.topDocCountForProxy) || CFG.topDocCountForProxy < 1 || CFG.topDocCountForProxy > 100) {
