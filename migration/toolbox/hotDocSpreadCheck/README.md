@@ -240,6 +240,8 @@ database.collection
 
 format.
 
+If `namespaces` includes an internal namespace (`admin`, `config`, `local`, or `system.*`), the script fails fast with a validation error.
+
 ### 2. It replays a recent time window
 
 The script starts from:

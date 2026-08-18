@@ -78,7 +78,12 @@
     if (dot <= 0 || dot === ns.length - 1) {
       throw new Error(`Invalid namespace "${ns}". Expected format: database.collection`);
     }
-    return { db: ns.slice(0, dot), coll: ns.slice(dot + 1) };
+    const dbName = ns.slice(0, dot);
+    const collName = ns.slice(dot + 1);
+    if (dbName === "admin" || dbName === "config" || dbName === "local" || collName.startsWith("system.")) {
+      throw new Error(`Invalid namespace "${ns}". Internal namespaces are not supported: admin, config, local, and system.*`);
+    }
+    return { db: dbName, coll: collName };
   }
 
   const watchedNamespaces = CFG.namespaces.map(String);
