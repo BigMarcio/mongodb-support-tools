@@ -42,10 +42,20 @@
         return wrap;
     }
 
+    function applyHoverTitle(node, title) {
+        if (!node || !title) return node;
+        node.classList.add('lm-has-hover');
+        if (title.indexOf('\n') !== -1) {
+            node.classList.add('lm-has-hover-multiline');
+        }
+        node.setAttribute('data-hover-title', title);
+        return node;
+    }
+
     function metricTile(item) {
         var box = el('div', 'lm-metric');
         box.appendChild(el('div', 'lm-mlabel', item.label));
-        var valueClass = 'lm-mvalue' + (item.small ? ' small' : '');
+        var valueClass = 'lm-mvalue' + (item.small ? ' small' : '') + (item.highLag ? ' lm-lag-high' : '');
         if (item.badge) {
             var val = el('div', valueClass);
             val.appendChild(badge(item.value, item.badge, false));
@@ -53,6 +63,7 @@
         } else {
             box.appendChild(el('div', valueClass, String(item.value)));
         }
+        applyHoverTitle(box, item.title);
         return box;
     }
 
@@ -80,10 +91,12 @@
         return section;
     }
 
-    function kvRow(label, value) {
+    function kvRow(label, value, title) {
         var rowEl = el('div', 'lm-kv');
         rowEl.appendChild(el('span', 'lm-k', label));
-        rowEl.appendChild(el('span', 'lm-v', value));
+        var valueEl = el('span', 'lm-v', value);
+        applyHoverTitle(valueEl, title);
+        rowEl.appendChild(valueEl);
         return rowEl;
     }
 
@@ -166,6 +179,14 @@
         }
     }
 
+    function formatSecondsTitle(seconds) {
+        if (seconds == null || seconds === '') return null;
+        var n = Number(seconds);
+        if (!isFinite(n) || n < 0) return null;
+        var total = Math.floor(n);
+        return total.toLocaleString('en-US') + (total === 1 ? ' second' : ' seconds');
+    }
+
     function formatLagSecs(seconds) {
         if (seconds == null || seconds === '') return '—';
         var n = Number(seconds);
@@ -193,7 +214,7 @@
 
         var metrics = el('div', 'lm-metrics lm-verifier-metrics');
         [
-            { label: 'Lag', value: formatLagSecs(changeStats.lagSecs) },
+            { label: 'Lag', value: formatLagSecs(changeStats.lagSecs), title: formatSecondsTitle(changeStats.lagSecs) },
             { label: 'Events/sec', value: formatRate(changeStats.eventsPerSecond) },
             {
                 label: 'Buffer saturation',
@@ -275,7 +296,10 @@
         if (progress.estCheckSecsRemaining != null) {
             var etaText = formatCheckEta(progress.estCheckSecsRemaining);
             if (etaText) {
-                body.appendChild(kvRow('Initial check ETA', etaText));
+                var etaTitle = etaText === 'Complete'
+                    ? null
+                    : formatSecondsTitle(progress.estCheckSecsRemaining);
+                body.appendChild(kvRow('Initial check ETA', etaText, etaTitle));
             }
         }
 

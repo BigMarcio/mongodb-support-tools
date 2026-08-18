@@ -30,6 +30,18 @@ def format_lag_time_seconds(seconds):
     return f"{days}d {hours}h"
 
 
+def format_seconds_title(seconds):
+    """Hover text for duration fields (e.g. '1,582 seconds')."""
+    if seconds is None or seconds < 0:
+        return None
+    try:
+        total = int(seconds)
+    except (TypeError, ValueError):
+        return None
+    unit = "second" if total == 1 else "seconds"
+    return f"{total:,} {unit}"
+
+
 def format_count(value):
     if value is None:
         return "—"

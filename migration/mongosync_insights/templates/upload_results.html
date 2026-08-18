@@ -9,6 +9,7 @@
 {% block head_links %}
     <link rel="preload" href="https://assets.mongodb-cdn.com/mms/static/font/EuclidCircularA-Regular-WebXL.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="https://assets.mongodb-cdn.com/mms/static/font/EuclidCircularA-Semibold-WebXL.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/static/css/mi-live-monitor.css">
     <link rel="stylesheet" href="/static/css/mi-upload-results.css">
 {% endblock %}
 
@@ -16,8 +17,11 @@
 <div class="ur-main">
 <div class="tabs-container">
     <div class="tab-buttons">
+        {% if has_logs_data %}
+        <button class="tab-btn active" onclick="switchTab('summary')" id="tab-summary">Summary</button>
+        {% endif %}
         {% if has_logs_data or (not has_metrics_data) %}
-        <button class="tab-btn {% if has_logs_data or (not has_metrics_data) %}active{% endif %}" onclick="switchTab('charts')" id="tab-charts">Mongosync Logs</button>
+        <button class="tab-btn {% if not has_logs_data %}active{% endif %}" onclick="switchTab('charts')" id="tab-charts">Mongosync Logs</button>
         {% endif %}
         {% if has_metrics_data %}
         <button class="tab-btn {% if has_metrics_data and not has_logs_data %}active{% endif %}" onclick="switchTab('metrics')" id="tab-metrics">Mongosync Metrics</button>
@@ -30,8 +34,14 @@
         {% endif %}
     </div>
 
+    {% if has_logs_data %}
+    <div id="summary-tab" class="tab-content active">
+        <div id="log-summary-root" class="lm-main"></div>
+    </div>
+    {% endif %}
+
     {% if has_logs_data or (not has_metrics_data) %}
-    <div id="charts-tab" class="tab-content {% if has_logs_data or (not has_metrics_data) %}active{% endif %}">
+    <div id="charts-tab" class="tab-content {% if not has_logs_data %}active{% endif %}">
         <div class="plot-container">
             <div id="plot"></div>
         </div>
@@ -399,6 +409,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/mi-live-monitor.js"></script>
 <script>
 // ===== Chart Info Badge Overlay =====
 
@@ -643,6 +654,7 @@ var naturalOrderData = {{ natural_order_data | tojson }};
 var errorsData = {{ errors_data | tojson }};
 var partitionInitData = {{ partition_init_data | tojson }};
 var progressData = {{ progress_data | default([]) | tojson }};
+var summaryPayload = {{ summary_payload | default({}) | tojson }};
 
 function switchTab(tabName) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -1621,6 +1633,18 @@ function lvBackToTail() {
 // --- Init ---
 document.addEventListener('DOMContentLoaded', function() {
     lvUpdateControlsState();
+    var summaryRoot = document.getElementById('log-summary-root');
+    if (summaryRoot && typeof miRenderProgressMonitor === 'function') {
+        var payload = summaryPayload;
+        if (!payload || (!payload.display && !payload.error)) {
+            payload = {
+                error: 'No summary is available for this saved analysis. Re-upload the log to generate the Summary tab.',
+                pageTitle: 'Summary',
+                pageSubtitle: 'Snapshot from this log (not live)'
+            };
+        }
+        miRenderProgressMonitor(summaryRoot, payload);
+    }
 });
 </script>
 {% endblock %}

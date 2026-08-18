@@ -71,6 +71,7 @@ def minimal_template_data():
         "errors_data": [],
         "partition_init_data": [],
         "progress_data": [],
+        "summary_payload": {},
         "has_logs_data": False,
         "has_metrics_data": False,
         "log_viewer_lines": [],

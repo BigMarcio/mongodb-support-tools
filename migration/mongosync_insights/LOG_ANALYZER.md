@@ -23,7 +23,7 @@ Maximum upload size defaults to **10 GB** (`MI_MAX_FILE_SIZE`).
 
 Mongosync Insights detects two kinds of content in the uploaded file:
 
-1. **Structured mongosync JSON log lines** — the main migration log (`mongosync.log` or rotated segments). These drive the **Mongosync Logs**, **Errors and Warnings**, and **Log Viewer** tabs.
+1. **Structured mongosync JSON log lines** — the main migration log (`mongosync.log` or rotated segments). These drive the **Summary**, **Mongosync Logs**, **Errors and Warnings**, and **Log Viewer** tabs.
 2. **Prometheus metrics lines** — from `mongosync_metrics.log`. These drive the **Mongosync Metrics** tab.
 
 A single upload can contain log lines only, metrics only, or both. Tabs appear based on what was found.
@@ -59,12 +59,22 @@ After parsing, the results page shows one or more tabs:
 
 | Tab | When shown | Purpose |
 |-----|------------|---------|
+| **Summary** | Log lines found | Snapshot of the latest migration state, using the same cards as Migration Monitoring |
 | **Mongosync Logs** | Log lines found | Time-series charts: phases, lag, copy progress, CEA, indexes, verifier, etc. |
 | **Mongosync Metrics** | Prometheus metrics found | Charts from `mongosync_metrics.json` (OTel/Prometheus exposition in log lines) |
 | **Mongosync Options** | Log lines found | Version info, startup options, hidden flags, `/api/v1/start` request body |
 | **Collections and Partitions** | Log lines found | Natural-order collections and per-collection partition tables |
 | **Errors and Warnings** | Log lines found | Pattern-matched errors with optional recommendations |
 | **Log Viewer** | Log lines found | Tail view and full-text search over indexed log lines |
+
+### Summary
+
+The Summary tab reuses the Migration Monitoring layout (state badge, copy progress, lag, index building, direction mapping, embedded verifier, filters) but is **not live**. Values come from:
+
+1. The **latest `/api/v1/progress` body** recorded in `sent response` log lines (primary source for state, copy bytes, lag, canCommit/canWrite, index building, verifier, direction).
+2. **Other log events** already used for charts and tables: phase transitions, `/api/v1/start` options, natural-order collections, and partition copy counts.
+
+The subtitle shows the timestamp of that latest `/progress` line so it is clear the page is a snapshot from the uploaded file.
 
 ### Mongosync Logs
 
@@ -160,7 +170,7 @@ See **[CONFIGURATION.md](CONFIGURATION.md)** for examples (upload size, persiste
 | | Log Analyzer | Migration Monitoring |
 |---|--------------|----------------------|
 | **Input** | Upload log/metrics files | Live connection string and/or progress endpoint |
-| **Timing** | Post-hoc / historical | Real-time polling |
+| **Timing** | Post-hoc / historical (Summary tab is a snapshot of the latest `/progress` in the log) | Real-time polling |
 | **Best for** | Deep dive on completed or in-progress runs from logs | Live dashboard while mongosync is running |
 
 Use both when troubleshooting: Migration Monitoring for current state, Log Analyzer for historical trends and full log search.

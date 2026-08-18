@@ -26,6 +26,12 @@ from .utils import (
     format_count,
     format_lag_time_seconds,
     format_ratio,
+    format_seconds_title,
+)
+
+_MIGRATION_START_TIME_TITLE = (
+    "This is the time when the phase changes from uninitialized to "
+    "Starting initializing collections and indexes after /start is issued"
 )
 
 logger = logging.getLogger(__name__)
@@ -173,13 +179,19 @@ def _display_or_dash(value):
     return str(value)
 
 
-def _build_metadata_metrics(metadata):
+def _build_metadata_metrics(metadata, *, summary=False):
     """Second metrics row from internal database (connection string required)."""
     if not metadata:
         return []
+    finish_label = "Migration Committed" if summary else "Finish"
     return [
-        {"label": "Start", "value": _display_or_dash(metadata.get("start")), "small": True},
-        {"label": "Finish", "value": _display_or_dash(metadata.get("finish")), "small": True},
+        {
+            "label": "Migration Start time",
+            "value": _display_or_dash(metadata.get("start")),
+            "title": _MIGRATION_START_TIME_TITLE,
+            "small": True,
+        },
+        {"label": finish_label, "value": _display_or_dash(metadata.get("finish")), "small": True},
         {
             "label": "Reversible",
             "value": _display_or_dash(metadata.get("reversible")),
@@ -203,20 +215,40 @@ def _build_metadata_metrics(metadata):
     ]
 
 
+def _duration_metric(label, seconds, *, small=False):
+    item = {
+        "label": label,
+        "value": format_lag_time_seconds(seconds),
+        "small": small,
+    }
+    title = format_seconds_title(seconds)
+    if title:
+        item["title"] = title
+    if label == "Lag time" and seconds is not None and seconds > 60:
+        item["highLag"] = True
+    return item
+
+
+def _copied_bytes_title(copied, total):
+    if copied is None and total is None:
+        return None
+    return f"{format_count(copied)} of {format_count(total)} bytes"
+
+
 def _build_progress_metrics(progress, lag_seconds):
     return [
-        {"label": "Lag time", "value": format_lag_time_seconds(lag_seconds), "small": False},
+        _duration_metric("Lag time", lag_seconds, small=False),
         {"label": "Events applied", "value": format_count(progress.get("totalEventsApplied")), "small": False},
         {
             "label": "Oplog window left",
             "value": progress.get("estimatedOplogTimeRemaining") or "—",
             "small": True,
         },
-        {
-            "label": "Catch-up estimate",
-            "value": format_lag_time_seconds(progress.get("estimatedSecondsToCEACatchup")),
-            "small": True,
-        },
+        _duration_metric(
+            "Catch-up estimate",
+            progress.get("estimatedSecondsToCEACatchup"),
+            small=True,
+        ),
         {
             "label": "Can commit",
             "value": "TRUE" if progress.get("canCommit") else "FALSE",
@@ -234,7 +266,7 @@ def _build_progress_metrics(progress, lag_seconds):
 
 def _build_db_only_metrics(lag_seconds):
     return [
-        {"label": "Lag time", "value": format_lag_time_seconds(lag_seconds), "small": False},
+        _duration_metric("Lag time", lag_seconds, small=False),
         {"label": "Events applied", "value": "—", "small": False},
         {"label": "Oplog window left", "value": "—", "small": True},
         {"label": "Catch-up estimate", "value": "—", "small": True},
@@ -273,6 +305,33 @@ def _build_partitions_copied_label(metadata):
     return f"Partitions copied: {format_count(copied)} of {format_count(total)}"
 
 
+def _bytes_copy_percent(copied, total):
+    """Progress bar percent from estimated copied bytes vs total bytes."""
+    if not total or total <= 0:
+        return None
+    if copied is None:
+        copied = 0
+    return min(100.0, (copied / total) * 100)
+
+
+def _build_collections_finished_label(progress=None, metadata=None, *, progress_available=False):
+    coll_finished = None
+    coll_total = None
+    if progress_available and progress:
+        index_building = progress.get("indexBuilding") or {}
+        if isinstance(index_building, dict):
+            coll_finished = index_building.get("collectionsFinished")
+            coll_total = index_building.get("collectionsTotal")
+    if coll_total is None and metadata:
+        coll_finished = metadata.get("indexCollectionsFinished")
+        coll_total = metadata.get("indexCollectionsTotal")
+    if not coll_total or coll_total <= 0:
+        return None
+    if coll_finished is None:
+        coll_finished = 0
+    return f"Collections Copied: {format_count(coll_finished)} of {format_count(coll_total)}"
+
+
 def _build_phase_start_times(metadata):
     if not metadata:
         return None
@@ -286,7 +345,28 @@ def _build_phase_start_times(metadata):
     }
 
 
-def _build_sync_card(progress=None, metadata=None, *, progress_available=False):
+def _apply_summary_mongosync_version(sync_card, *, summary=False, mongosync_version=None):
+    if not summary:
+        return sync_card
+    sync_card["showMongosyncVersion"] = True
+    if mongosync_version:
+        sync_card["mongosyncVersion"] = mongosync_version
+    else:
+        sync_card["mongosyncVersionMissingTitle"] = (
+            "Missing initial log file for version capture.\n"
+            "Upload all rotated mongosync files for full analysis"
+        )
+    return sync_card
+
+
+def _build_sync_card(
+    progress=None,
+    metadata=None,
+    *,
+    progress_available=False,
+    summary=False,
+    mongosync_version=None,
+):
     if progress_available and progress:
         info = progress.get("info") or ""
         info_lower = info.lower()
@@ -299,28 +379,33 @@ def _build_sync_card(progress=None, metadata=None, *, progress_available=False):
         total = collection_copy.get("estimatedTotalBytes")
         state = (progress.get("state") or "").upper()
 
-        copy_percent = None
-        if total and total > 0 and copied is not None:
-            copy_percent = min(100.0, (copied / total) * 100)
-
+        copy_percent = _bytes_copy_percent(copied, total)
         copy_indeterminate = copy_percent is None and state in ("RUNNING", "INITIALIZING")
         copy_prefix = _byte_copy_prefix(info_lower)
         copied_label = (
             f"{copy_prefix}{format_bytes_compact(copied)} of {format_bytes_compact(total)}"
         )
 
-        return {
+        return _apply_summary_mongosync_version(
+            {
             "phase": phase,
             "copyPercent": copy_percent,
             "copyIndeterminate": copy_indeterminate,
             "copiedLabel": copied_label,
+            "copiedTitle": _copied_bytes_title(copied, total),
             "collectionsCopiedLabel": _build_collections_copied_label(metadata),
             "partitionsCopiedLabel": _build_partitions_copied_label(metadata),
-            "showCopyProgress": True,
+            "collectionsFinishedLabel": _build_collections_finished_label(
+                progress=progress, metadata=metadata, progress_available=True
+            ),
+            "showCopyProgress": copy_percent is not None or copy_indeterminate,
             "metrics": metrics,
-            "metadataMetrics": _build_metadata_metrics(metadata),
+            "metadataMetrics": _build_metadata_metrics(metadata, summary=summary),
             "phaseStartTimes": _build_phase_start_times(metadata),
-        }
+            },
+            summary=summary,
+            mongosync_version=mongosync_version,
+        )
 
     phase = _display_or_dash(metadata.get("phase") if metadata else None)
     phase_lower = (metadata.get("phase") or "").lower() if metadata else ""
@@ -330,33 +415,42 @@ def _build_sync_card(progress=None, metadata=None, *, progress_available=False):
     copied = metadata.get("copiedBytes") if metadata else None
     total = metadata.get("totalBytes") if metadata else None
 
-    copy_percent = None
+    copy_percent = _bytes_copy_percent(copied, total)
     copy_indeterminate = False
     copied_label = None
     show_copy_progress = False
 
     if total and total > 0 and copied is not None:
-        copy_percent = min(100.0, (copied / total) * 100)
         copy_prefix = _byte_copy_prefix(phase_lower)
         copied_label = (
             f"{copy_prefix}{format_bytes_compact(copied)} of {format_bytes_compact(total)}"
         )
+    if copy_percent is not None:
         show_copy_progress = True
     elif state in ("RUNNING", "INITIALIZING"):
         copy_indeterminate = True
+        show_copy_progress = True
 
-    return {
+    return _apply_summary_mongosync_version(
+        {
         "phase": phase,
         "copyPercent": copy_percent,
-        "copyIndeterminate": copy_indeterminate and not show_copy_progress,
+        "copyIndeterminate": copy_indeterminate,
         "copiedLabel": copied_label,
+        "copiedTitle": _copied_bytes_title(copied, total) if copied_label else None,
         "collectionsCopiedLabel": _build_collections_copied_label(metadata),
         "partitionsCopiedLabel": _build_partitions_copied_label(metadata),
+        "collectionsFinishedLabel": _build_collections_finished_label(
+            progress=progress, metadata=metadata, progress_available=progress_available
+        ),
         "showCopyProgress": show_copy_progress,
         "metrics": _build_db_only_metrics(lag_seconds),
-        "metadataMetrics": _build_metadata_metrics(metadata),
+        "metadataMetrics": _build_metadata_metrics(metadata, summary=summary),
         "phaseStartTimes": _build_phase_start_times(metadata),
-    }
+        },
+        summary=summary,
+        mongosync_version=mongosync_version,
+    )
 
 
 _INDEX_BUILDING_DESCRIPTION = (
@@ -396,7 +490,7 @@ def _build_index_building_card(
                 "small": True,
             },
             {
-                "label": "Collections finished",
+                "label": "Collections finished building indexes",
                 "value": f"{format_count(coll_finished)} / {format_count(coll_total)}",
                 "small": True,
             },
@@ -538,10 +632,7 @@ def _verification_side_kv(side_data):
                 side_data.get("estimatedDocumentCount"),
             ),
         },
-        {
-            "label": "Lag time",
-            "value": format_lag_time_seconds(side_data.get("lagTimeSeconds")),
-        },
+        _duration_metric("Lag time", side_data.get("lagTimeSeconds")),
     ]
 
 
@@ -689,7 +780,14 @@ def _build_toolbar_badges(progress, verification_card, index_card):
     return badges
 
 
-def _build_display(progress, metadata, *, progress_available=False):
+def _build_display(
+    progress,
+    metadata,
+    *,
+    progress_available=False,
+    summary=False,
+    mongosync_version=None,
+):
     if progress_available and progress:
         state = (progress.get("state") or "").upper() or "—"
         state_badge = _derive_state_badge(progress)
@@ -701,6 +799,8 @@ def _build_display(progress, metadata, *, progress_available=False):
         progress=progress,
         metadata=metadata,
         progress_available=progress_available,
+        summary=summary,
+        mongosync_version=mongosync_version,
     )
 
     display = {

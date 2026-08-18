@@ -49,6 +49,20 @@ class TestPhaseEventFromInfo:
     def test_unknown_message_returns_none(self):
         assert _phase_event_from_info({"time": "2026-01-01T12:00:00Z", "message": "other"}) is None
 
+    @pytest.mark.parametrize(
+        "message,canonical",
+        [
+            ("Starting collection copy phase.", "collection copy"),
+            ("Starting change event application phase.", "change event application"),
+            ("Starting initializing partitions phase.", "initializing partitions"),
+        ],
+    )
+    def test_maps_info_messages_with_trailing_period(self, message, canonical):
+        obj = {"time": "2026-01-01T12:00:00.123456Z", "message": message}
+        event = _phase_event_from_info(obj)
+        assert event is not None
+        assert event[1] == canonical
+
 
 class TestPhaseEventFromInMemory:
     def test_parses_phase_update(self):
@@ -102,6 +116,23 @@ class TestMergePhaseEvents:
         api = [{"Phase": "change event application", "Ts": {"T": 1700000100}}]
         merged = _merge_phase_events([], [], api_transitions=api)
         assert merged[0][1] == "change event application"
+
+    def test_info_messages_with_trailing_period(self):
+        info = [
+            {
+                "time": "2026-07-20T17:53:11.775615Z",
+                "message": "Starting collection copy phase.",
+            },
+            {
+                "time": "2026-07-21T03:49:22.808282Z",
+                "message": "Starting change event application phase.",
+            },
+        ]
+        merged = _merge_phase_events(info, [])
+        by_phase = {label: ts for ts, label in merged}
+        assert "collection copy" in by_phase
+        assert "change event application" in by_phase
+        assert by_phase["change event application"].startswith("2026-07-21T03:49:22")
 
 
 class TestExtractProgressFlagEvents:

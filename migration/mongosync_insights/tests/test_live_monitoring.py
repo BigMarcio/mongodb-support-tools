@@ -11,11 +11,16 @@ from lib.app_config import (
 )
 from lib.live_monitoring import (
     ProgressFetchError,
+    _build_collections_finished_label,
+    _build_db_only_metrics,
     _build_direction,
+    _build_index_building_card,
     _build_metadata_metrics,
     _build_progress_metrics,
+    _build_sync_card,
     _derive_state_badge,
     _state_badge_color,
+    _verification_side_kv,
     build_live_monitor_payload,
     fetch_progress,
     fetch_summary,
@@ -193,17 +198,69 @@ class TestBuildHelpers:
 
         assert progress_monitor_no_config_response()["dataSources"] is None
 
-    def test_build_metadata_metrics(self):
+    def test_build_metadata_metrics_live_labels(self):
         metrics = _build_metadata_metrics({"start": "2026-01-01", "buildIndexes": "After Data Copy"})
         labels = [m["label"] for m in metrics]
-        assert "Start" in labels
+        assert "Migration Start time" in labels
+        assert "Finish" in labels
+        assert "Migration Committed" not in labels
         assert "Build Indexes" in labels
+        start_metric = next(m for m in metrics if m["label"] == "Migration Start time")
+        assert "initializing collections and indexes" in start_metric["title"]
+        assert "/start" in start_metric["title"]
+
+    def test_build_metadata_metrics_summary_labels(self):
+        metrics = _build_metadata_metrics(
+            {"start": "2026-01-01", "finish": "2026-01-02"},
+            summary=True,
+        )
+        labels = [m["label"] for m in metrics]
+        assert "Migration Committed" in labels
+        assert "Finish" not in labels
 
     def test_build_progress_metrics(self):
-        metrics = _build_progress_metrics({"canCommit": True, "canWrite": False, "totalEventsApplied": 10}, 30)
+        metrics = _build_progress_metrics(
+            {
+                "canCommit": True,
+                "canWrite": False,
+                "totalEventsApplied": 10,
+                "estimatedSecondsToCEACatchup": 90,
+            },
+            1582,
+        )
         by_label = {m["label"]: m for m in metrics}
         assert by_label["Can commit"]["value"] == "TRUE"
         assert by_label["Events applied"]["value"] == "10"
+        assert by_label["Lag time"]["value"] == "26m 22s"
+        assert by_label["Lag time"]["title"] == "1,582 seconds"
+        assert by_label["Lag time"]["highLag"] is True
+        assert by_label["Catch-up estimate"]["value"] == "1m 30s"
+        assert by_label["Catch-up estimate"]["title"] == "90 seconds"
+        assert "title" not in by_label["Events applied"]
+
+    def test_db_only_metrics_lag_title(self):
+        metrics = _build_db_only_metrics(90)
+        by_label = {m["label"]: m for m in metrics}
+        assert by_label["Lag time"]["value"] == "1m 30s"
+        assert by_label["Lag time"]["title"] == "90 seconds"
+        assert by_label["Lag time"]["highLag"] is True
+        assert "title" not in by_label["Catch-up estimate"]
+
+    def test_verification_lag_title(self):
+        rows = {r["label"]: r for r in _verification_side_kv({"lagTimeSeconds": 75})}
+        assert rows["Lag time"]["value"] == "1m 15s"
+        assert rows["Lag time"]["title"] == "75 seconds"
+        assert rows["Lag time"]["highLag"] is True
+
+    def test_lag_time_not_highlighted_at_one_minute(self):
+        metrics = _build_progress_metrics({}, 60)
+        by_label = {m["label"]: m for m in metrics}
+        assert "highLag" not in by_label["Lag time"]
+
+    def test_lag_time_highlighted_over_one_minute(self):
+        metrics = _build_progress_metrics({}, 61)
+        by_label = {m["label"]: m for m in metrics}
+        assert by_label["Lag time"]["highLag"] is True
 
     def test_build_direction_from_progress(self):
         progress = {
@@ -214,6 +271,63 @@ class TestBuildHelpers:
         card = _build_direction(progress)
         assert card["source"]["address"] == "src:27017"
         assert card["destination"]["ping"] == "10 ms"
+
+
+class TestCollectionsFinishedLabel:
+    def test_label_from_progress_index_building(self):
+        label = _build_collections_finished_label(
+            progress={
+                "indexBuilding": {
+                    "collectionsFinished": 1,
+                    "collectionsTotal": 4,
+                }
+            },
+            progress_available=True,
+        )
+        assert label == "Collections Copied: 1 of 4"
+
+    def test_sync_card_includes_collections_finished_label(self):
+        sync = _build_sync_card(
+            progress={
+                "info": "collection copy",
+                "state": "RUNNING",
+                "collectionCopy": {
+                    "estimatedCopiedBytes": 50,
+                    "estimatedTotalBytes": 100,
+                },
+                "indexBuilding": {
+                    "collectionsFinished": 2,
+                    "collectionsTotal": 5,
+                    "indexesBuilt": 1,
+                    "totalIndexesToBuild": 10,
+                },
+            },
+            metadata={"partitionsCopied": 25, "partitionsTotal": 100},
+            progress_available=True,
+        )
+        assert sync["collectionsFinishedLabel"] == "Collections Copied: 2 of 5"
+        assert sync["copyPercent"] == 50.0
+
+    def test_sync_card_copy_percent_from_bytes_not_partitions(self):
+        sync = _build_sync_card(
+            progress={
+                "info": "collection copy",
+                "state": "RUNNING",
+                "collectionCopy": {
+                    "estimatedCopiedBytes": 90,
+                    "estimatedTotalBytes": 100,
+                },
+            },
+            metadata={"partitionsCopied": 10, "partitionsTotal": 200},
+            progress_available=True,
+        )
+        assert sync["copyPercent"] == 90.0
+
+    def test_index_building_card_includes_collections_finished_metric(self):
+        card = _build_index_building_card(1, 10, 2, 5)
+        labels = [metric["label"] for metric in card["metrics"]]
+        assert labels == ["Indexes built", "Collections finished building indexes"]
+        assert card["metrics"][1]["value"] == "2 / 5"
 
 
 class TestProgressMonitorNoConfig:

@@ -167,6 +167,20 @@
     margin-top: 4px;
 }
 
+.lm-sync-subsection {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--lm-card-border);
+}
+
+.lm-sync-subsection .lm-copied-line {
+    margin-top: 0;
+}
+
+.lm-sync-subsection .lm-copied-block {
+    margin-top: 0;
+}
+
 .lm-phase-times-block {
     margin-top: 16px;
     padding-top: 16px;
@@ -537,6 +551,52 @@
     font-size: 15px;
 }
 
+.lm-metric .lm-mvalue.lm-lag-high {
+    font-weight: 700;
+    color: var(--mongodb-red-base);
+}
+
+.lm-has-hover {
+    position: relative;
+}
+
+.lm-has-hover:not(button) {
+    cursor: help;
+}
+
+.lm-has-hover::after {
+    content: attr(data-hover-title);
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 6px);
+    z-index: 6;
+    padding: 6px 8px;
+    background: var(--lm-card-bg);
+    color: var(--lm-text-primary);
+    border: 1px solid var(--lm-card-border);
+    border-radius: var(--mi-radius-sm);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.3;
+    text-transform: none;
+    letter-spacing: 0;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.lm-has-hover-multiline::after {
+    white-space: pre-line;
+    max-width: 280px;
+}
+
+.lm-has-hover:hover::after,
+.lm-has-hover:focus-visible::after {
+    opacity: 1;
+    visibility: visible;
+}
+
 .lm-direction {
     display: flex;
     align-items: center;
@@ -655,6 +715,10 @@
     color: var(--mongodb-red-light1);
 }
 
+[data-theme="dark"] .lm-metric .lm-mvalue.lm-lag-high {
+    color: var(--mongodb-red-light1);
+}
+
 [data-theme="dark"] .lm-banner.info {
     background: rgba(1, 107, 248, 0.15);
     border-color: var(--mongodb-blue-base);
@@ -693,6 +757,24 @@
     font-size: 18px;
     font-weight: 600;
     margin: 0 0 4px;
+    color: var(--lm-text-primary);
+}
+
+.lm-migration-progress-title {
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.lm-mongosync-version {
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--lm-text-secondary);
+    white-space: nowrap;
+}
+
+.lm-mongosync-version-value {
+    font-weight: 600;
     color: var(--lm-text-primary);
 }
 

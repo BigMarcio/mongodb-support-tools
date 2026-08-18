@@ -29,6 +29,7 @@ from .otel_metrics import MetricsCollector, create_metrics_plots
 from .plot_theme import apply_mi_theme, section_label_style
 from .log_store import LogStore
 from .log_store_registry import log_store_registry
+from .log_summary import build_log_summary_payload, extract_latest_progress
 from .snapshot_store import save_snapshot
 
 _DECOMPRESS_ERRORS = (
@@ -82,10 +83,15 @@ INFO_PHASE_TO_CANONICAL = {
 PHASES_EXCLUDED_FROM_MERGE = frozenset({"uninitialized"})
 
 
+def _normalize_phase_info_message(message):
+    """Normalize info-level phase messages for lookup (strip whitespace and trailing period)."""
+    return (message or "").strip().lower().rstrip(".")
+
+
 def _phase_event_from_info(json_obj):
     """Return (time, canonical, canonical) from an info-level phase log line, or None."""
-    message = (json_obj.get("message") or "").strip()
-    canonical = INFO_PHASE_TO_CANONICAL.get(message.lower())
+    message = _normalize_phase_info_message(json_obj.get("message"))
+    canonical = INFO_PHASE_TO_CANONICAL.get(message)
     if not canonical:
         return None
     t = (json_obj.get("time") or "")[:26]
@@ -259,6 +265,8 @@ def upload_file():
             'partition_copy_progress': re.compile(r"Completed writing \d+ / \d+ partitions to destination cluster", re.IGNORECASE),
             'natural_order_collections': re.compile(r"Selected for natural order collection reads", re.IGNORECASE),
             'received_request': re.compile(r"Received request", re.IGNORECASE),
+            'start_handler': re.compile(r"Start handler called", re.IGNORECASE),
+            'state_transition': re.compile(r"Transitioning the state", re.IGNORECASE),
             'partition_single_created': re.compile(r"Creating a single partition for whole collection", re.IGNORECASE),
             'partition_multi_created': re.compile(r"Creating initial partitions for non-capped collection", re.IGNORECASE),
             'partition_sampling_info': re.compile(r"Pre-sampling information", re.IGNORECASE),
@@ -290,6 +298,8 @@ def upload_file():
         matched_errors = []
         natural_order_collections = []
         mongosync_start_options = []
+        start_handler_parameters = []
+        state_transition_json = []
         partition_single_created = []
         partition_multi_created = []
         partition_sampling_info = []
@@ -427,6 +437,14 @@ def upload_file():
                             mongosync_start_options.append(body)
                         except (json.JSONDecodeError, TypeError):
                             pass
+
+                    if patterns['start_handler'].search(message):
+                        params = json_obj.get("parameters")
+                        if isinstance(params, dict):
+                            start_handler_parameters.append(params)
+
+                    if patterns['state_transition'].search(message):
+                        state_transition_json.append(json_obj)
                 
                     if patterns['crud_events_rate'].search(message):
                         mongosync_crud_rate.append(json_obj)
@@ -678,16 +696,12 @@ def upload_file():
                     partition_init_progress_completed.append(done)
                 logger.info(f"Built partition init progress time series with {len(init_events)} events")
 
-        mongosync_sent_response_body = None
-        for response in mongosync_sent_response:
-            try:  
-                parsed_body = json.loads(response['body'])
-                # Only use this response if it contains 'progress'
-                if 'progress' in parsed_body:
-                    mongosync_sent_response_body = parsed_body  
-            except (json.JSONDecodeError, TypeError):  
-                mongosync_sent_response_body = None  # If parse fails, use None 
-                logger.warning(f"No message 'sent response' found in the logs") 
+        latest_progress, latest_progress_time = extract_latest_progress(mongosync_sent_response)
+        mongosync_sent_response_body = (
+            {"progress": latest_progress} if latest_progress else None
+        )
+        if mongosync_sent_response and latest_progress is None:
+            logger.warning("No message 'sent response' with progress found in the logs") 
 
         # Create a string with all the version information
         if version_info_list and isinstance(version_info_list[0], dict):  
@@ -983,6 +997,7 @@ def upload_file():
         
         api_phase_transitions = []
         phase_transitions = ""
+        merged_phase_events = []
         # Check that mongosync_sent_response_body is a dict before searching for 'progress'  
         if isinstance(mongosync_sent_response_body, dict):
             if 'progress' in mongosync_sent_response_body:
@@ -1005,6 +1020,7 @@ def upload_file():
                 api_transitions=api_phase_transitions or None,
             )
             if merged:
+                merged_phase_events = merged
                 ts_t_list_formatted = [t for t, _ in merged]
                 phase_list = [label for _, label in merged]
                 phase_transitions = True
@@ -1567,6 +1583,23 @@ def upload_file():
         has_logs_data = logs_line_count > 0 and len(data) > 0
         has_metrics_data = metrics_collector.metrics_count > 0
 
+        last_partitions_copied = partitions_copied[-1] if partitions_copied else None
+        last_partitions_total = partitions_total[-1] if partitions_total else None
+        summary_payload = build_log_summary_payload(
+            progress=latest_progress,
+            progress_time=latest_progress_time,
+            replication_lines=data,
+            phase_events=merged_phase_events,
+            natural_order_items=natural_order_data,
+            start_options=mongosync_start_options,
+            hidden_flags=mongosync_hiddenflags,
+            start_handler_parameters=start_handler_parameters,
+            state_transitions=state_transition_json,
+            partitions_copied=last_partitions_copied,
+            partitions_total=last_partitions_total,
+            version_info_lines=version_info_list,
+        )
+
         template_data = {
             'plot_json': plot_json,
             'metrics_plot_json': metrics_plot_json,
@@ -1577,6 +1610,7 @@ def upload_file():
             'errors_data': matched_errors,
             'partition_init_data': partition_init_data,
             'progress_data': progress_data,
+            'summary_payload': summary_payload,
             'has_logs_data': has_logs_data,
             'has_metrics_data': has_metrics_data,
             'log_viewer_lines': log_viewer_lines_out,

@@ -8,6 +8,7 @@ from lib.utils import (
     format_count,
     format_lag_time_seconds,
     format_ratio,
+    format_seconds_title,
 )
 
 
@@ -45,6 +46,23 @@ class TestFormatLagTimeSeconds:
     )
     def test_format_lag_time_seconds(self, seconds, expected):
         assert format_lag_time_seconds(seconds) == expected
+
+
+class TestFormatSecondsTitle:
+    @pytest.mark.parametrize(
+        "seconds,expected",
+        [
+            (None, None),
+            (-5, None),
+            (0, "0 seconds"),
+            (1, "1 second"),
+            (45, "45 seconds"),
+            (90, "90 seconds"),
+            (1582, "1,582 seconds"),
+        ],
+    )
+    def test_format_seconds_title(self, seconds, expected):
+        assert format_seconds_title(seconds) == expected
 
 
 class TestFormatCount:

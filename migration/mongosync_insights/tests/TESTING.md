@@ -3,7 +3,7 @@
 **Scope:** `migration/mongosync_insights/tests/`  
 **Framework:** pytest (with some `unittest.TestCase` classes)  
 **CI:** [`.github/workflows/mongosync-insights-tests.yml`](../../../.github/workflows/mongosync-insights-tests.yml) — runs `python -m pytest tests/ -q` on Python 3.11  
-**Total:** **516 tests** across **30 test files** (+ `conftest.py` shared fixtures)
+**Total:** **543 tests** across **31 test files** (+ `conftest.py` shared fixtures)
 
 ---
 
@@ -13,12 +13,12 @@
 |------|------:|------:|-------------------|
 | App config & bootstrap | 4 | 88 | Env parsing, endpoint URLs, file classification, sessions, app factory |
 | Security & paths | 2 | 22 | Connection string sanitization, store ID validation, path traversal |
-| Log storage & routes | 7 | 69 | Upload, search, decompress, snapshots, FTS, timestamps |
+| Log storage & routes | 8 | 87 | Upload, search, decompress, snapshots, FTS, timestamps, Summary tab payload |
 | Metrics & OTEL parsing | 2 | 39 | MIME detection, phase events, Prometheus/OTEL log parsing |
-| Live monitoring | 6 | 109 | Progress/verifier API clients, routes, metadata, formatting, charts |
+| Live monitoring | 6 | 118 | Progress/verifier API clients, routes, metadata, formatting, charts |
 | Migration metadata UI | 8 | 114 | Verification mode, index building, filters, natural order, phases |
 | Migration verifier | 1 | 75 | MongoDB verifier queries, badges, payloads, generation history |
-| **Total** | **30** | **516** | |
+| **Total** | **31** | **543** | |
 
 ---
 
@@ -27,7 +27,7 @@
 ```bash
 cd migration/mongosync_insights
 pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest tests/ -q          # all 516 tests
+python -m pytest tests/ -q          # all 543 tests
 python -m pytest tests/ --collect-only -q   # list without running (verify current count)
 python -m pytest tests/test_log_time.py -v  # single file
 ```
@@ -52,13 +52,14 @@ python -m pytest tests/test_log_time.py -v  # single file
 | `test_connection_validator.py` | 5 | Strips credentials from URIs, HTML-escapes hosts, fallback for malformed URIs |
 | `test_store_paths.py` | 17 | UUID store IDs, path traversal rejection, poisoned snapshot JSON, registry path constraints |
 
-### 3. Log storage & routes (69 tests)
+### 3. Log storage & routes (87 tests)
 
 | File | Tests | Validates |
 |------|------:|-----------|
 | `test_log_store.py` | 14 | Insert, FTS search, pagination, timestamp range queries (with/without Z), delete |
 | `test_log_store_registry.py` | 4 | Store open/cache hit-miss, expiry, maintenance cleanup |
 | `test_log_time.py` | 7 | Log search datetime parsing, start/end bound normalization |
+| `test_log_summary.py` | 18 | Latest `/progress` extraction, log-derived metadata, Summary tab payload |
 | `test_file_decompressor.py` | 20 | gzip/bzip2/tar/zip decompression, macOS metadata skipping, MIME routing |
 | `test_logs_routes.py` | 17 | `/logs` home, upload, search (text + timestamp, no-Z stored logs), snapshot list/load/delete |
 | `test_upload_fixtures.py` | 3 | End-to-end upload + search with sample fixtures |
@@ -71,15 +72,15 @@ python -m pytest tests/test_log_time.py -v  # single file
 | `test_logs_metrics.py` | 21 | MIME sniffing, phase event extraction from logs/API, merge logic, commit/write flags |
 | `test_otel_metrics.py` | 18 | Prometheus label/message parsing, metrics log lines, collector histograms, config/titles |
 
-### 5. Live monitoring (109 tests)
+### 5. Live monitoring (118 tests)
 
 | File | Tests | Validates |
 |------|------:|-----------|
-| `test_live_monitoring.py` | 21 | `fetch_progress` / `fetch_summary` / verifier progress (timeouts, HTTP errors), state badges, display builders |
+| `test_live_monitoring.py` | 23 | `fetch_progress` / `fetch_summary` / verifier progress (timeouts, HTTP errors), state badges, display builders, duration hover titles |
 | `test_live_routes.py` | 19 | `/live` home, monitoring POST, progress monitor, verifier POST/GET routes |
 | `test_live_metadata_status.py` | 24 | Lag time, write-blocking mode, sync phase normalization, progress gating (index/verification), partition byte totals |
 | `test_data_sources.py` | 6 | Data source card when endpoint/metadata configured or unavailable |
-| `test_utils.py` | 33 | Byte/count/lag/ratio formatting helpers |
+| `test_utils.py` | 40 | Byte/count/lag/ratio formatting helpers, seconds hover titles |
 | `test_plot_theme.py` | 6 | Light/dark theme tokens, annotation styles, Plotly template registration |
 
 ### 6. Migration metadata UI (114 tests)
@@ -118,7 +119,7 @@ Fixtures under `tests/fixtures/`:
 
 ---
 
-## Full Test Inventory (516 tests)
+## Full Test Inventory (543 tests)
 
 ### `test_app_config.py` (80)
 
@@ -183,9 +184,9 @@ Fixtures under `tests/fixtures/`:
 
 - Lag time, write-blocking mode (4 parametrized), sync phases (5 parametrized), progress gating (8 parametrized), verification mode keys, partition byte totals
 
-### `test_live_monitoring.py` (21)
+### `test_live_monitoring.py` (23)
 
-- Fetch progress/summary/verifier (success + error paths), state badges, display builders, no-config response shape
+- Fetch progress/summary/verifier (success + error paths), state badges, display builders, no-config response shape, duration hover titles
 
 ### `test_live_routes.py` (19)
 
@@ -202,6 +203,10 @@ Fixtures under `tests/fixtures/`:
 ### `test_log_time.py` (7)
 
 - Parse datetime, Z suffix, reject empty, normalize start/end bounds
+
+### `test_log_summary.py` (18)
+
+- Latest `/progress` from sent responses, skip invalid JSON, timestamp formatting, phase/natural-order rows, replication fallback, start-option metadata, Summary payload shape
 
 ### `test_logs_metrics.py` (21)
 
@@ -247,9 +252,9 @@ Fixtures under `tests/fixtures/`:
 
 - Upload sample log, upload metrics fixture, search after upload
 
-### `test_utils.py` (33)
+### `test_utils.py` (40)
 
-- `format_bytes_compact` (9), `format_lag_time_seconds` (7), `format_count` (5), `format_ratio` (2), `format_byte_size` (5), `convert_bytes` (5) — all parametrized
+- `format_bytes_compact` (9), `format_lag_time_seconds` (7), `format_seconds_title` (7), `format_count` (5), `format_ratio` (2), `format_byte_size` (5), `convert_bytes` (5) — all parametrized
 
 ### `test_verification_mode.py` (32)
 

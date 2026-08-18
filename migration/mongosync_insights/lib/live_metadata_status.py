@@ -279,8 +279,8 @@ def format_namespace_filter_rows(filter_data, filter_type="inclusion"):
     """
     if not filter_data:
         if filter_type == "inclusion":
-            return [{"key": "Database", "value": "All (no filter)"}]
-        return [{"key": "Filter", "value": "No filter"}]
+            return [{"key": "Database", "value": "All (no filter specified)"}]
+        return [{"key": "Filter", "value": "None (No filter specified)"}]
 
     keys = []
     values = []
@@ -298,7 +298,9 @@ def format_namespace_filter_rows(filter_data, filter_type="inclusion"):
                     else:
                         db_list.append(str(db))
                 keys.append("Database")
-                values.append(", ".join(db_list) if db_list else "All (no filter)")
+                values.append(
+                    ", ".join(db_list) if db_list else "All (no filter specified)"
+                )
 
         collections = item.get("collections")
         if collections:
@@ -310,12 +312,12 @@ def format_namespace_filter_rows(filter_data, filter_type="inclusion"):
                 values.append(str(collections))
         elif collections is None and database:
             keys.append("Collections")
-            values.append("All (no filter)")
+            values.append("All (no filter specified)")
 
     if not keys:
         if filter_type == "inclusion":
-            return [{"key": "Database", "value": "All (no filter)"}]
-        return [{"key": "Filter", "value": "No filter"}]
+            return [{"key": "Database", "value": "All (no filter specified)"}]
+        return [{"key": "Filter", "value": "None (No filter specified)"}]
 
     return [{"key": k, "value": v} for k, v in zip(keys, values)]
 

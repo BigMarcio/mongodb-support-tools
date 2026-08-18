@@ -23,6 +23,11 @@
     min-height: 400px;
 }
 
+.ur-main .lm-main {
+    max-width: 1080px;
+    padding: 24px 8px 32px;
+}
+
 .ur-main .tabs-container {
     max-width: 1550px;
     margin: 0 auto;
@@ -30,6 +35,7 @@
 
 .ur-main .tab-buttons {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
     margin-bottom: 0;
     border-bottom: 2px solid var(--mongodb-green-dark2);

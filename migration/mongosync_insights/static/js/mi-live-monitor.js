@@ -42,10 +42,20 @@
         return wrap;
     }
 
+    function applyHoverTitle(node, title) {
+        if (!node || !title) return node;
+        node.classList.add('lm-has-hover');
+        if (title.indexOf('\n') !== -1) {
+            node.classList.add('lm-has-hover-multiline');
+        }
+        node.setAttribute('data-hover-title', title);
+        return node;
+    }
+
     function metricTile(item) {
         var box = el('div', 'lm-metric');
         box.appendChild(el('div', 'lm-mlabel', item.label));
-        var valueClass = 'lm-mvalue' + (item.small ? ' small' : '');
+        var valueClass = 'lm-mvalue' + (item.small ? ' small' : '') + (item.highLag ? ' lm-lag-high' : '');
         if (item.badge) {
             var val = el('div', valueClass);
             val.appendChild(badge(item.value, item.badge, false));
@@ -53,6 +63,7 @@
         } else {
             box.appendChild(el('div', valueClass, String(item.value)));
         }
+        applyHoverTitle(box, item.title);
         return box;
     }
 
@@ -68,10 +79,40 @@
         return section;
     }
 
-    function kvRow(label, value) {
+    function cardWithTitleElement(titleEl, desc, bodyChildren, bodyClassName) {
+        var section = el('section', 'lm-card');
+        if (titleEl) section.appendChild(titleEl);
+        if (desc) section.appendChild(el('p', 'lm-card-desc', desc));
+        var body = el('div', 'lm-card-body' + (bodyClassName ? ' ' + bodyClassName : ''));
+        (bodyChildren || []).forEach(function (c) {
+            if (c) body.appendChild(c);
+        });
+        section.appendChild(body);
+        return section;
+    }
+
+    function migrationProgressTitle(sync) {
+        var title = el('h2', 'lm-card-title-row lm-migration-progress-title');
+        title.appendChild(document.createTextNode('Migration Progress'));
+        if (sync.showMongosyncVersion) {
+            var versionWrap = el('span', 'lm-mongosync-version');
+            versionWrap.appendChild(document.createTextNode('Mongosync Version: '));
+            var versionValue = sync.mongosyncVersion || '—';
+            versionWrap.appendChild(el('span', 'lm-mongosync-version-value', versionValue));
+            if (!sync.mongosyncVersion && sync.mongosyncVersionMissingTitle) {
+                applyHoverTitle(versionWrap, sync.mongosyncVersionMissingTitle);
+            }
+            title.appendChild(versionWrap);
+        }
+        return title;
+    }
+
+    function kvRow(label, value, title) {
         var rowEl = el('div', 'lm-kv');
         rowEl.appendChild(el('span', 'lm-k', label));
-        rowEl.appendChild(el('span', 'lm-v', value));
+        var valueEl = el('span', 'lm-v', value);
+        applyHoverTitle(valueEl, title);
+        rowEl.appendChild(valueEl);
         return rowEl;
     }
 
@@ -285,28 +326,60 @@
         return block;
     }
 
+    function copyPercentLabel(sync) {
+        if (!sync.showCopyProgress || sync.copyPercent == null) {
+            return null;
+        }
+        return el('span', 'lm-muted', sync.copyPercent.toFixed(1) + '%');
+    }
+
     function copiedProgressBlock(sync) {
-        var hasDetails = !!(sync.collectionsCopiedLabel || sync.partitionsCopiedLabel);
+        var hasDetails = !!(
+            sync.collectionsCopiedLabel ||
+            sync.partitionsCopiedLabel ||
+            sync.collectionsFinishedLabel
+        );
         if (!sync.copiedLabel && !hasDetails) {
             return null;
         }
 
-        if (!sync.copiedLabel) {
-            var fallback = el('div', 'lm-copied-block');
+        function appendCopyDetailLines(parent, useDetailClass) {
+            var lineClass = useDetailClass ? 'lm-muted lm-copied-detail-line' : 'lm-muted lm-copied-line';
             if (sync.collectionsCopiedLabel) {
-                fallback.appendChild(el('div', 'lm-muted lm-copied-line', sync.collectionsCopiedLabel));
+                parent.appendChild(el('div', lineClass, sync.collectionsCopiedLabel));
             }
             if (sync.partitionsCopiedLabel) {
-                fallback.appendChild(el('div', 'lm-muted lm-copied-line', sync.partitionsCopiedLabel));
+                parent.appendChild(el('div', lineClass, sync.partitionsCopiedLabel));
             }
+            if (sync.collectionsFinishedLabel) {
+                parent.appendChild(el('div', lineClass, sync.collectionsFinishedLabel));
+            }
+        }
+
+        if (!sync.copiedLabel) {
+            var fallback = el('div', 'lm-copied-block');
+            appendCopyDetailLines(fallback, false);
             return fallback;
         }
 
         if (!hasDetails) {
-            return el('div', 'lm-muted lm-copied-line', sync.copiedLabel);
+            var simpleBlock = el('div', 'lm-copied-block');
+            var simpleRow = el('div', 'lm-phase-row');
+            var line = el('div', 'lm-muted lm-copied-line');
+            line.style.marginTop = '0';
+            line.appendChild(document.createTextNode(sync.copiedLabel));
+            applyHoverTitle(line, sync.copiedTitle);
+            simpleRow.appendChild(line);
+            var simplePercent = copyPercentLabel(sync);
+            if (simplePercent) {
+                simpleRow.appendChild(simplePercent);
+            }
+            simpleBlock.appendChild(simpleRow);
+            return simpleBlock;
         }
 
         var block = el('div', 'lm-copied-block');
+        var copiedRow = el('div', 'lm-phase-row');
         var toggle = el('button', 'lm-copied-toggle lm-muted');
         toggle.type = 'button';
         toggle.setAttribute('aria-expanded', copyDetailsExpanded ? 'true' : 'false');
@@ -314,18 +387,16 @@
         var chevron = el('span', 'lm-copied-chevron', copyDetailsExpanded ? '▾' : '▸');
         toggle.appendChild(chevron);
         toggle.appendChild(document.createTextNode(sync.copiedLabel));
+        applyHoverTitle(toggle, sync.copiedTitle);
+        copiedRow.appendChild(toggle);
+        var copiedPercent = copyPercentLabel(sync);
+        if (copiedPercent) {
+            copiedRow.appendChild(copiedPercent);
+        }
+        block.appendChild(copiedRow);
 
         var details = el('div', 'lm-copied-details' + (copyDetailsExpanded ? ' is-open' : ''));
-        if (sync.collectionsCopiedLabel) {
-            details.appendChild(
-                el('div', 'lm-muted lm-copied-detail-line', sync.collectionsCopiedLabel)
-            );
-        }
-        if (sync.partitionsCopiedLabel) {
-            details.appendChild(
-                el('div', 'lm-muted lm-copied-detail-line', sync.partitionsCopiedLabel)
-            );
-        }
+        appendCopyDetailLines(details, true);
 
         toggle.addEventListener('click', function () {
             copyDetailsExpanded = !copyDetailsExpanded;
@@ -334,7 +405,6 @@
             details.classList.toggle('is-open', copyDetailsExpanded);
         });
 
-        block.appendChild(toggle);
         block.appendChild(details);
         return block;
     }
@@ -343,20 +413,19 @@
         if (!sync) return null;
         var phaseRow = el('div', 'lm-phase-row');
         var phaseText = el('span');
-        phaseText.appendChild(document.createTextNode('Phase: '));
+        phaseText.appendChild(document.createTextNode('Current Phase: '));
         phaseText.appendChild(el('b', null, sync.phase));
         phaseRow.appendChild(phaseText);
-        if (sync.showCopyProgress && sync.copyPercent != null) {
-            phaseRow.appendChild(el('span', 'lm-muted', sync.copyPercent.toFixed(1) + '%'));
-        }
 
         var children = [phaseRow];
-        if (sync.showCopyProgress) {
-            children.push(progressBar(sync.copyPercent, sync.copyIndeterminate));
-        }
         var copiedBlock = copiedProgressBlock(sync);
         if (copiedBlock) {
-            children.push(copiedBlock);
+            var copiedSection = el('div', 'lm-sync-subsection');
+            copiedSection.appendChild(copiedBlock);
+            children.push(copiedSection);
+        }
+        if (sync.showCopyProgress) {
+            children.push(progressBar(sync.copyPercent, sync.copyIndeterminate));
         }
 
         var metrics = el('div', 'lm-metrics');
@@ -378,7 +447,7 @@
             children.push(phaseTimesBlock);
         }
 
-        return card('Migration Progress', null, children);
+        return cardWithTitleElement(migrationProgressTitle(sync), null, children);
     }
 
     function renderIndexBuilding(idx) {
@@ -432,7 +501,7 @@
             var colEl = el('div', 'lm-ver-col');
             colEl.appendChild(el('div', 'lm-section-label', col.label));
             (col.rows || []).forEach(function (r) {
-                colEl.appendChild(kvRow(r.label, r.value));
+                colEl.appendChild(kvRow(r.label, r.value, r.title));
             });
             row.appendChild(colEl);
         });
@@ -455,12 +524,13 @@
         });
     }
 
-    function renderToolbar(display, dataSources) {
+    function renderToolbar(display, dataSources, options) {
+        options = options || {};
         var toolbar = el('div', 'lm-toolbar');
         var textBlock = el('div', 'lm-toolbar-text');
 
         var title = el('h1', 'lm-page-title');
-        title.appendChild(document.createTextNode('Migration Monitoring'));
+        title.appendChild(document.createTextNode(options.pageTitle || 'Migration Monitoring'));
         if (display && display.stateBadge) {
             title.appendChild(
                 badge(display.stateBadge.label, display.stateBadge.color, true)
@@ -473,6 +543,9 @@
         }
         appendDataSourceBadges(title, dataSources);
         textBlock.appendChild(title);
+        if (options.pageSubtitle) {
+            textBlock.appendChild(el('p', 'lm-page-subtitle', options.pageSubtitle));
+        }
 
         toolbar.appendChild(textBlock);
         return toolbar;
@@ -481,10 +554,15 @@
     function renderProgressMonitor(root, payload) {
         if (!root) return;
         root.replaceChildren();
+        payload = payload || {};
+        var toolbarOpts = {
+            pageTitle: payload.pageTitle,
+            pageSubtitle: payload.pageSubtitle,
+        };
 
         if (payload.error && !payload.display) {
             var errShell = el('div', 'lm-stack');
-            errShell.appendChild(renderToolbar(null, payload.dataSources));
+            errShell.appendChild(renderToolbar(null, payload.dataSources, toolbarOpts));
             errShell.appendChild(banner('danger', payload.error));
             root.appendChild(errShell);
             return;
@@ -492,7 +570,7 @@
 
         if (!payload.display) {
             var infoShell = el('div', 'lm-stack');
-            infoShell.appendChild(renderToolbar(null, payload.dataSources));
+            infoShell.appendChild(renderToolbar(null, payload.dataSources, toolbarOpts));
             infoShell.appendChild(
                 banner(
                     'info',
@@ -506,7 +584,7 @@
 
         var display = payload.display;
 
-        root.appendChild(renderToolbar(display, payload.dataSources));
+        root.appendChild(renderToolbar(display, payload.dataSources, toolbarOpts));
 
         var stack = el('div', 'lm-stack lm-stack-after-toolbar');
         if (payload.progressWarning) {
