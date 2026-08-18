@@ -374,6 +374,8 @@ The script writes report files according to `outputFormat` (`json`, `markdown`, 
 
 Note: the `json` output file is emitted as strict MongoDB Extended JSON (EJSON). If you are consuming the file programmatically, prefer `EJSON.parse()`.
 
+If the run stops before `caught-up`, the sample is marked partial and rate-based fields use the elapsed wall-clock time from stream open to stop time rather than the full `lookbackMs` window.
+
 ### JSON output
 
 Top-level fields include:
@@ -391,6 +393,9 @@ Top-level fields include:
 * `matchedEventsSeen`
 * `qualifiedEventsSeen`
 * `uniqueDocsTracked`
+* `sampleIsPartial`
+* `rateWindowSeconds`
+* `observedWindowSeconds`
 * `totalChangesPerSec`
 * `stopReason`
 * `cappedByMaxUniqueDocs`
@@ -408,6 +413,7 @@ When `outputFormat` is:
 
 * `json`
   * writes strict EJSON output to `outputFile` (default: `hot-doc-spread-check.json`)
+  * CPS fields use `lookbackMs` only when the run reaches `caught-up`; otherwise they use the elapsed wall-clock time from stream open to stop time and `sampleIsPartial` is `true`
 * `markdown`
   * writes Markdown output to `outputFile` or `hot-doc-spread-check.md` when default outputFile is unchanged
 * `both`
@@ -441,6 +447,7 @@ The console output prints:
 
 * overall window stats
 * threshold values
+* sample completeness and the rate-window duration used for CPS calculations
 * top-N combined share and single-doc spread equivalent
 * top-N documents (same columns as hot-doc output)
 * hot documents that passed all gates

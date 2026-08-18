@@ -94,7 +94,7 @@
   const watchAllNamespaces = watchedNamespaces.length === 0;
   const namespaceFilters = watchedNamespaces.map(parseNamespace);
 
-  const helloResult = db.adminCommand({ hello: 1 });
+  const helloResult = typeof db.hello === "function" ? db.hello() : db.isMaster();
   const caughtUpWatermark = helloResult.operationTime || (helloResult.$clusterTime && helloResult.$clusterTime.clusterTime);
   if (!caughtUpWatermark) {
     throw new Error("Unable to determine server-derived caught-up watermark from hello response.");
@@ -167,6 +167,7 @@
   let lastEventAt = Date.now();
   let lastClusterTime = null;
   let stopReason = "unknown";
+  const sampleOpenedAt = Date.now();
 
   const spreadDisparityThreshold = CFG.spreadThreshold;
   const sqrtAppliersMinusOne = Math.sqrt(CFG.appliers - 1);
@@ -269,10 +270,15 @@
 
   cs.close();
 
+  const sampleClosedAt = Date.now();
+
   print(`Stream closed. Reason: ${stopReason}. Matched events: ${matchedEventsSeen}. Qualified doc events: ${qualifiedEventsSeen}.`);
 
-  const windowSeconds = CFG.lookbackMs / 1000;
-  const totalChangesPerSec = windowSeconds > 0 ? qualifiedEventsSeen / windowSeconds : 0;
+  const sampleIsPartial = stopReason !== "caught-up";
+  const lookbackWindowSeconds = CFG.lookbackMs / 1000;
+  const observedWindowSeconds = Math.max((sampleClosedAt - sampleOpenedAt) / 1000, 0);
+  const rateWindowSeconds = sampleIsPartial ? observedWindowSeconds : lookbackWindowSeconds;
+  const totalChangesPerSec = rateWindowSeconds > 0 ? qualifiedEventsSeen / rateWindowSeconds : 0;
 
   const allDocsRaw = [];
   for (const ns of nsOrder) {
@@ -288,7 +294,7 @@
         .map((d) => {
           const eventShare = d.opCount / qualifiedEventsSeen;
           const spreadDisparityEstimate = eventShare * sqrtAppliersMinusOne;
-          const docChangesPerSec = windowSeconds > 0 ? d.opCount / windowSeconds : 0;
+          const docChangesPerSec = rateWindowSeconds > 0 ? d.opCount / rateWindowSeconds : 0;
           const passesSpreadGate = spreadDisparityEstimate >= spreadDisparityThreshold;
           const passesDocCpsGate = docChangesPerSec >= CFG.minDocCps;
           const passesTotalCpsGate = totalChangesPerSec >= CFG.minTotalCps;
@@ -339,6 +345,9 @@
     matchedEventsSeen,
     qualifiedEventsSeen,
     uniqueDocsTracked,
+    sampleIsPartial,
+    rateWindowSeconds,
+    observedWindowSeconds,
     totalChangesPerSec,
     stopReason,
     cappedByMaxUniqueDocs: stopReason === "max-unique-docs-reached",
@@ -455,6 +464,7 @@
   print(`Top-${topDocCountForProxy} combined ops   : ${topCombinedOps}`);
   print(`Top-${topDocCountForProxy} combined share : ${(topCombinedShare * 100).toFixed(2)}%`);
   print(`Top-${topDocCountForProxy} single-doc spread equivalent : ${topCombinedSingleDocSpreadEquivalent.toFixed(3)}`);
+  print(`Sample completeness: ${sampleIsPartial ? "partial" : "complete"}  Rate window seconds: ${rateWindowSeconds.toFixed(3)}  Observed span seconds: ${observedWindowSeconds.toFixed(3)}`);
 
   print("");
   print("=".repeat(112));
