@@ -11,6 +11,7 @@
     lookbackMs: 5 * 60 * 1000,
     runMs: 5 * 60 * 1000,
     idleMs: 2000,
+    maxUniqueDocs: 200000,
     appliers: 128,
     spreadThreshold: 5,
     minDocCps: 2,
@@ -38,11 +39,16 @@
   validateNumber("lookbackMs", CFG.lookbackMs, false);
   validateNumber("runMs", CFG.runMs, false);
   validateNumber("idleMs", CFG.idleMs, true);
+  validateNumber("maxUniqueDocs", CFG.maxUniqueDocs, false);
   validateNumber("appliers", CFG.appliers, false);
   validateNumber("spreadDisparityThreshold", CFG.spreadThreshold, false);
   validateNumber("minDocCps", CFG.minDocCps, false);
   validateNumber("minTotalCps", CFG.minTotalCps, true);
   validateNumber("topDocCountForProxy", CFG.topDocCountForProxy, false);
+
+  if (!Number.isInteger(CFG.maxUniqueDocs) || CFG.maxUniqueDocs < 1) {
+    throw new Error(`Invalid maxUniqueDocs: ${CFG.maxUniqueDocs}. Expected an integer greater than or equal to 1.`);
+  }
 
   if (CFG.appliers < 2) {
     throw new Error(`Invalid appliers: ${CFG.appliers}. Expected a value of at least 2.`);
@@ -128,7 +134,9 @@
     }
   );
 
-  cs.disableBlockWarnings();
+  if (typeof cs.disableBlockWarnings === "function") {
+    cs.disableBlockWarnings();
+  }
 
   const perNs = Object.create(null);
   const nsOrder = [];
@@ -141,6 +149,7 @@
 
   let matchedEventsSeen = 0;
   let qualifiedEventsSeen = 0;
+  let uniqueDocsTracked = 0;
   let lastEventAt = Date.now();
   let lastClusterTime = null;
   let stopReason = "unknown";
@@ -218,6 +227,12 @@
 
     let row = nsBucket.rows[key];
     if (!row) {
+      if (uniqueDocsTracked >= CFG.maxUniqueDocs) {
+        stopReason = "max-unique-docs-reached";
+        print(`Stopping early after reaching maxUniqueDocs=${CFG.maxUniqueDocs}. Increase maxUniqueDocs to analyze larger cardinality workloads.`);
+        break;
+      }
+
       row = {
         ns,
         docId,
@@ -228,6 +243,7 @@
       };
       nsBucket.rows[key] = row;
       nsBucket.keys.push(key);
+      uniqueDocsTracked++;
     }
 
     row.opCount++;
@@ -305,10 +321,13 @@
     minShareRequired,
     minDocCps: CFG.minDocCps,
     minTotalCps: CFG.minTotalCps,
+    maxUniqueDocs: CFG.maxUniqueDocs,
     matchedEventsSeen,
     qualifiedEventsSeen,
+    uniqueDocsTracked,
     totalChangesPerSec,
     stopReason,
+    cappedByMaxUniqueDocs: stopReason === "max-unique-docs-reached",
     lastClusterTime,
     topCombined: {
       requestedDocCount: topDocCountForProxy,
@@ -361,6 +380,7 @@
       `- SpreadDisparityThreshold: ${spreadDisparityThreshold}`,
       `- RequiredShare(single-doc): ${toPct(minShareRequired, 2)}`,
       `- MinDocCps: ${CFG.minDocCps}  MinTotalCps: ${CFG.minTotalCps} (Cps means changes per second)`,
+      `- Unique docs tracked: ${uniqueDocsTracked} / ${CFG.maxUniqueDocs}`,
       `- Qualified changes in window: ${qualifiedEventsSeen}`,
       `- Total changes/sec: ${toFixedNumber(totalChangesPerSec, 3)}`,
       `- Top-${topDocCountForProxy} combined ops: ${topCombinedOps}`,
@@ -398,7 +418,7 @@
   if (outputFormat === "json" || outputFormat === "both") {
     const jsonPath = outputFormat === "json" ? deriveOutputPath("json") : DEFAULTS.outputFile;
     fs.writeFileSync(
-      "./" + jsonPath,
+      jsonPath,
       EJSON.stringify(output, null, 2, { relaxed: false })
     );
     print(`Wrote JSON results to ${jsonPath}`);
@@ -406,7 +426,7 @@
 
   if (outputFormat === "markdown" || outputFormat === "both") {
     const markdownPath = outputFormat === "markdown" ? deriveOutputPath("markdown") : "hot-doc-spread-check.md";
-    fs.writeFileSync("./" + markdownPath, buildMarkdownReport());
+    fs.writeFileSync(markdownPath, buildMarkdownReport());
     print(`Wrote Markdown results to ${markdownPath}`);
   }
 
@@ -416,6 +436,7 @@
   print("=".repeat(112));
   print(`Appliers: ${CFG.appliers}  SpreadDisparityThreshold: ${spreadDisparityThreshold}  RequiredShare(single-doc): ${(minShareRequired * 100).toFixed(2)}%`);
   print(`MinDocCps: ${CFG.minDocCps}  MinTotalCps: ${CFG.minTotalCps} (Cps means changes per second)`);
+  print(`Unique docs tracked: ${uniqueDocsTracked} / ${CFG.maxUniqueDocs}`);
   print(`Qualified changes in window: ${qualifiedEventsSeen}  Total changes/sec: ${totalChangesPerSec.toFixed(3)}`);
   print(`Top-${topDocCountForProxy} combined ops   : ${topCombinedOps}`);
   print(`Top-${topDocCountForProxy} combined share : ${(topCombinedShare * 100).toFixed(2)}%`);

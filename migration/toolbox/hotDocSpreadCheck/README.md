@@ -101,7 +101,7 @@ The following example shows what a successful run can look like:
 mongosh "mongodb+srv://user:password@cluster0.name.mongodb.net/" --file hot-doc-spread-check.js
 Reading change stream for ALL namespaces from 2026-07-22T13:17:50.000Z ...
 Stream closed. Reason: idle-timeout. Matched events: 20595. Qualified doc events: 20595.
-Wrote JSON results to hot-doc-spread-check.json
+Wrote results to hot-doc-spread-check.json
 
 ================================================================================================================
 TOP-5 COMBINED SHARE
@@ -177,6 +177,7 @@ These are the current defaults used by the script in this README:
   lookbackMs: 5 * 60 * 1000,
   runMs: 5 * 60 * 1000,
   idleMs: 2000,
+  maxUniqueDocs: 200000,
   appliers: 128,
   spreadThreshold: 5,
   minDocCps: 2,
@@ -193,10 +194,15 @@ Meaning:
   * watch all namespaces
 * `lookbackMs: 5 minutes`
   * start reading from 5 minutes in the past
+  * must be greater than 0
 * `runMs: 5 minutes`
   * hard maximum runtime
 * `idleMs: 2000`
   * stop after 2 seconds of inactivity once events have started
+* `maxUniqueDocs: 200000`
+  * maximum number of unique namespace+_id rows tracked in memory
+  * safety cap to prevent unbounded memory growth on high-cardinality workloads
+  * when reached, the run stops early with stop reason `max-unique-docs-reached`
 * `appliers: 128`
   * used in the spread-disparity math
 * `spreadThreshold: 5`
@@ -214,6 +220,7 @@ Meaning:
   * legacy alias: `outputMarkdown: true` is treated as `outputFormat: "markdown"`
 * `outputFile: "hot-doc-spread-check.json"`
   * output path for single-format runs
+  * path is used as provided (supports both relative and absolute paths)
   * if `outputFormat: "markdown"` and `outputFile` is left at the default, the script writes `hot-doc-spread-check.md`
 
 ## How the script works
@@ -357,7 +364,7 @@ The script stops when any of these happens:
 
 ## Output
 
-The script writes a report file (JSON and/or Markdown, depending on `outputFormat`) and also prints a console summary.
+The script writes a JSON file and also prints a console summary.
 
 ### JSON output
 
