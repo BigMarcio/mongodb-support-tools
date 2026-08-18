@@ -1,0 +1,314 @@
+{
+  "generatedAt": "2026-08-18T11:14:15.032Z",
+  "namespacesRequested": "ALL",
+  "lookbackMs": {
+    "$numberInt": "300000"
+  },
+  "appliers": {
+    "$numberInt": "128"
+  },
+  "spreadDisparityThreshold": {
+    "$numberInt": "5"
+  },
+  "spreadThreshold": {
+    "$numberInt": "5"
+  },
+  "minShareRequired": {
+    "$numberDouble": "0.44367825470805694"
+  },
+  "minDocCps": {
+    "$numberInt": "2"
+  },
+  "minTotalCps": {
+    "$numberInt": "10"
+  },
+  "maxUniqueDocs": {
+    "$numberInt": "200000"
+  },
+  "matchedEventsSeen": {
+    "$numberInt": "9894"
+  },
+  "qualifiedEventsSeen": {
+    "$numberInt": "9894"
+  },
+  "uniqueDocsTracked": {
+    "$numberInt": "5"
+  },
+  "totalChangesPerSec": {
+    "$numberDouble": "32.98"
+  },
+  "stopReason": "idle-timeout",
+  "cappedByMaxUniqueDocs": false,
+  "lastClusterTime": {
+    "$timestamp": {
+      "t": 1787051650,
+      "i": 87
+    }
+  },
+  "topCombined": {
+    "requestedDocCount": {
+      "$numberInt": "10"
+    },
+    "effectiveDocCount": {
+      "$numberInt": "5"
+    },
+    "opCount": {
+      "$numberInt": "9894"
+    },
+    "share": {
+      "$numberInt": "1"
+    },
+    "singleDocSpreadEquivalent": {
+      "$numberDouble": "11.269427669584644"
+    },
+    "documents": [
+      {
+        "ns": "sdtest5.events",
+        "docId": "hot-doc-1",
+        "docChanges": {
+          "$numberInt": "4434"
+        },
+        "opCount": {
+          "$numberInt": "4434"
+        },
+        "insert": {
+          "$numberInt": "1"
+        },
+        "update": {
+          "$numberInt": "4433"
+        },
+        "delete": {
+          "$numberInt": "0"
+        },
+        "eventShare": {
+          "$numberDouble": "0.4481503941782899"
+        },
+        "spreadDisparityEstimate": {
+          "$numberDouble": "5.050398452288085"
+        },
+        "docChangesPerSec": {
+          "$numberDouble": "14.78"
+        },
+        "totalChangesPerSec": {
+          "$numberDouble": "32.98"
+        },
+        "passesSpreadGate": true,
+        "passesDocCpsGate": true,
+        "passesTotalCpsGate": true,
+        "qualifies": true
+      },
+      {
+        "ns": "sdtest5.events",
+        "docId": "hot-doc-2",
+        "docChanges": {
+          "$numberInt": "4434"
+        },
+        "opCount": {
+          "$numberInt": "4434"
+        },
+        "insert": {
+          "$numberInt": "1"
+        },
+        "update": {
+          "$numberInt": "4433"
+        },
+        "delete": {
+          "$numberInt": "0"
+        },
+        "eventShare": {
+          "$numberDouble": "0.4481503941782899"
+        },
+        "spreadDisparityEstimate": {
+          "$numberDouble": "5.050398452288085"
+        },
+        "docChangesPerSec": {
+          "$numberDouble": "14.78"
+        },
+        "totalChangesPerSec": {
+          "$numberDouble": "32.98"
+        },
+        "passesSpreadGate": true,
+        "passesDocCpsGate": true,
+        "passesTotalCpsGate": true,
+        "qualifies": true
+      },
+      {
+        "ns": "sdtest5.events",
+        "docId": "hot-doc-3",
+        "docChanges": {
+          "$numberInt": "342"
+        },
+        "opCount": {
+          "$numberInt": "342"
+        },
+        "insert": {
+          "$numberInt": "1"
+        },
+        "update": {
+          "$numberInt": "341"
+        },
+        "delete": {
+          "$numberInt": "0"
+        },
+        "eventShare": {
+          "$numberDouble": "0.03456640388114009"
+        },
+        "spreadDisparityEstimate": {
+          "$numberDouble": "0.38954358833615815"
+        },
+        "docChangesPerSec": {
+          "$numberDouble": "1.14"
+        },
+        "totalChangesPerSec": {
+          "$numberDouble": "32.98"
+        },
+        "passesSpreadGate": false,
+        "passesDocCpsGate": false,
+        "passesTotalCpsGate": true,
+        "qualifies": false
+      },
+      {
+        "ns": "sdtest5.events",
+        "docId": "hot-doc-4",
+        "docChanges": {
+          "$numberInt": "342"
+        },
+        "opCount": {
+          "$numberInt": "342"
+        },
+        "insert": {
+          "$numberInt": "1"
+        },
+        "update": {
+          "$numberInt": "341"
+        },
+        "delete": {
+          "$numberInt": "0"
+        },
+        "eventShare": {
+          "$numberDouble": "0.03456640388114009"
+        },
+        "spreadDisparityEstimate": {
+          "$numberDouble": "0.38954358833615815"
+        },
+        "docChangesPerSec": {
+          "$numberDouble": "1.14"
+        },
+        "totalChangesPerSec": {
+          "$numberDouble": "32.98"
+        },
+        "passesSpreadGate": false,
+        "passesDocCpsGate": false,
+        "passesTotalCpsGate": true,
+        "qualifies": false
+      },
+      {
+        "ns": "sdtest5.events",
+        "docId": "hot-doc-5",
+        "docChanges": {
+          "$numberInt": "342"
+        },
+        "opCount": {
+          "$numberInt": "342"
+        },
+        "insert": {
+          "$numberInt": "1"
+        },
+        "update": {
+          "$numberInt": "341"
+        },
+        "delete": {
+          "$numberInt": "0"
+        },
+        "eventShare": {
+          "$numberDouble": "0.03456640388114009"
+        },
+        "spreadDisparityEstimate": {
+          "$numberDouble": "0.38954358833615815"
+        },
+        "docChangesPerSec": {
+          "$numberDouble": "1.14"
+        },
+        "totalChangesPerSec": {
+          "$numberDouble": "32.98"
+        },
+        "passesSpreadGate": false,
+        "passesDocCpsGate": false,
+        "passesTotalCpsGate": true,
+        "qualifies": false
+      }
+    ]
+  },
+  "hotDocuments": [
+    {
+      "ns": "sdtest5.events",
+      "docId": "hot-doc-1",
+      "docChanges": {
+        "$numberInt": "4434"
+      },
+      "opCount": {
+        "$numberInt": "4434"
+      },
+      "insert": {
+        "$numberInt": "1"
+      },
+      "update": {
+        "$numberInt": "4433"
+      },
+      "delete": {
+        "$numberInt": "0"
+      },
+      "eventShare": {
+        "$numberDouble": "0.4481503941782899"
+      },
+      "spreadDisparityEstimate": {
+        "$numberDouble": "5.050398452288085"
+      },
+      "docChangesPerSec": {
+        "$numberDouble": "14.78"
+      },
+      "totalChangesPerSec": {
+        "$numberDouble": "32.98"
+      },
+      "passesSpreadGate": true,
+      "passesDocCpsGate": true,
+      "passesTotalCpsGate": true,
+      "qualifies": true
+    },
+    {
+      "ns": "sdtest5.events",
+      "docId": "hot-doc-2",
+      "docChanges": {
+        "$numberInt": "4434"
+      },
+      "opCount": {
+        "$numberInt": "4434"
+      },
+      "insert": {
+        "$numberInt": "1"
+      },
+      "update": {
+        "$numberInt": "4433"
+      },
+      "delete": {
+        "$numberInt": "0"
+      },
+      "eventShare": {
+        "$numberDouble": "0.4481503941782899"
+      },
+      "spreadDisparityEstimate": {
+        "$numberDouble": "5.050398452288085"
+      },
+      "docChangesPerSec": {
+        "$numberDouble": "14.78"
+      },
+      "totalChangesPerSec": {
+        "$numberDouble": "32.98"
+      },
+      "passesSpreadGate": true,
+      "passesDocCpsGate": true,
+      "passesTotalCpsGate": true,
+      "qualifies": true
+    }
+  ]
+}
