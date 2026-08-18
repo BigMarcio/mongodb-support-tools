@@ -174,7 +174,7 @@
       break;
     }
 
-    if (Date.now() - lastEventAt > CFG.idleMs && matchedEventsSeen > 0) {
+    if (CFG.idleMs > 0 && Date.now() - lastEventAt > CFG.idleMs && matchedEventsSeen > 0) {
       stopReason = "idle-timeout";
       break;
     }

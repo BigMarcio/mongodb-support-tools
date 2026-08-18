@@ -199,6 +199,7 @@ Meaning:
   * hard maximum runtime
 * `idleMs: 2000`
   * stop after 2 seconds of inactivity once events have started
+  * set to `0` to disable idle-timeout stopping
 * `maxUniqueDocs: 200000`
   * maximum number of unique namespace+_id rows tracked in memory
   * safety cap to prevent unbounded memory growth on high-cardinality workloads
@@ -229,7 +230,7 @@ Meaning:
 
 The script uses a deployment-level watch so it can observe one namespace, several namespaces, or all namespaces, depending on `namespaces`.
 
-If `namespaces` is empty, it watches everything except internal databases (`admin`, `config`, `local`) and system collections.
+Internal namespaces are always excluded from analysis: `admin`, `config`, `local`, and `system.*`.
 
 If `namespaces` is set, each entry must be in:
 
