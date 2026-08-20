@@ -20,6 +20,7 @@ from .live_metadata_status import (
     normalize_verification_mode,
     should_suppress_index_build_progress,
     verification_progress_allowed,
+    is_during_or_after_cea,
 )
 from .utils import (
     format_bytes_compact,
@@ -281,11 +282,35 @@ def _byte_copy_prefix(phase_lower):
     return "Copied: "
 
 
-def _build_collections_copied_label(metadata):
-    if not metadata:
+def atlas_live_migrate_collection_totals(progress):
+    """Return collectionsCopied/collectionsTotal from progress.atlasLiveMigrateMetrics."""
+    if not isinstance(progress, dict):
         return None
-    copied = metadata.get("collectionsCopied")
-    total = metadata.get("collectionsTotal")
+    alm = progress.get("atlasLiveMigrateMetrics")
+    if not isinstance(alm, dict):
+        return None
+    total = alm.get("initialNumCollectionsTotal")
+    copied = alm.get("initialNumCollectionsCopied")
+    if total is None and copied is None:
+        return None
+    return {
+        "collectionsCopied": copied if copied is not None else 0,
+        "collectionsTotal": total,
+    }
+
+
+def _build_collections_copied_label(metadata, progress=None):
+    copied = None
+    total = None
+    atlas_totals = atlas_live_migrate_collection_totals(progress)
+    if atlas_totals and atlas_totals.get("collectionsTotal"):
+        copied = atlas_totals.get("collectionsCopied")
+        total = atlas_totals.get("collectionsTotal")
+    elif metadata:
+        copied = metadata.get("collectionsCopied")
+        total = metadata.get("collectionsTotal")
+    if not metadata and not atlas_totals:
+        return None
     if not total or total <= 0:
         return None
     if copied is None:
@@ -314,25 +339,7 @@ def _bytes_copy_percent(copied, total):
     return min(100.0, (copied / total) * 100)
 
 
-def _build_collections_finished_label(progress=None, metadata=None, *, progress_available=False):
-    coll_finished = None
-    coll_total = None
-    if progress_available and progress:
-        index_building = progress.get("indexBuilding") or {}
-        if isinstance(index_building, dict):
-            coll_finished = index_building.get("collectionsFinished")
-            coll_total = index_building.get("collectionsTotal")
-    if coll_total is None and metadata:
-        coll_finished = metadata.get("indexCollectionsFinished")
-        coll_total = metadata.get("indexCollectionsTotal")
-    if not coll_total or coll_total <= 0:
-        return None
-    if coll_finished is None:
-        coll_finished = 0
-    return f"Collections Copied: {format_count(coll_finished)} of {format_count(coll_total)}"
-
-
-def _build_phase_start_times(metadata):
+def _build_phase_start_times(metadata, *, summary=False):
     if not metadata:
         return None
     rows = metadata.get("phaseTransitions") or []
@@ -342,6 +349,7 @@ def _build_phase_start_times(metadata):
         "label": "Phase start times",
         "rows": rows,
         "timezoneNote": "UTC",
+        "timezoneNoteBelowTitle": summary,
     }
 
 
@@ -393,15 +401,12 @@ def _build_sync_card(
             "copyIndeterminate": copy_indeterminate,
             "copiedLabel": copied_label,
             "copiedTitle": _copied_bytes_title(copied, total),
-            "collectionsCopiedLabel": _build_collections_copied_label(metadata),
+            "collectionsCopiedLabel": _build_collections_copied_label(metadata, progress),
             "partitionsCopiedLabel": _build_partitions_copied_label(metadata),
-            "collectionsFinishedLabel": _build_collections_finished_label(
-                progress=progress, metadata=metadata, progress_available=True
-            ),
             "showCopyProgress": copy_percent is not None or copy_indeterminate,
             "metrics": metrics,
             "metadataMetrics": _build_metadata_metrics(metadata, summary=summary),
-            "phaseStartTimes": _build_phase_start_times(metadata),
+            "phaseStartTimes": _build_phase_start_times(metadata, summary=summary),
             },
             summary=summary,
             mongosync_version=mongosync_version,
@@ -438,15 +443,12 @@ def _build_sync_card(
         "copyIndeterminate": copy_indeterminate,
         "copiedLabel": copied_label,
         "copiedTitle": _copied_bytes_title(copied, total) if copied_label else None,
-        "collectionsCopiedLabel": _build_collections_copied_label(metadata),
+        "collectionsCopiedLabel": _build_collections_copied_label(metadata, progress),
         "partitionsCopiedLabel": _build_partitions_copied_label(metadata),
-        "collectionsFinishedLabel": _build_collections_finished_label(
-            progress=progress, metadata=metadata, progress_available=progress_available
-        ),
         "showCopyProgress": show_copy_progress,
         "metrics": _build_db_only_metrics(lag_seconds),
         "metadataMetrics": _build_metadata_metrics(metadata, summary=summary),
-        "phaseStartTimes": _build_phase_start_times(metadata),
+        "phaseStartTimes": _build_phase_start_times(metadata, summary=summary),
         },
         summary=summary,
         mongosync_version=mongosync_version,
@@ -696,7 +698,12 @@ def _resolve_verification_display(progress, metadata, *, progress_available=Fals
             if card:
                 return card
     if mode == "startAtCEA":
-        return _build_verification_info(metadata)
+        sync_phase = metadata.get("syncPhase") if metadata else None
+        if not sync_phase and progress:
+            sync_phase = (progress.get("info") or "").strip()
+        if not is_during_or_after_cea(sync_phase):
+            return _build_verification_info(metadata)
+        return None
     if progress_available and progress:
         return _build_verification(progress)
     return None
@@ -818,7 +825,7 @@ def _build_display(
     index_building = None
     if progress_available and progress:
         index_building = _build_index_building(progress)
-        if index_building and metadata and should_suppress_index_build_progress(
+        if index_building and metadata and not summary and should_suppress_index_build_progress(
             metadata.get("buildIndexesRaw"),
             metadata.get("syncPhase"),
         ):

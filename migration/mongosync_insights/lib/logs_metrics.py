@@ -29,7 +29,7 @@ from .otel_metrics import MetricsCollector, create_metrics_plots
 from .plot_theme import apply_mi_theme, section_label_style
 from .log_store import LogStore
 from .log_store_registry import log_store_registry
-from .log_summary import build_log_summary_payload, extract_latest_progress
+from .log_summary import SummaryMigrationState, build_log_summary_payload, extract_latest_progress
 from .snapshot_store import save_snapshot
 
 _DECOMPRESS_ERRORS = (
@@ -40,6 +40,24 @@ _DECOMPRESS_ERRORS = (
     zipfile.BadZipFile,
     tarfile.TarError,
 )
+
+_LOG_LINE_PROGRESS_FORMAT = (
+    "{desc}: Total {n}, Time: {elapsed}, Lines/sec: {lines_per_sec}"
+)
+
+
+class _LogLineProgress(tqdm):
+    @property
+    def format_dict(self):
+        fmt = dict(super().format_dict)
+        rate = fmt.get("rate")
+        if rate is None:
+            elapsed = fmt.get("elapsed") or 0
+            count = fmt.get("n") or 0
+            if elapsed > 0:
+                rate = count / elapsed
+        fmt["lines_per_sec"] = f"{rate:.2f}" if rate is not None else "?"
+        return fmt
 
 
 def detect_mime_type(file_sample: bytes, filename: str) -> str:
@@ -271,6 +289,7 @@ def upload_file():
             'partition_multi_created': re.compile(r"Creating initial partitions for non-capped collection", re.IGNORECASE),
             'partition_sampling_info': re.compile(r"Pre-sampling information", re.IGNORECASE),
             'partition_persisted_after_sampling': re.compile(r"Persisted a new partition after sampling", re.IGNORECASE),
+            'index_creation_progress': re.compile(r"Index creation progress", re.IGNORECASE),
         }
         
         # Load error patterns from external file
@@ -306,6 +325,8 @@ def upload_file():
         partition_persisted_after_sampling = []
         verifier_dst_lag_items = []
         verifier_src_lag_items = []
+        index_creation_progress_json = []
+        summary_state = SummaryMigrationState()
         
         # Initialize metrics collector for prometheus metrics
         metrics_collector = MetricsCollector()
@@ -360,7 +381,13 @@ def upload_file():
                 file_iterator = file
                 use_classified = False
         
-            for item in tqdm(file_iterator, desc="Processing log file"):
+            print(f"Log file: {filename}", flush=True)
+            line_progress = _LogLineProgress(
+                file_iterator,
+                desc="Processing lines",
+                bar_format=_LOG_LINE_PROGRESS_FORMAT,
+            )
+            for item in line_progress:
                 line_count += 1
             
                 # Handle classified vs non-classified iterators
@@ -414,12 +441,34 @@ def upload_file():
                 
                     if patterns['sent_response'].search(message):
                         mongosync_sent_response.append(json_obj)
+                        try:
+                            progress_body = json.loads(json_obj.get("body") or "{}")
+                            response_progress = (progress_body or {}).get("progress")
+                            if isinstance(response_progress, dict):
+                                summary_state.note_progress(
+                                    response_progress, json_obj.get("time")
+                                )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                    if patterns['index_creation_progress'].search(message):
+                        index_creation_progress_json.append(json_obj)
+                        summary_state.note_index_building(
+                            json_obj.get("indexCreationProgress"),
+                            json_obj.get("time"),
+                        )
                 
                     if patterns['phase_transitions'].search(message):
                         phase_transitions_json.append(json_obj)
+                        phase_event = _phase_event_from_info(json_obj)
+                        if phase_event:
+                            summary_state.note_phase(phase_event[1], phase_event[0])
 
                     if patterns['phase_in_memory'].search(message):
                         phase_in_memory_json.append(json_obj)
+                        phase_event = _phase_event_from_in_memory(json_obj)
+                        if phase_event:
+                            summary_state.note_phase(phase_event[1], phase_event[0])
                 
                     if patterns['mongosync_options'].search(message):
                         # Filter out time and level fields for options
@@ -445,6 +494,9 @@ def upload_file():
 
                     if patterns['state_transition'].search(message):
                         state_transition_json.append(json_obj)
+                        new_state = (json_obj.get("newState") or "").strip().upper()
+                        if new_state:
+                            summary_state.note_state(new_state, json_obj.get("time"))
                 
                     if patterns['crud_events_rate'].search(message):
                         mongosync_crud_rate.append(json_obj)
@@ -1587,7 +1639,7 @@ def upload_file():
         last_partitions_total = partitions_total[-1] if partitions_total else None
         summary_payload = build_log_summary_payload(
             progress=latest_progress,
-            progress_time=latest_progress_time,
+            progress_time=latest_progress_time or summary_state.progress_time,
             replication_lines=data,
             phase_events=merged_phase_events,
             natural_order_items=natural_order_data,
@@ -1598,6 +1650,9 @@ def upload_file():
             partitions_copied=last_partitions_copied,
             partitions_total=last_partitions_total,
             version_info_lines=version_info_list,
+            sent_responses=mongosync_sent_response,
+            index_creation_lines=index_creation_progress_json,
+            summary_state=summary_state,
         )
 
         template_data = {

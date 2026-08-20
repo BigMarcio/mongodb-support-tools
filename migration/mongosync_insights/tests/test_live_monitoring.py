@@ -11,7 +11,7 @@ from lib.app_config import (
 )
 from lib.live_monitoring import (
     ProgressFetchError,
-    _build_collections_finished_label,
+    _build_collections_copied_label,
     _build_db_only_metrics,
     _build_direction,
     _build_index_building_card,
@@ -273,20 +273,27 @@ class TestBuildHelpers:
         assert card["destination"]["ping"] == "10 ms"
 
 
-class TestCollectionsFinishedLabel:
-    def test_label_from_progress_index_building(self):
-        label = _build_collections_finished_label(
+class TestCollectionsCopiedLabel:
+    def test_prefers_atlas_live_migrate_metrics_from_progress(self):
+        label = _build_collections_copied_label(
+            metadata={"collectionsCopied": 1, "collectionsTotal": 4},
             progress={
-                "indexBuilding": {
-                    "collectionsFinished": 1,
-                    "collectionsTotal": 4,
+                "atlasLiveMigrateMetrics": {
+                    "initialNumCollectionsCopied": 267,
+                    "initialNumCollectionsTotal": 273,
                 }
             },
-            progress_available=True,
         )
-        assert label == "Collections Copied: 1 of 4"
+        assert label == "Collections copied: 267 of 273"
 
-    def test_sync_card_includes_collections_finished_label(self):
+    def test_falls_back_to_metadata_without_atlas_metrics(self):
+        label = _build_collections_copied_label(
+            metadata={"collectionsCopied": 10, "collectionsTotal": 20},
+            progress={"info": "collection copy"},
+        )
+        assert label == "Collections copied: 10 of 20"
+
+    def test_sync_card_uses_atlas_collection_totals(self):
         sync = _build_sync_card(
             progress={
                 "info": "collection copy",
@@ -295,20 +302,24 @@ class TestCollectionsFinishedLabel:
                     "estimatedCopiedBytes": 50,
                     "estimatedTotalBytes": 100,
                 },
+                "atlasLiveMigrateMetrics": {
+                    "initialNumCollectionsCopied": 267,
+                    "initialNumCollectionsTotal": 273,
+                },
                 "indexBuilding": {
                     "collectionsFinished": 2,
-                    "collectionsTotal": 5,
-                    "indexesBuilt": 1,
-                    "totalIndexesToBuild": 10,
+                    "collectionsTotal": 21,
+                    "indexesBuilt": 7,
+                    "totalIndexesToBuild": 37,
                 },
             },
-            metadata={"partitionsCopied": 25, "partitionsTotal": 100},
+            metadata={"partitionsCopied": 2601, "partitionsTotal": 2601},
             progress_available=True,
         )
-        assert sync["collectionsFinishedLabel"] == "Collections Copied: 2 of 5"
-        assert sync["copyPercent"] == 50.0
+        assert sync["collectionsCopiedLabel"] == "Collections copied: 267 of 273"
 
-    def test_sync_card_copy_percent_from_bytes_not_partitions(self):
+
+    def test_sync_card_copy_percent_from_bytes_not_collections(self):
         sync = _build_sync_card(
             progress={
                 "info": "collection copy",
@@ -317,12 +328,19 @@ class TestCollectionsFinishedLabel:
                     "estimatedCopiedBytes": 90,
                     "estimatedTotalBytes": 100,
                 },
+                "atlasLiveMigrateMetrics": {
+                    "initialNumCollectionsCopied": 267,
+                    "initialNumCollectionsTotal": 273,
+                },
             },
             metadata={"partitionsCopied": 10, "partitionsTotal": 200},
             progress_available=True,
         )
         assert sync["copyPercent"] == 90.0
+        assert sync["collectionsCopiedLabel"] == "Collections copied: 267 of 273"
 
+
+class TestIndexBuildingCard:
     def test_index_building_card_includes_collections_finished_metric(self):
         card = _build_index_building_card(1, 10, 2, 5)
         labels = [metric["label"] for metric in card["metrics"]]

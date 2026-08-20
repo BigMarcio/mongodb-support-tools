@@ -3,13 +3,20 @@ import json
 
 from lib.logs_metrics import _merge_phase_events
 from lib.log_summary import (
+    backfill_commit_events_applied,
     build_log_metadata,
     build_log_summary_payload,
     extract_latest_progress,
     extract_mongosync_version,
     format_log_timestamp,
+    merge_index_building_into_progress,
+    merge_phase_events_into_progress,
     merge_replication_into_progress,
+    merge_events_applied_into_progress,
+    merge_verification_into_progress,
     merge_state_transitions_into_progress,
+    build_summary_migration_state,
+    SummaryMigrationState,
     natural_order_rows_from_log,
     phase_transition_rows_from_events,
 )
@@ -91,22 +98,376 @@ class TestPhaseAndNaturalOrder:
 
 
 class TestMergeReplicationIntoProgress:
-    def test_fills_missing_lag_and_events(self):
+    def test_fills_missing_lag_and_oplog(self):
         progress = {"state": "RUNNING"}
         replication = [
             {"lagTimeSeconds": 12, "totalEventsApplied": 100, "estimatedOplogTimeRemaining": "30 minutes"}
         ]
         merged = merge_replication_into_progress(progress, replication)
         assert merged["lagTimeSeconds"] == 12
-        assert merged["totalEventsApplied"] == 100
         assert merged["estimatedOplogTimeRemaining"] == "30 minutes"
+        assert "totalEventsApplied" not in merged
 
-    def test_does_not_overwrite_progress_values(self):
+    def test_does_not_overwrite_progress_lag(self):
         progress = {"lagTimeSeconds": 5, "totalEventsApplied": 1}
         replication = [{"lagTimeSeconds": 99, "totalEventsApplied": 99}]
         merged = merge_replication_into_progress(progress, replication)
         assert merged["lagTimeSeconds"] == 5
         assert merged["totalEventsApplied"] == 1
+
+
+class TestMergeEventsAppliedIntoProgress:
+    def test_fills_missing_events(self):
+        progress = {"state": "RUNNING"}
+        replication = [{"totalEventsApplied": 100}]
+        merged = merge_events_applied_into_progress(
+            progress, replication_lines=replication
+        )
+        assert merged["totalEventsApplied"] == 100
+
+    def test_backfills_zero_progress_events_from_replication(self):
+        progress = {"info": "change event application", "totalEventsApplied": 0}
+        replication = [
+            {"totalEventsApplied": 100},
+            {"totalEventsApplied": 120},
+            {"totalEventsApplied": 0},
+        ]
+        merged = merge_events_applied_into_progress(
+            progress, replication_lines=replication
+        )
+        assert merged["totalEventsApplied"] == 120
+
+
+class TestSummaryMigrationState:
+    def test_tracks_latest_phase_by_timestamp(self):
+        state = SummaryMigrationState()
+        state.note_progress(
+            {"state": "RUNNING", "info": "collection copy"},
+            "2026-04-20T15:51:01.869718Z",
+        )
+        state.note_phase(
+            "change event application",
+            "2026-04-20T15:51:16.174795Z",
+        )
+        progress = state.to_progress()
+        assert progress["info"] == "change event application"
+
+    def test_build_summary_migration_state_replays_log_events(self):
+        state = build_summary_migration_state(
+            sent_responses=[
+                _sent_response(
+                    "2026-04-20T15:51:01.869718Z",
+                    {"state": "RUNNING", "info": "collection copy"},
+                )
+            ],
+            phase_events=[
+                ("2026-04-20T15:51:16.174795Z", "change event application"),
+            ],
+            index_creation_lines=[
+                {
+                    "time": "2026-04-20T15:52:00.000000Z",
+                    "indexCreationProgress": {
+                        "totalIndexesBuilt": 7,
+                        "totalIndexesToBuild": 37,
+                        "finishedCollections": 2,
+                        "totalCollections": 21,
+                    },
+                }
+            ],
+        )
+        progress = state.to_progress()
+        assert progress["info"] == "change event application"
+        assert progress["indexBuilding"]["indexesBuilt"] == 7
+
+
+class TestMergePhaseEventsIntoProgress:
+    def test_overlays_newer_phase_when_progress_is_stale(self):
+        progress = {"state": "RUNNING", "info": "collection copy"}
+        phase_events = [
+            ("2026-04-20T15:20:49.967653", "collection copy"),
+            ("2026-04-20T15:51:16.174795", "change event application"),
+        ]
+        merged = merge_phase_events_into_progress(
+            progress,
+            phase_events,
+            progress_time="2026-04-20T15:51:01.869718Z",
+        )
+        assert merged["info"] == "change event application"
+
+    def test_does_not_override_when_progress_is_newer(self):
+        progress = {"state": "RUNNING", "info": "waiting for commit to complete"}
+        phase_events = [
+            ("2026-04-20T19:41:45.401715", "change event application"),
+        ]
+        merged = merge_phase_events_into_progress(
+            progress,
+            phase_events,
+            progress_time="2026-04-20T19:42:35.726345Z",
+        )
+        assert merged["info"] == "waiting for commit to complete"
+
+    def test_does_not_override_committed_state(self):
+        progress = {"state": "COMMITTED", "info": "commit completed"}
+        phase_events = [("2026-04-20T15:51:16.174795", "change event application")]
+        merged = merge_phase_events_into_progress(
+            progress,
+            phase_events,
+            progress_time="2026-04-20T15:51:01.869718Z",
+        )
+        assert merged["info"] == "commit completed"
+
+
+class TestMergeIndexBuildingIntoProgress:
+    def test_backfills_from_last_sent_response(self):
+        progress = {"state": "COMMITTING", "info": "waiting for commit to complete"}
+        sent_responses = [
+            _sent_response(
+                "2026-04-20T19:41:45.401715Z",
+                {
+                    "state": "RUNNING",
+                    "info": "change event application",
+                    "indexBuilding": {
+                        "indexesBuilt": 37,
+                        "totalIndexesToBuild": 37,
+                        "collectionsFinished": 21,
+                        "collectionsTotal": 21,
+                    },
+                },
+            ),
+            _sent_response(
+                "2026-04-20T19:42:35.726345Z",
+                {"state": "COMMITTING", "info": "waiting for commit to complete"},
+            ),
+        ]
+        merged = merge_index_building_into_progress(
+            progress, sent_responses=sent_responses
+        )
+        assert merged["indexBuilding"] == {
+            "indexesBuilt": 37,
+            "totalIndexesToBuild": 37,
+            "collectionsFinished": 21,
+            "collectionsTotal": 21,
+        }
+
+    def test_backfills_from_index_creation_progress(self):
+        progress = {"state": "COMMITTING"}
+        merged = merge_index_building_into_progress(
+            progress,
+            index_creation_lines=[
+                {
+                    "message": "Index creation progress.",
+                    "indexCreationProgress": {
+                        "totalIndexesBuilt": 10,
+                        "totalIndexesToBuild": 12,
+                        "finishedCollections": 3,
+                        "totalCollections": 4,
+                    },
+                }
+            ],
+        )
+        assert merged["indexBuilding"]["indexesBuilt"] == 10
+        assert merged["indexBuilding"]["totalIndexesToBuild"] == 12
+        assert merged["indexBuilding"]["collectionsTotal"] == 4
+
+    def test_summary_shows_in_progress_index_build_during_collection_copy(self):
+        payload = build_log_summary_payload(
+            progress={
+                "state": "RUNNING",
+                "info": "collection copy",
+            },
+            start_options=[{"buildIndexes": "afterDataCopy"}],
+            index_creation_lines=[
+                {
+                    "message": "Index creation progress.",
+                    "indexCreationProgress": {
+                        "totalIndexesBuilt": 7,
+                        "totalIndexesToBuild": 37,
+                        "finishedCollections": 2,
+                        "totalCollections": 21,
+                    },
+                }
+            ],
+        )
+        idx = payload["display"]["indexBuilding"]
+        assert idx is not None
+        assert idx.get("mode") != "info"
+        assert idx["built"] == 7
+        assert idx["total"] == 37
+        by_label = {m["label"]: m["value"] for m in idx["metrics"]}
+        assert by_label["Collections finished building indexes"] == "2 / 21"
+
+    def test_summary_collections_copied_from_atlas_live_migrate_metrics(self):
+        payload = build_log_summary_payload(
+            progress={
+                "state": "RUNNING",
+                "info": "collection copy",
+                "atlasLiveMigrateMetrics": {
+                    "initialNumCollectionsCopied": 267,
+                    "initialNumCollectionsTotal": 273,
+                },
+                "collectionCopy": {
+                    "estimatedCopiedBytes": 100,
+                    "estimatedTotalBytes": 200,
+                },
+            },
+            partitions_copied=2601,
+            partitions_total=2601,
+            index_creation_lines=[
+                {
+                    "indexCreationProgress": {
+                        "totalIndexesBuilt": 7,
+                        "totalIndexesToBuild": 37,
+                        "finishedCollections": 2,
+                        "totalCollections": 21,
+                    },
+                }
+            ],
+        )
+        sync = payload["display"]["sync"]
+        assert sync["collectionsCopiedLabel"] == "Collections copied: 267 of 273"
+        assert sync["partitionsCopiedLabel"] == "Partitions copied: 2,601 of 2,601"
+        assert sync["copyPercent"] == 50.0
+
+    def test_build_log_metadata_uses_atlas_collection_totals(self):
+        metadata = build_log_metadata(
+            progress={
+                "state": "RUNNING",
+                "info": "collection copy",
+                "atlasLiveMigrateMetrics": {
+                    "initialNumCollectionsCopied": 12,
+                    "initialNumCollectionsTotal": 15,
+                },
+            },
+        )
+        assert metadata["collectionsCopied"] == 12
+        assert metadata["collectionsTotal"] == 15
+
+    def test_summary_payload_shows_cea_when_phase_event_is_newer_than_progress(self):
+        payload = build_log_summary_payload(
+            progress={"state": "RUNNING", "info": "collection copy"},
+            progress_time="2026-04-20T15:51:01.869718Z",
+            phase_events=[
+                ("2026-04-20T15:20:49.967653", "collection copy"),
+                ("2026-04-20T15:51:16.174795", "change event application"),
+            ],
+        )
+        assert payload["display"]["sync"]["phase"] == "change event application"
+
+    def test_prefers_sent_response_over_index_creation_progress(self):
+        progress = {"state": "COMMITTING"}
+        merged = merge_index_building_into_progress(
+            progress,
+            sent_responses=[
+                _sent_response(
+                    "2026-04-20T19:41:45.401715Z",
+                    {
+                        "indexBuilding": {
+                            "indexesBuilt": 5,
+                            "totalIndexesToBuild": 5,
+                            "collectionsFinished": 2,
+                            "collectionsTotal": 2,
+                        }
+                    },
+                )
+            ],
+            index_creation_lines=[
+                {
+                    "indexCreationProgress": {
+                        "totalIndexesBuilt": 99,
+                        "totalIndexesToBuild": 99,
+                        "finishedCollections": 9,
+                        "totalCollections": 9,
+                    }
+                }
+            ],
+        )
+        assert merged["indexBuilding"]["indexesBuilt"] == 5
+
+
+class TestMergeVerificationIntoProgress:
+    def test_backfills_when_latest_progress_omits_verification(self):
+        verification = {
+            "source": {"phase": "stream hashing", "scannedCollectionCount": 10},
+            "destination": {"phase": "stream hashing", "scannedCollectionCount": 9},
+        }
+        merged = merge_verification_into_progress(
+            {"state": "RUNNING", "info": "change event application"},
+            sent_responses=[
+                _sent_response(
+                    "2026-04-20T15:51:00.000Z",
+                    {"state": "RUNNING", "info": "collection copy"},
+                ),
+                _sent_response(
+                    "2026-04-20T16:00:00.000Z",
+                    {
+                        "state": "RUNNING",
+                        "info": "change event application",
+                        "verification": verification,
+                    },
+                ),
+                _sent_response(
+                    "2026-04-20T16:30:00.000Z",
+                    {"state": "RUNNING", "info": "change event application"},
+                ),
+            ],
+        )
+        assert merged["verification"] == verification
+
+    def test_summary_shows_verifier_progress_during_cea(self):
+        verification = {
+            "source": {
+                "phase": "initial hashing",
+                "scannedCollectionCount": 5,
+                "totalCollectionCount": 10,
+            },
+            "destination": {
+                "phase": "initial hashing",
+                "scannedCollectionCount": 4,
+                "totalCollectionCount": 10,
+            },
+        }
+        payload = build_log_summary_payload(
+            sent_responses=[
+                _sent_response(
+                    "2026-04-20T16:00:00.000Z",
+                    {
+                        "state": "RUNNING",
+                        "info": "change event application",
+                        "verification": verification,
+                    },
+                ),
+                _sent_response(
+                    "2026-04-20T16:30:00.000Z",
+                    {"state": "RUNNING", "info": "change event application"},
+                ),
+            ],
+            start_options=[{"verification": {"enabled": True, "startAt": "cea"}}],
+            phase_events=[
+                ("2026-04-20T15:51:00.000Z", "collection copy"),
+                ("2026-04-20T16:00:00.000Z", "change event application"),
+            ],
+        )
+        card = payload["display"]["verification"]
+        assert card is not None
+        assert card.get("mode") != "info"
+        assert card["source"][1]["value"] == "5 / 10"
+
+
+class TestBackfillCommitEventsApplied:
+    def test_uses_last_positive_replication_value_on_commit_completed(self):
+        progress = {"info": "commit completed", "totalEventsApplied": 0}
+        replication = [
+            {"totalEventsApplied": 120},
+            {"totalEventsApplied": 0},
+        ]
+        merged = backfill_commit_events_applied(progress, replication)
+        assert merged["totalEventsApplied"] == 120
+
+    def test_does_not_change_non_commit_phase(self):
+        progress = {"info": "change event application", "totalEventsApplied": 0}
+        replication = [{"totalEventsApplied": 120}]
+        merged = backfill_commit_events_applied(progress, replication)
+        assert merged["totalEventsApplied"] == 0
 
 
 class TestBuildLogMetadata:
@@ -310,6 +671,76 @@ class TestBuildLogMetadata:
         display = payload["display"]
         assert display["state"] == "COMMITTED"
         assert display["sync"]["phase"] == "commit completed"
+
+    def test_summary_payload_uses_last_known_events_on_commit_completed(self):
+        payload = build_log_summary_payload(
+            progress={
+                "state": "COMMITTING",
+                "info": "waiting for index constraint enablement at the end of commit",
+                "totalEventsApplied": 0,
+            },
+            replication_lines=[
+                {"time": "2026-04-20T01:18:30.000000Z", "totalEventsApplied": 125},
+                {"time": "2026-04-20T01:19:09.000000Z", "totalEventsApplied": 0},
+            ],
+            phase_events=[
+                (
+                    "2026-04-20T01:18:47.641305",
+                    "waiting for index constraint enablement at the end of commit",
+                ),
+                ("2026-04-20T01:19:25.139116", "commit completed"),
+            ],
+            state_transitions=[
+                {
+                    "time": "2026-04-20T01:19:25.139112Z",
+                    "newState": "COMMITTED",
+                }
+            ],
+        )
+        display = payload["display"]
+        assert display["sync"]["phase"] == "commit completed"
+        by_label = {m["label"]: m["value"] for m in display["sync"]["metrics"]}
+        assert by_label["Events applied"] == "125"
+
+    def test_summary_payload_shows_index_building_when_latest_progress_omits_it(self):
+        payload = build_log_summary_payload(
+            progress={
+                "state": "COMMITTING",
+                "info": "waiting for commit to complete",
+            },
+            progress_time="2026-04-20T19:42:35.726345Z",
+            start_options=[{"buildIndexes": "afterDataCopy"}],
+            sent_responses=[
+                _sent_response(
+                    "2026-04-20T19:41:45.401715Z",
+                    {
+                        "state": "RUNNING",
+                        "info": "change event application",
+                        "indexBuilding": {
+                            "indexesBuilt": 37,
+                            "totalIndexesToBuild": 37,
+                            "collectionsFinished": 21,
+                            "collectionsTotal": 21,
+                        },
+                    },
+                ),
+                _sent_response(
+                    "2026-04-20T19:42:35.726345Z",
+                    {
+                        "state": "COMMITTING",
+                        "info": "waiting for commit to complete",
+                    },
+                ),
+            ],
+        )
+        idx = payload["display"]["indexBuilding"]
+        assert idx is not None
+        assert idx.get("mode") != "info"
+        assert idx["built"] == 37
+        assert idx["total"] == 37
+        by_label = {m["label"]: m["value"] for m in idx["metrics"]}
+        assert by_label["Indexes built"] == "37 / 37"
+        assert by_label["Collections finished building indexes"] == "21 / 21"
 
 
 class TestExtractMongosyncVersion:

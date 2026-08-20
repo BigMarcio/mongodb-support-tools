@@ -212,6 +212,23 @@
     line-height: 1;
 }
 
+.lm-phase-times-timezone-below {
+    margin-top: 8px;
+    margin-left: calc(1em + 4px);
+    font-size: 12px;
+}
+
+.lm-phase-times-timezone {
+    color: var(--lm-text-secondary);
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.lm-phase-times-note {
+    margin-top: 8px;
+    font-size: 12px;
+}
+
 .lm-phase-times-details {
     display: none;
     margin-top: 10px;
@@ -249,11 +266,6 @@
 .lm-phase-times-table td:last-child {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-}
-
-.lm-phase-times-note {
-    margin-top: 8px;
-    font-size: 12px;
 }
 
 .lm-natural-order-block {

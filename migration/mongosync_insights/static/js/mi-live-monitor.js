@@ -307,8 +307,7 @@
         });
         table.appendChild(tbody);
         details.appendChild(table);
-
-        if (data.timezoneNote) {
+        if (data.timezoneNote && !data.timezoneNoteBelowTitle) {
             details.appendChild(
                 el('div', 'lm-muted lm-phase-times-note', 'Times in ' + data.timezoneNote)
             );
@@ -322,6 +321,15 @@
         });
 
         block.appendChild(toggle);
+        if (data.timezoneNote && data.timezoneNoteBelowTitle) {
+            block.appendChild(
+                el(
+                    'div',
+                    'lm-muted lm-phase-times-timezone lm-phase-times-timezone-below',
+                    'Times in ' + data.timezoneNote
+                )
+            );
+        }
         block.appendChild(details);
         return block;
     }
@@ -336,8 +344,7 @@
     function copiedProgressBlock(sync) {
         var hasDetails = !!(
             sync.collectionsCopiedLabel ||
-            sync.partitionsCopiedLabel ||
-            sync.collectionsFinishedLabel
+            sync.partitionsCopiedLabel
         );
         if (!sync.copiedLabel && !hasDetails) {
             return null;
@@ -350,9 +357,6 @@
             }
             if (sync.partitionsCopiedLabel) {
                 parent.appendChild(el('div', lineClass, sync.partitionsCopiedLabel));
-            }
-            if (sync.collectionsFinishedLabel) {
-                parent.appendChild(el('div', lineClass, sync.collectionsFinishedLabel));
             }
         }
 
