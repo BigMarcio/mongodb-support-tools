@@ -15,6 +15,7 @@
 {% endblock %}
 
 {% block content %}
+{% include 'live/_nav.html' %}
 <div id="live-monitor-loading" class="lm-loading">Loading migration monitoring...</div>
 <div id="live-monitor-root" class="lm-main" style="display:none;"></div>
 {% endblock %}
@@ -27,6 +28,10 @@ const MI_LIVE = {
 };
 
 async function fetchLiveMonitorData() {
+    if (window._miLiveMonitorInflight) {
+        return;
+    }
+    window._miLiveMonitorInflight = true;
     const loading = document.getElementById('live-monitor-loading');
     const root = document.getElementById('live-monitor-root');
     try {
@@ -35,7 +40,7 @@ async function fetchLiveMonitorData() {
             credentials: 'same-origin'
         });
         const payload = await response.json();
-        if (!response.ok && !payload.error) {
+        if (!response.ok) {
             throw new Error(payload.error || 'Request failed');
         }
         loading.style.display = 'none';
@@ -50,6 +55,8 @@ async function fetchLiveMonitorData() {
             display: null,
             error: 'Error loading data: ' + err.message
         });
+    } finally {
+        window._miLiveMonitorInflight = false;
     }
 }
 
@@ -58,6 +65,15 @@ fetchLiveMonitorData();
 var _refreshMs = parseInt(sessionStorage.getItem('mi_refresh_time'), 10);
 _refreshMs = (_refreshMs > 0 ? _refreshMs * 1000 : {{ refresh_time_ms }});
 var _refreshIntervalId = setInterval(fetchLiveMonitorData, _refreshMs);
+
+function _teardownLiveMonitorPolling() {
+    if (_refreshIntervalId) {
+        clearInterval(_refreshIntervalId);
+        _refreshIntervalId = null;
+    }
+    window.removeEventListener('pagehide', _teardownLiveMonitorPolling);
+}
+window.addEventListener('pagehide', _teardownLiveMonitorPolling);
 
 function _updateFooterRefresh(ms) {
     var footerP = document.querySelector('footer p');

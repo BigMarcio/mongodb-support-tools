@@ -58,9 +58,10 @@
         --mi-accent-danger: #DB3030;
         --mi-accent: var(--mi-accent-success);
 
-        --mi-tab-bg: #E3FCF7;
-        --mi-tab-bg-hover: #C0FAE6;
-        --mi-tab-text: #00684A;
+        --mi-tab-bg: #C0FAE6;
+        --mi-tab-bg-hover: #9EF0D4;
+        --mi-tab-text: #00593F;
+        --mi-tab-border: #7FD4B5;
         --mi-border-subtle: #E0E0E0;
         --mi-row-hover: #F5F5F5;
         --mi-code-text: #1A5276;
@@ -93,6 +94,56 @@
         --lm-table-row-hover: #F9FBFA;
         --lm-link: #016BF8;
         --lm-banner-info-text: #0c3b6b;
+
+        /* Log viewer (terminal-style panel) */
+        --lv-bg: #F9FBFA;
+        --lv-header-bg: #E8EDEB;
+        --lv-border: #D9E0E3;
+        --lv-text: #1F2937;
+        --lv-text-muted: #889397;
+        --lv-input-bg: #FFFFFF;
+        --lv-input-border: #C1C7C6;
+        --lv-btn-border: #C1C7C6;
+        --lv-btn-text: #415058;
+        --lv-btn-hover-bg: #E8EDEB;
+        --lv-btn-hover-text: #1F2937;
+        --lv-btn-active-bg: #00684A;
+        --lv-btn-active-text: #FFFFFF;
+        --lv-btn-active-border: #00684A;
+        --lv-focus-active-bg: #FFF8E1;
+        --lv-focus-active-border: #c9820a;
+        --lv-focus-active-text: #664D03;
+        --lv-datetime-scheme: light;
+        --lv-calendar-filter: none;
+        --lv-line-error-bg: rgba(219, 48, 48, 0.08);
+        --lv-line-warn-bg: rgba(255, 192, 16, 0.12);
+        --lv-line-phase-bg: rgba(0, 104, 74, 0.08);
+        --lv-syntax-ts: #0369a1;
+        --lv-syntax-phase: #15803d;
+        --lv-syntax-error: #dc2626;
+        --lv-syntax-warn: #ca8a04;
+        --lv-syntax-info: #0284c7;
+        --lv-syntax-debug: #7c3aed;
+        --lv-syntax-trace: #6b7280;
+        --lv-syntax-key: #0369a1;
+        --lv-syntax-string: #15803d;
+        --lv-syntax-number: #2563eb;
+        --lv-syntax-bool-true: #15803d;
+        --lv-syntax-bool-false: #ea580c;
+        --lv-syntax-db: #0891b2;
+        --lv-syntax-metric: #9333ea;
+        --lv-syntax-duration-avg: #0284c7;
+        --lv-syntax-duration-max: #ea580c;
+        --lv-syntax-op-count: #15803d;
+        --lv-syntax-state: #db2777;
+        --lv-syntax-cancommit: #0d9488;
+        --lv-syntax-lag: #ca8a04;
+        --lv-syntax-est-total: #15803d;
+        --lv-syntax-est-copied: #059669;
+        --lv-invalid-json-bg: #7f1d1d;
+        --lv-invalid-json-text: #fca5a5;
+        --lv-back-to-tail-border: #00684A;
+        --lv-back-to-tail-text: #00684A;
     }
 
     /* Dark theme overrides */
@@ -115,6 +166,7 @@
         --mi-tab-bg: #1A3642;
         --mi-tab-bg-hover: #243F4C;
         --mi-tab-text: #00ED64;
+        --mi-tab-border: #36505B;
         --mi-border-subtle: #36505B;
         --mi-row-hover: #243F4C;
         --mi-code-text: #0498EC;
@@ -145,6 +197,55 @@
         --lm-table-row-hover: #1A3642;
         --lm-link: #0498EC;
         --lm-banner-info-text: #0498EC;
+
+        --lv-bg: #1e1e1e;
+        --lv-header-bg: #2a2a2a;
+        --lv-border: #3a3a3a;
+        --lv-text: #e0e0e0;
+        --lv-text-muted: #888888;
+        --lv-input-bg: #1e1e1e;
+        --lv-input-border: #555555;
+        --lv-btn-border: #555555;
+        --lv-btn-text: #aaaaaa;
+        --lv-btn-hover-bg: #3a3a3a;
+        --lv-btn-hover-text: #dddddd;
+        --lv-btn-active-bg: #00684A;
+        --lv-btn-active-text: #ffffff;
+        --lv-btn-active-border: #00684A;
+        --lv-focus-active-bg: #c9820a;
+        --lv-focus-active-border: #c9820a;
+        --lv-focus-active-text: #ffffff;
+        --lv-datetime-scheme: dark;
+        --lv-calendar-filter: invert(0.8);
+        --lv-line-error-bg: rgba(232, 64, 64, 0.12);
+        --lv-line-warn-bg: rgba(232, 167, 53, 0.10);
+        --lv-line-phase-bg: rgba(0, 104, 74, 0.12);
+        --lv-syntax-ts: #7ec8e3;
+        --lv-syntax-phase: #4ade80;
+        --lv-syntax-error: #ef4444;
+        --lv-syntax-warn: #eab308;
+        --lv-syntax-info: #38bdf8;
+        --lv-syntax-debug: #a78bfa;
+        --lv-syntax-trace: #888888;
+        --lv-syntax-key: #7dd3fc;
+        --lv-syntax-string: #86efac;
+        --lv-syntax-number: #93c5fd;
+        --lv-syntax-bool-true: #4ade80;
+        --lv-syntax-bool-false: #fb923c;
+        --lv-syntax-db: #67e8f9;
+        --lv-syntax-metric: #c084fc;
+        --lv-syntax-duration-avg: #38bdf8;
+        --lv-syntax-duration-max: #fb923c;
+        --lv-syntax-op-count: #4ade80;
+        --lv-syntax-state: #f472b6;
+        --lv-syntax-cancommit: #2dd4bf;
+        --lv-syntax-lag: #facc15;
+        --lv-syntax-est-total: #86efac;
+        --lv-syntax-est-copied: #6ee7b7;
+        --lv-invalid-json-bg: #7f1d1d;
+        --lv-invalid-json-text: #fca5a5;
+        --lv-back-to-tail-border: #00684A;
+        --lv-back-to-tail-text: #4ade80;
     }
 
     /* Shared tab panels (upload_results, metrics, verifier_metrics) */
@@ -155,15 +256,33 @@
 
     .tab-buttons {
         display: flex;
-        gap: 4px;
+        align-items: flex-end;
+        column-gap: 4px;
+        row-gap: 0;
         margin-bottom: 0;
-        border-bottom: 2px solid var(--mongodb-green-dark2);
+        padding: 0 0 2px;
+        position: relative;
+        box-sizing: border-box;
+    }
+
+    .tab-buttons::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 2px;
+        background: var(--mongodb-green-dark2);
+        z-index: 5;
+        pointer-events: none;
     }
 
     .tab-btn {
+        margin: 0 0 -2px;
         padding: 12px 24px;
         background: var(--mi-tab-bg);
-        border: none;
+        border: 1px solid var(--mi-tab-border);
+        border-bottom: none;
         border-radius: 8px 8px 0 0;
         cursor: pointer;
         font-size: 15px;
@@ -171,17 +290,20 @@
         color: var(--mi-tab-text);
         transition: all 0.2s ease;
         position: relative;
-        bottom: -2px;
+        z-index: 1;
     }
 
     .tab-btn:hover {
         background: var(--mi-tab-bg-hover);
+        border-color: var(--mongodb-green-dark2);
+        z-index: 2;
     }
 
     .tab-btn.active {
         background: var(--mongodb-green-dark2);
         color: var(--mongodb-white);
-        border-bottom: 2px solid var(--mongodb-green-dark2);
+        border-color: var(--mongodb-green-dark2);
+        z-index: 3;
     }
 
     .tab-content {
@@ -224,6 +346,20 @@
         .tab-btn {
             padding: 10px 16px;
             font-size: 13px;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .upload-loading-spinner {
+            animation: none;
+        }
+
+        .ur-main .tab-content {
+            animation: none;
+        }
+
+        .lm-progress.indeterminate .lm-fill {
+            animation: none;
         }
     }
 </style>

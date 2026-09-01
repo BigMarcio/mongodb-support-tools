@@ -6,6 +6,8 @@ import pytest
 
 from lib.live_metadata_status import (
     build_indexes_starts_after_data_copy,
+    compute_crud_lag_seconds,
+    compute_ddl_lag_seconds,
     compute_lag_time_seconds,
     fetch_partition_byte_totals,
     format_write_blocking_mode,
@@ -32,6 +34,24 @@ class TestComputeLagTimeSeconds:
         }
         lag = compute_lag_time_seconds(resume)
         assert 59 <= lag <= 62
+
+    def test_crud_and_ddl_lag_per_stream(self):
+        crud_ts = datetime.now(tz=timezone.utc) - timedelta(seconds=120)
+        ddl_ts = datetime.now(tz=timezone.utc) - timedelta(seconds=60)
+        resume = {
+            "crudChangeStreamResumeInfo": {"lastEventTs": crud_ts},
+            "ddlChangeStreamResumeInfo": {"lastEventTs": ddl_ts},
+        }
+        crud_lag = compute_crud_lag_seconds(resume)
+        ddl_lag = compute_ddl_lag_seconds(resume)
+        assert 59 <= crud_lag <= 122
+        assert 59 <= ddl_lag <= 62
+
+    def test_ddl_lag_none_without_resume_info(self):
+        crud_ts = datetime.now(tz=timezone.utc) - timedelta(seconds=30)
+        resume = {"crudChangeStreamResumeInfo": {"lastEventTs": crud_ts}}
+        assert compute_ddl_lag_seconds(resume) is None
+        assert compute_crud_lag_seconds(resume) is not None
 
 
 class TestFormatWriteBlockingMode:

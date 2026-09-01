@@ -45,7 +45,7 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_MIGRATION_VERIFIER_DB_NAME` | `__mdb_internal_migration_verifier` | Standalone migration-verifier metadata database name. |
 | `MI_VERIFIER_GENERATION_LIMIT` | `5` | Maximum generations shown on the Migration Verifier dashboard (1–20). |
 | `MI_VERIFIER_FAILED_TASKS_LIMIT` | `20` | Maximum failed document tasks shown on the **Failed Tasks / Document Mismatches** card (1–100). |
-| `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` | `0` | Minimum document-mismatch duration (seconds) passed to migration-verifier `/api/v1/summary` (`minDurationSecs` query param). `0` = no filter. |
+| `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` | `0` | Minimum document-mismatch duration (seconds) passed to migration-verifier `/api/v1/summary` and `/api/v1/docMismatches` (`minDurationSecs` query param). `0` = no filter. |
 | `MI_EMBEDDED_VERIFIER_SRC_DB_NAME` | `__mdb_internal_mongosync_verifier_src` | Embedded verifier source persistence database on the destination cluster. |
 | `MI_EMBEDDED_VERIFIER_DST_DB_NAME` | `__mdb_internal_mongosync_verifier_dst` | Embedded verifier destination persistence database on the destination cluster. |
 | `MI_POOL_SIZE` | `10` | MongoDB connection pool size |
@@ -56,13 +56,16 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MI_REFRESH_TIME` | `10` | Base refresh interval in seconds (sidebar **Settings** control). **Migration Monitoring** dashboard polls at this interval. **Migration Verifier** dashboard uses multiples of this value: **progress** = 3× (default 30s), **summary** = 12× (default 120s), **metadata** = 6× (default 60s). Changing the sidebar refresh updates Migration Monitoring directly and rescales all three verifier intervals proportionally. The sidebar **Settings** control overrides this per browser session (stored in `sessionStorage`); it does not update the server env var. |
+| `MI_REFRESH_TIME` | `10` | Base refresh interval in seconds (sidebar **Settings** control). **Migration Monitoring** dashboard polls at this interval. **Migration Verifier** dashboard uses multiples of this value: **progress** = 3× (default 30s), **metadata** = 6× (default 60s). Changing the sidebar refresh updates Migration Monitoring directly and rescales both verifier intervals proportionally. The sidebar **Settings** control overrides this per browser session (stored in `sessionStorage`); it does not update the server env var. |
 | `MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS` | `MI_REFRESH_TIME` | HTTP timeout in seconds for mongosync `/api/v1/progress` polling |
 | `MI_VERIFIER_PROGRESS_TIMEOUT_SECS` | `MI_REFRESH_TIME × 3` | HTTP timeout in seconds for migration-verifier `/api/v1/progress` polling |
-| `MI_VERIFIER_SUMMARY_TIMEOUT_SECS` | `MI_REFRESH_TIME × 12` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` polling |
+| `MI_VERIFIER_HEAVY_API_TIMEOUT_SECS` | `600` | HTTP timeout in seconds for migration-verifier `/api/v1/summary` (manual mismatch summary), mismatch download streams (`/api/v1/docMismatches`, `/api/v1/nsMismatches`), and the post-run summary cooldown. Applies to connect and idle time between streamed chunks for downloads. |
 | `MI_INDEX_BUILD_REFRESH_TIME` | `60` | Minimum interval in seconds between destination `list_indexes` scans used for approximate metadata index-building progress (counter reads still run every poll). See [MIGRATION_MONITORING.md](MIGRATION_MONITORING.md). |
 | `MI_PROGRESS_ENDPOINT_URL` | _(empty)_ | Mongosync progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27182**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration monitoring home page. Leave host empty in the UI to skip the endpoint. |
-| `MI_VERIFIER_PROGRESS_ENDPOINT_URL` | _(empty)_ | Migration Verifier progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27020**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration Verifier form. Leave host empty in the UI to skip the endpoint. |
+| `MI_VERIFIER_PROGRESS_ENDPOINT_URL` | _(empty)_ | Migration Verifier progress endpoint as `host:port` or `host:port/api/v1/progress` (default port **27020**; path `/api/v1/progress` is appended if omitted). Optional — can also be set via UI **host** and **port** fields on the Migration monitoring home page (standalone verifier section). Leave host empty in the UI to skip the endpoint. |
+| `MI_ALLOWED_ENDPOINT_HOSTS` | _(empty)_ | Comma-separated allowlist of hosts that mongosync/verifier endpoints may point at (for example `mongosync-1.internal,10.0.0.5`). Empty means any host entered in the UI is accepted. Set this when the app is reachable by anyone other than the operator. |
+
+> **Note**: Progress, summary, and mismatch requests are sent to exactly the validated `host:port` and API path — HTTP redirects returned by the endpoint are **not** followed, so a misconfigured or hostile endpoint cannot steer the fetch to another URL. A redirect surfaces as an endpoint error in the UI. Point the variable directly at the mongosync/verifier API host and port, not at a proxy that redirects.
 
 ### File Upload Settings
 
@@ -96,10 +99,20 @@ Invalid numeric environment variables or an unrecognized `LOG_LEVEL` cause immed
 | `MI_SSL_CERT` | `/etc/letsencrypt/live/your-domain/fullchain.pem` | Path to SSL certificate file |
 | `MI_SSL_KEY` | `/etc/letsencrypt/live/your-domain/privkey.pem` | Path to SSL private key file |
 
-> **Note**: Sessions are stored **in-memory** on the server. All active sessions are lost when the application restarts. This is by design to avoid persisting sensitive data (such as connection strings) to disk. A session may hold both mongosync and Migration Verifier credentials when you use both forms on `/live/`. Use **Logout** to clear the session cookie and stored credentials.
+> **Note**: Sessions are stored **in-memory** on the server. All active sessions are lost when the application restarts. This is by design to avoid persisting sensitive data (such as connection strings) to disk. A unified monitoring session may hold mongosync and optional standalone Migration Verifier credentials submitted from `/live/`. Use **Logout** to clear the session cookie and stored credentials.
 
 > **Note**: For detailed HTTPS setup instructions, see [HTTPS_SETUP.md](HTTPS_SETUP.md)
 >
+
+#### Deployment Trust Model
+
+Mongosync Insights has **no user authentication**: anyone who can reach the app can use every feature, including uploading logs, submitting connection strings, and pointing the monitoring forms at a host of their choosing. It is designed to run next to a migration as a single-operator diagnostic tool.
+
+Deploy it accordingly:
+
+- Bind to `MI_HOST=127.0.0.1` and reach it over an SSH tunnel, or restrict access with a firewall or VPN
+- If it must be reachable on a shared network, put an authenticating reverse proxy in front of it (see [HTTPS_SETUP.md](HTTPS_SETUP.md)) and set `MI_ALLOWED_ENDPOINT_HOSTS`
+- Pre-set `MI_PROGRESS_ENDPOINT_URL` / `MI_VERIFIER_PROGRESS_ENDPOINT_URL`: when these are set, the environment value wins and the UI form fields are ignored
 
 ### Connection String Validation
 
@@ -215,6 +228,9 @@ export LOG_LEVEL=INFO
 export MI_SSL_ENABLED=false  # Nginx handles SSL
 export MI_SECURE_COOKIES=true
 
+# Restrict which hosts operators can point progress/verifier endpoints at (shared networks)
+export MI_ALLOWED_ENDPOINT_HOSTS="mongosync-1.internal,10.0.0.5"
+
 # MongoDB connection (optional: metadata-only, or metadata fallback when a progress endpoint is also set)
 export MI_CONNECTION_STRING="mongodb+srv://user:pass@production-cluster.mongodb.net/"
 
@@ -268,7 +284,7 @@ export MI_VERIFIER_SUMMARY_MIN_DURATION_SECS=0
 
 # HTTP timeouts for verifier endpoint polling (seconds; defaults follow refresh intervals)
 export MI_VERIFIER_PROGRESS_TIMEOUT_SECS=30
-export MI_VERIFIER_SUMMARY_TIMEOUT_SECS=120
+export MI_VERIFIER_HEAVY_API_TIMEOUT_SECS=600
 
 # Socket timeout for verifier metadata DB reads (milliseconds)
 export MI_VERIFIER_METADATA_TIMEOUT_MS=120000

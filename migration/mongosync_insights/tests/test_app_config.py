@@ -10,17 +10,26 @@ from lib import app_config
 from lib.app_config import (
     InMemorySessionStore,
     build_progress_endpoint_url,
+    build_verifier_doc_mismatches_endpoint_url,
+    build_verifier_ns_mismatches_endpoint_url,
     build_verifier_progress_endpoint_url,
     build_verifier_summary_endpoint_url,
     classify_file_type,
+    endpoint_host_allowed,
     is_multi_file_archive,
     load_error_patterns,
     normalize_progress_endpoint_url,
     parse_env_int,
+    probe_metadata_databases,
     resolve_mongosync_db_name,
+    validate_api_endpoint_url,
     validate_config,
     validate_connection,
     validate_progress_endpoint_url,
+    PROGRESS_API_PATH,
+    VERIFIER_SUMMARY_API_PATH,
+    VERIFIER_DOC_MISMATCHES_API_PATH,
+    VERIFIER_NS_MISMATCHES_API_PATH,
     MI_MONGOSYNC_DB_NAME,
     MI_MONGOSYNC_DB_NAME_NEW,
     MI_MIGRATION_VERIFIER_DB_NAME,
@@ -29,10 +38,10 @@ from lib.app_config import (
     VERIFIER_SUMMARY_MIN_DURATION_SECS,
     MONGOSYNC_PROGRESS_TIMEOUT_SECS,
     VERIFIER_PROGRESS_TIMEOUT_SECS,
-    VERIFIER_SUMMARY_TIMEOUT_SECS,
+    VERIFIER_HEAVY_API_TIMEOUT_SECS,
+    VERIFIER_SUMMARY_COOLDOWN_SECS,
     VERIFIER_METADATA_TIMEOUT_MS,
     VERIFIER_PROGRESS_REFRESH_TIME,
-    VERIFIER_SUMMARY_REFRESH_TIME,
     VERIFIER_METADATA_REFRESH_TIME,
     REFRESH_TIME,
 )
@@ -201,6 +210,65 @@ class TestVerifierSummaryEndpointUrl:
         assert build_verifier_summary_endpoint_url("") is None
 
 
+class TestVerifierDocMismatchesEndpointUrl:
+    def test_from_progress_url(self):
+        assert (
+            build_verifier_doc_mismatches_endpoint_url("localhost:27020/api/v1/progress")
+            == "localhost:27020/api/v1/docMismatches"
+        )
+
+    def test_from_host_port_only(self):
+        assert (
+            build_verifier_doc_mismatches_endpoint_url("localhost:27020")
+            == "localhost:27020/api/v1/docMismatches"
+        )
+
+    def test_already_doc_mismatches_url(self):
+        url = "localhost:27020/api/v1/docMismatches"
+        assert build_verifier_doc_mismatches_endpoint_url(url) == url
+
+    def test_empty_returns_none(self):
+        assert build_verifier_doc_mismatches_endpoint_url("") is None
+
+
+class TestVerifierNsMismatchesEndpointUrl:
+    def test_from_progress_url(self):
+        assert (
+            build_verifier_ns_mismatches_endpoint_url("localhost:27020/api/v1/progress")
+            == "localhost:27020/api/v1/nsMismatches"
+        )
+
+    def test_from_host_port_only(self):
+        assert (
+            build_verifier_ns_mismatches_endpoint_url("localhost:27020")
+            == "localhost:27020/api/v1/nsMismatches"
+        )
+
+    def test_already_ns_mismatches_url(self):
+        url = "localhost:27020/api/v1/nsMismatches"
+        assert build_verifier_ns_mismatches_endpoint_url(url) == url
+
+    def test_empty_returns_none(self):
+        assert build_verifier_ns_mismatches_endpoint_url("") is None
+
+
+class TestVerifierHeavyApiTimeout:
+    def test_default(self):
+        assert VERIFIER_HEAVY_API_TIMEOUT_SECS == 600
+        assert VERIFIER_SUMMARY_COOLDOWN_SECS == VERIFIER_HEAVY_API_TIMEOUT_SECS
+
+    def test_env_override(self):
+        import importlib
+
+        with patch.dict(
+            "os.environ", {"MI_VERIFIER_HEAVY_API_TIMEOUT_SECS": "900"}, clear=False,
+        ):
+            importlib.reload(app_config)
+            assert app_config.VERIFIER_HEAVY_API_TIMEOUT_SECS == 900
+            assert app_config.VERIFIER_SUMMARY_COOLDOWN_SECS == 900
+        importlib.reload(app_config)
+
+
 class TestVerifierSummaryMinDuration:
     def test_default(self):
         assert VERIFIER_SUMMARY_MIN_DURATION_SECS == 0
@@ -236,7 +304,6 @@ class TestVerifierMetadataTimeout:
 class TestVerifierRefreshIntervals:
     def test_refresh_multiples(self):
         assert VERIFIER_PROGRESS_REFRESH_TIME == REFRESH_TIME * 3
-        assert VERIFIER_SUMMARY_REFRESH_TIME == REFRESH_TIME * 12
         assert VERIFIER_METADATA_REFRESH_TIME == REFRESH_TIME * 6
 
 
@@ -247,8 +314,8 @@ class TestFetchTimeouts:
     def test_default_verifier_progress_timeout(self):
         assert VERIFIER_PROGRESS_TIMEOUT_SECS == VERIFIER_PROGRESS_REFRESH_TIME
 
-    def test_default_verifier_summary_timeout(self):
-        assert VERIFIER_SUMMARY_TIMEOUT_SECS == VERIFIER_SUMMARY_REFRESH_TIME
+    def test_default_verifier_heavy_api_timeout(self):
+        assert VERIFIER_HEAVY_API_TIMEOUT_SECS == 600
 
     def test_mongosync_progress_timeout_env_override(self):
         import importlib
@@ -269,17 +336,6 @@ class TestFetchTimeouts:
             importlib.reload(config_module)
             assert config_module.VERIFIER_PROGRESS_TIMEOUT_SECS == 45
         importlib.reload(app_config)
-
-    def test_verifier_summary_timeout_env_override(self):
-        import importlib
-
-        import lib.app_config as config_module
-
-        with patch.dict("os.environ", {"MI_VERIFIER_SUMMARY_TIMEOUT_SECS": "180"}, clear=False):
-            importlib.reload(config_module)
-            assert config_module.VERIFIER_SUMMARY_TIMEOUT_SECS == 180
-        importlib.reload(app_config)
-
 
 class TestClassifyFileType:
     @pytest.mark.parametrize("filename,expected", [
@@ -388,6 +444,46 @@ class TestResolveMongosyncDbName:
         assert resolve_mongosync_db_name("mongodb://localhost:27017") == MI_MONGOSYNC_DB_NAME
 
 
+class TestProbeMetadataDatabases:
+    def setup_method(self):
+        app_config.clear_connection_cache()
+
+    @patch("lib.app_config.get_mongo_client")
+    def test_both_databases_found(self, mock_get_client):
+        mock_get_client.return_value.list_database_names.return_value = [
+            MI_MONGOSYNC_DB_NAME_NEW,
+            MI_MIGRATION_VERIFIER_DB_NAME,
+        ]
+        result = probe_metadata_databases("mongodb://localhost:27017")
+        assert result["mongosync_metadata_available"] is True
+        assert result["verifier_metadata_available"] is True
+
+    @patch("lib.app_config.get_mongo_client")
+    def test_legacy_mongosync_only(self, mock_get_client):
+        mock_get_client.return_value.list_database_names.return_value = [
+            MI_MONGOSYNC_DB_NAME,
+        ]
+        result = probe_metadata_databases("mongodb://localhost:27017")
+        assert result["mongosync_metadata_available"] is True
+        assert result["verifier_metadata_available"] is False
+
+    @patch("lib.app_config.get_mongo_client")
+    def test_verifier_only(self, mock_get_client):
+        mock_get_client.return_value.list_database_names.return_value = [
+            MI_MIGRATION_VERIFIER_DB_NAME,
+        ]
+        result = probe_metadata_databases("mongodb://localhost:27017")
+        assert result["mongosync_metadata_available"] is False
+        assert result["verifier_metadata_available"] is True
+
+    @patch("lib.app_config.get_mongo_client")
+    def test_neither_found(self, mock_get_client):
+        mock_get_client.return_value.list_database_names.return_value = ["app"]
+        result = probe_metadata_databases("mongodb://localhost:27017")
+        assert result["mongosync_metadata_available"] is False
+        assert result["verifier_metadata_available"] is False
+
+
 class TestMigrationVerifierDbName:
     def test_default_db_name(self):
         assert MI_MIGRATION_VERIFIER_DB_NAME == "__mdb_internal_migration_verifier"
@@ -469,3 +565,56 @@ class TestValidateProgressEndpointUrlRejects:
     )
     def test_rejects_invalid_urls(self, url):
         assert validate_progress_endpoint_url(url) is False
+
+
+class TestValidateApiEndpointUrl:
+    @pytest.mark.parametrize(
+        "url,api_path",
+        [
+            ("host:27182/api/v1/progress", PROGRESS_API_PATH),
+            ("host:27020/api/v1/summary", VERIFIER_SUMMARY_API_PATH),
+            ("host:27020/api/v1/docMismatches", VERIFIER_DOC_MISMATCHES_API_PATH),
+            ("host:27020/api/v1/nsMismatches", VERIFIER_NS_MISMATCHES_API_PATH),
+        ],
+    )
+    def test_accepts_known_api_paths(self, url, api_path):
+        assert validate_api_endpoint_url(url, api_path) is True
+
+    @pytest.mark.parametrize(
+        "url,api_path",
+        [
+            ("host:27020/api/v1/summary", PROGRESS_API_PATH),
+            ("host:27182/api/v1/progress?x=1", PROGRESS_API_PATH),
+            ("host:27182/api/v1/progress/../../secret", PROGRESS_API_PATH),
+            ("host:27182/latest/meta-data/", PROGRESS_API_PATH),
+        ],
+    )
+    def test_rejects_path_mismatch(self, url, api_path):
+        assert validate_api_endpoint_url(url, api_path) is False
+
+    def test_rejects_unknown_api_path(self):
+        assert validate_api_endpoint_url("host:27182/debug", "/debug") is False
+
+
+class TestEndpointHostAllowlist:
+    def test_allows_any_host_when_unset(self):
+        with patch.object(app_config, "ALLOWED_ENDPOINT_HOSTS", frozenset()):
+            assert endpoint_host_allowed("10.0.0.5:27182/api/v1/progress") is True
+
+    def test_allows_listed_host(self):
+        with patch.object(
+            app_config, "ALLOWED_ENDPOINT_HOSTS", frozenset({"mongosync-1"})
+        ):
+            assert endpoint_host_allowed("mongosync-1:27182/api/v1/progress") is True
+
+    def test_blocks_unlisted_host(self):
+        with patch.object(
+            app_config, "ALLOWED_ENDPOINT_HOSTS", frozenset({"mongosync-1"})
+        ):
+            assert endpoint_host_allowed("127.0.0.1:27182/api/v1/progress") is False
+
+    def test_blocks_malformed_url_when_allowlist_set(self):
+        with patch.object(
+            app_config, "ALLOWED_ENDPOINT_HOSTS", frozenset({"mongosync-1"})
+        ):
+            assert endpoint_host_allowed("mongosync-1:27182/latest/meta-data") is False

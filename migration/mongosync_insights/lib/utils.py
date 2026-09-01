@@ -1,3 +1,56 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _lag_seconds_value(raw):
+    if raw is None:
+        return None
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_replication_lag(progress):
+    """
+    Extract overall/crud/ddl lag seconds from /progress or replication log JSON.
+
+    Returns dict with overall, crud, ddl (int or None) and has_breakdown (bool).
+    When progress includes a lag object, has_breakdown is True.
+    """
+    if not progress:
+        return {"overall": None, "crud": None, "ddl": None, "has_breakdown": False}
+
+    lag_obj = progress.get("lag")
+    if isinstance(lag_obj, dict):
+        overall = _lag_seconds_value(lag_obj.get("overallLagSeconds"))
+        crud = _lag_seconds_value(lag_obj.get("crudLagSeconds"))
+        ddl_raw = lag_obj.get("ddlLagSeconds")
+        ddl = _lag_seconds_value(ddl_raw) if ddl_raw is not None else None
+        legacy = _lag_seconds_value(progress.get("lagTimeSeconds"))
+        if overall is not None and legacy is not None and overall != legacy:
+            logger.warning(
+                "lag.overallLagSeconds (%s) differs from lagTimeSeconds (%s)",
+                overall,
+                legacy,
+            )
+        return {
+            "overall": overall,
+            "crud": crud,
+            "ddl": ddl,
+            "has_breakdown": True,
+        }
+
+    legacy = _lag_seconds_value(progress.get("lagTimeSeconds"))
+    return {
+        "overall": legacy,
+        "crud": None,
+        "ddl": None,
+        "has_breakdown": False,
+    }
+
+
 def format_bytes_compact(size_bytes):
     """Human-readable byte size (e.g. 6.2 GB)."""
     if size_bytes is None or size_bytes < 0:
@@ -28,6 +81,18 @@ def format_lag_time_seconds(seconds):
         return f"{hours}h {minutes}m"
     days, hours = divmod(hours, 24)
     return f"{days}d {hours}h"
+
+
+def format_seconds_title(seconds):
+    """Hover text for duration fields (e.g. '1,582 seconds')."""
+    if seconds is None or seconds < 0:
+        return None
+    try:
+        total = int(seconds)
+    except (TypeError, ValueError):
+        return None
+    unit = "second" if total == 1 else "seconds"
+    return f"{total:,} {unit}"
 
 
 def format_count(value):

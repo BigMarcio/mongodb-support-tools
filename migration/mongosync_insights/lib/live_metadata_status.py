@@ -85,8 +85,31 @@ def _get_last_event_datetime(resume_info):
     return _parse_last_event_ts(resume_info.get("lastEventTs"))
 
 
+def _lag_seconds_from_last_event_dt(last_event_dt):
+    if not last_event_dt:
+        return None
+    lag = datetime.now(tz=timezone.utc) - last_event_dt
+    return max(0, int(lag.total_seconds()))
+
+
+def compute_crud_lag_seconds(resume_data):
+    """CRUD stream lag seconds from resume timestamps vs UTC now (metadata fallback)."""
+    if not resume_data:
+        return None
+    crud_dt = _get_last_event_datetime(resume_data.get("crudChangeStreamResumeInfo"))
+    return _lag_seconds_from_last_event_dt(crud_dt)
+
+
+def compute_ddl_lag_seconds(resume_data):
+    """DDL stream lag seconds from resume timestamps vs UTC now (metadata fallback)."""
+    if not resume_data:
+        return None
+    ddl_dt = _get_last_event_datetime(resume_data.get("ddlChangeStreamResumeInfo"))
+    return _lag_seconds_from_last_event_dt(ddl_dt)
+
+
 def compute_lag_time_seconds(resume_data):
-    """Lag seconds from change-stream resume timestamps vs UTC now."""
+    """Overall lag seconds from change-stream resume timestamps vs UTC now."""
     if not resume_data:
         return None
     crud_dt = _get_last_event_datetime(resume_data.get("crudChangeStreamResumeInfo"))
@@ -98,11 +121,7 @@ def compute_lag_time_seconds(resume_data):
         last_event_dt = crud_dt
     elif ddl_dt:
         last_event_dt = ddl_dt
-    if not last_event_dt:
-        return None
-    lag = datetime.now(tz=timezone.utc) - last_event_dt
-    total_seconds = int(lag.total_seconds())
-    return max(0, total_seconds)
+    return _lag_seconds_from_last_event_dt(last_event_dt)
 
 
 def format_write_blocking_mode(raw):
@@ -279,8 +298,8 @@ def format_namespace_filter_rows(filter_data, filter_type="inclusion"):
     """
     if not filter_data:
         if filter_type == "inclusion":
-            return [{"key": "Database", "value": "All (no filter)"}]
-        return [{"key": "Filter", "value": "No filter"}]
+            return [{"key": "Database", "value": "All (no filter specified)"}]
+        return [{"key": "Filter", "value": "None (No filter specified)"}]
 
     keys = []
     values = []
@@ -298,7 +317,9 @@ def format_namespace_filter_rows(filter_data, filter_type="inclusion"):
                     else:
                         db_list.append(str(db))
                 keys.append("Database")
-                values.append(", ".join(db_list) if db_list else "All (no filter)")
+                values.append(
+                    ", ".join(db_list) if db_list else "All (no filter specified)"
+                )
 
         collections = item.get("collections")
         if collections:
@@ -310,12 +331,12 @@ def format_namespace_filter_rows(filter_data, filter_type="inclusion"):
                 values.append(str(collections))
         elif collections is None and database:
             keys.append("Collections")
-            values.append("All (no filter)")
+            values.append("All (no filter specified)")
 
     if not keys:
         if filter_type == "inclusion":
-            return [{"key": "Database", "value": "All (no filter)"}]
-        return [{"key": "Filter", "value": "No filter"}]
+            return [{"key": "Database", "value": "All (no filter specified)"}]
+        return [{"key": "Filter", "value": "None (No filter specified)"}]
 
     return [{"key": k, "value": v} for k, v in zip(keys, values)]
 
@@ -762,6 +783,8 @@ def fetch_metadata_status(
         "phase": phase,
         "syncPhase": sync_phase,
         "lagTimeSeconds": compute_lag_time_seconds(resume_data),
+        "crudLagSeconds": compute_crud_lag_seconds(resume_data),
+        "ddlLagSeconds": compute_ddl_lag_seconds(resume_data),
         "start": _format_timestamp(start_dt),
         "finish": _format_timestamp(finish_dt),
         "reversible": str(reversible_raw) if reversible_raw is not None else None,

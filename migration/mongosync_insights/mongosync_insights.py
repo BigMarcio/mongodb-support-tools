@@ -9,6 +9,7 @@ from flask import (
     request,
     send_from_directory,
 )
+from markupsafe import Markup
 
 try:
     from lib.app_config import (
@@ -30,6 +31,7 @@ except (PermissionError, ValueError) as e:
 from blueprints.live import bp as live_bp
 from blueprints.logs import bp as logs_bp
 from lib.log_store_maintenance import run_log_store_maintenance
+from lib.plot_theme import inline_json
 from lib.session_support import SESSION_COOKIE_NAME
 
 logger = setup_logging()
@@ -40,6 +42,16 @@ else:
     _base_path = os.path.dirname(os.path.abspath(__file__))
 
 
+def _inline_json_filter(payload):
+    """Jinja filter yielding plot JSON that is inert inside an inline <script>.
+
+    inline_json has already escaped the script-breakout characters, so the
+    Markup wrapper (B704) only stops Jinja from HTML-escaping the quotes that
+    valid JSON needs, and it keeps "| safe" out of the templates.
+    """
+    return Markup(inline_json(payload))  # nosec B704
+
+
 def create_app():
     app = Flask(
         __name__,
@@ -48,6 +60,7 @@ def create_app():
         static_url_path="/images",
     )
     app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE
+    app.jinja_env.filters["inline_json"] = _inline_json_filter
 
     @app.route("/static/js/<path:filename>")
     def mi_static_js(filename):
@@ -71,7 +84,7 @@ def create_app():
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.plot.ly; "
             "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: blob: https:; "
+            "img-src 'self' data: blob:; "
             "font-src 'self' data:; "
             "connect-src 'self' blob:;"
         )

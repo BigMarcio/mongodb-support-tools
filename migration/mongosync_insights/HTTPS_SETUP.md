@@ -311,16 +311,18 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         
-        # Timeouts
+        # Timeouts (must exceed MI_VERIFIER_HEAVY_API_TIMEOUT_SECS for manual mismatch summary and NDJSON downloads)
         proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
     }
     
     # Increase upload size limit (for large log files)
     client_max_body_size 10G;
 }
 ```
+
+> **Note**: Manual **Run mismatch summary** and mismatch **Download** streams can run for several minutes. If Mongosync Insights is behind Nginx, set `proxy_read_timeout` (and optionally `proxy_send_timeout`) to at least `MI_VERIFIER_HEAVY_API_TIMEOUT_SECS` (default **600** seconds). The example above uses 600s.
 
 #### Step 4: Enable the Site and Test Configuration
 
@@ -450,6 +452,8 @@ Create or edit `/etc/apache2/sites-available/mongosync-insights-ssl.conf`:
     ProxyPreserveHost On
     ProxyPass / http://127.0.0.1:3030/
     ProxyPassReverse / http://127.0.0.1:3030/
+    ProxyTimeout 600
+    Timeout 600
     
     # Logging
     ErrorLog ${APACHE_LOG_DIR}/mongosync-insights-error.log
@@ -459,6 +463,8 @@ Create or edit `/etc/apache2/sites-available/mongosync-insights-ssl.conf`:
     LimitRequestBody 10737418240
 </VirtualHost>
 ```
+
+> **Note**: Manual **Run mismatch summary** and mismatch **Download** streams can run for several minutes. If Mongosync Insights is behind Apache, set `ProxyTimeout` and/or `Timeout` to at least `MI_VERIFIER_HEAVY_API_TIMEOUT_SECS` (default **600** seconds). The example above uses 600 for both.
 
 #### Step 4: Enable and Restart Apache
 

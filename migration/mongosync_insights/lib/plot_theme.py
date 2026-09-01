@@ -61,6 +61,32 @@ THEME_DARK = {
 }
 
 
+# Plot payloads embed untrusted namespace names read from diagnostic logs, so a
+# raw "<" would let a crafted collection name close the inline <script> early.
+# JSON \uXXXX escapes round-trip to the original characters; HTML entities do
+# not, because browsers never decode them inside <script>.
+_INLINE_JSON_ESCAPES = (
+    ("&", "\\u0026"),
+    ("<", "\\u003c"),
+    (">", "\\u003e"),
+    ("\u2028", "\\u2028"),
+    ("\u2029", "\\u2029"),
+)
+
+
+def inline_json(payload: Optional[str]) -> str:
+    """Escape a serialized JSON string for embedding in an inline <script>.
+
+    Safe to apply more than once: no replacement introduces a character that
+    a later pass would escape again.
+    """
+    if not payload:
+        return ""
+    for char, escaped in _INLINE_JSON_ESCAPES:
+        payload = payload.replace(char, escaped)
+    return payload
+
+
 def theme_tokens(*, dark: bool = False) -> Dict[str, str]:
     """Return color/style tokens for the requested theme."""
     return THEME_DARK if dark else THEME_LIGHT

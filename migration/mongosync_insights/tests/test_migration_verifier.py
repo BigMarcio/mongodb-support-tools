@@ -1,21 +1,24 @@
 """Tests for migration verifier metrics."""
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-from bson import ObjectId
+from bson import ObjectId, Timestamp
 from pymongo.errors import NetworkTimeout, PyMongoError
 
 from lib.app_config import VERIFIER_FAILED_TASKS_LIMIT
 from lib.migration_verifier import (
     _derive_state_badge,
     _derive_state_badge_from_progress,
+    _format_bson_timestamp,
     _load_mismatches_for_tasks,
     _serialize_failed_task,
     build_verifier_progress_display,
     build_verifier_progress_payload,
     build_verifier_summary_display,
-    build_verifier_summary_payload,
+    build_verifier_run_summary_response,
     build_verifier_metadata_payload,
+    progress_allows_summary_run,
     collect_verifier_metadata_warnings,
     get_current_generation,
     get_failed_tasks,
@@ -769,6 +772,24 @@ SAMPLE_MV_PROGRESS = {
 }
 
 
+class TestFormatBsonTimestamp:
+    def test_extended_json_timestamp(self):
+        ts = {"$timestamp": {"t": 1710000000, "i": 42}}
+        assert _format_bson_timestamp(ts) == "2024-03-09 16:00:00 UTC"
+
+    def test_unwrapped_timestamp_dict(self):
+        ts = {"t": 1710000000, "i": 42}
+        assert _format_bson_timestamp(ts) == "2024-03-09 16:00:00 UTC"
+
+    def test_bson_timestamp_object(self):
+        ts = Timestamp(1710000000, 7)
+        assert _format_bson_timestamp(ts) == "2024-03-09 16:00:00 UTC"
+
+    def test_empty_timestamp_returns_none(self):
+        assert _format_bson_timestamp(None) is None
+        assert _format_bson_timestamp({}) is None
+
+
 class TestBuildVerifierProgressDisplay:
     def test_maps_core_fields(self):
         display = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
@@ -783,6 +804,15 @@ class TestBuildVerifierProgressDisplay:
         assert display["srcChangeStats"]["lagSecs"] == 0
         assert display["recentRecheckSecs"] == [10.5, 20.0]
         assert display["totalRechecksDone"] == 42
+
+    def test_maps_recheck_timestamps(self):
+        display = build_verifier_progress_display({
+            **SAMPLE_MV_PROGRESS,
+            "srcLastRecheckedTS": {"$timestamp": {"t": 1710000000, "i": 1}},
+            "dstLastRecheckedTS": {"t": 1785786348, "i": 5062},
+        })
+        assert display["srcLastRecheckedTS"] == "2024-03-09 16:00:00 UTC"
+        assert display["dstLastRecheckedTS"] == "2026-08-03 19:45:48 UTC"
 
     def test_empty_progress_returns_none(self):
         assert build_verifier_progress_display(None) is None
@@ -855,9 +885,10 @@ class TestVerifierProgressEndpointPayload:
     def test_progress_payload_includes_state_badge(self, mock_progress):
         progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
         mock_progress.return_value = progress
-        result = build_verifier_progress_payload(
-            "localhost:27020/api/v1/progress",
-        )
+        with patch("lib.migration_verifier.clear_verifier_summary_cache"):
+            result = build_verifier_progress_payload(
+                "localhost:27020/api/v1/progress",
+            )
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
         assert result["display"]["stateBadge"]["label"] == "PASS"
         assert result["dataSources"]["badges"][0]["label"] == "Progress API"
@@ -879,10 +910,47 @@ class TestVerifierProgressEndpointPayload:
             },
         }
         mock_progress.return_value = build_verifier_progress_display(progress_raw)
-        result = build_verifier_progress_payload(
-            "localhost:27020/api/v1/progress",
-        )
+        with patch("lib.migration_verifier.get_verifier_summary_cache", return_value=None):
+            result = build_verifier_progress_payload(
+                "localhost:27020/api/v1/progress",
+            )
         assert result["display"]["stateBadge"]["label"] == "MISMATCHES"
+
+    @patch("lib.migration_verifier._fetch_verifier_progress")
+    def test_progress_payload_includes_summary_cache_when_eligible(self, mock_progress):
+        progress_raw = {
+            **SAMPLE_MV_PROGRESS,
+            "verificationStatus": {
+                **SAMPLE_MV_PROGRESS["verificationStatus"],
+                "metadataMismatchTasks": 1,
+            },
+            "longestDocMismatch": {
+                "type": "missingOnDst",
+                "namespace": "foo.bar3",
+                "_id": {"$oid": "6a2c04230c9928692dd0c0eb"},
+                "durationSecs": 832.181,
+            },
+        }
+        mock_progress.return_value = build_verifier_progress_display(progress_raw)
+        with patch("lib.migration_verifier.get_verifier_summary_cache", return_value=None):
+            result = build_verifier_progress_payload(
+                "localhost:27020/api/v1/progress",
+            )
+        cache = result["display"]["summaryCache"]
+        assert cache["eligible"] is True
+        assert cache["verificationSummary"] is None
+        assert cache["cooldownRemainingSecs"] == 0
+
+    @patch("lib.migration_verifier._fetch_verifier_progress")
+    def test_progress_payload_clears_cache_when_ineligible(self, mock_progress):
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        mock_progress.return_value = progress
+        with patch("lib.migration_verifier.clear_verifier_summary_cache") as mock_clear:
+            result = build_verifier_progress_payload(
+                "localhost:27020/api/v1/progress",
+            )
+        mock_clear.assert_called_once()
+        assert result["display"]["summaryCache"] is None
 
     @patch("lib.migration_verifier._fetch_verifier_progress")
     def test_progress_fetch_failure_sets_no_data_badge(self, mock_progress):
@@ -897,14 +965,128 @@ class TestVerifierProgressEndpointPayload:
         assert any("not responding" in w for w in result["warnings"])
         assert result["display"]["stateBadge"] == {"label": "NO DATA", "color": "gray"}
 
+
+class TestProgressAllowsSummaryRun:
+    def test_blocks_generation_zero(self):
+        progress = build_verifier_progress_display({
+            **SAMPLE_MV_PROGRESS,
+            "generation": 0,
+            "verificationStatus": {
+                **SAMPLE_MV_PROGRESS["verificationStatus"],
+                "metadataMismatchTasks": 1,
+            },
+        })
+        assert progress_allows_summary_run(progress) is False
+
+    def test_blocks_no_mismatches(self):
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        assert progress_allows_summary_run(progress) is False
+
+    def test_allows_metadata_mismatch(self):
+        progress = build_verifier_progress_display({
+            **SAMPLE_MV_PROGRESS,
+            "verificationStatus": {
+                **SAMPLE_MV_PROGRESS["verificationStatus"],
+                "metadataMismatchTasks": 2,
+            },
+        })
+        assert progress_allows_summary_run(progress) is True
+
+    def test_allows_longest_doc_mismatch(self):
+        progress = build_verifier_progress_display({
+            **SAMPLE_MV_PROGRESS,
+            "longestDocMismatch": {"namespace": "db.coll"},
+        })
+        assert progress_allows_summary_run(progress) is True
+
+
+class TestVerifierRunSummaryResponse:
+    def test_forbidden_generation_zero(self):
+        progress = build_verifier_progress_display({
+            **SAMPLE_MV_PROGRESS,
+            "generation": 0,
+            "verificationStatus": {
+                **SAMPLE_MV_PROGRESS["verificationStatus"],
+                "metadataMismatchTasks": 1,
+            },
+        })
+        payload, status = build_verifier_run_summary_response(
+            "localhost:27020/api/v1/progress", progress_display=progress,
+        )
+        assert status == 403
+        assert "generation 0" in payload["error"]
+
+    def test_forbidden_no_mismatches(self):
+        progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
+        payload, status = build_verifier_run_summary_response(
+            "localhost:27020/api/v1/progress", progress_display=progress,
+        )
+        assert status == 403
+        assert "mismatches" in payload["error"].lower()
+
+    @patch("lib.migration_verifier.get_verifier_summary_cache")
+    def test_cooldown_returns_cached_summary(self, mock_cache):
+        summary = build_verifier_summary_display({
+            "docMismatches": {"total": 1, "byType": {}, "byNamespace": {}},
+            "nsMismatches": [],
+        })
+        mock_cache.return_value = {
+            "fetched_at": time.time() - 30,
+            "verification_summary": summary,
+        }
+        progress = build_verifier_progress_display({
+            **SAMPLE_MV_PROGRESS,
+            "longestDocMismatch": {"namespace": "db.coll"},
+        })
+        payload, status = build_verifier_run_summary_response(
+            "localhost:27020/api/v1/progress", progress_display=progress,
+        )
+        assert status == 429
+        assert payload["cooldownRemainingSecs"] > 0
+        assert payload["display"]["verificationSummary"]["docMismatches"]["total"] == 1
+
+    @patch("lib.migration_verifier.set_verifier_summary_cache")
+    @patch("lib.migration_verifier.get_verifier_summary_cache")
     @patch("lib.migration_verifier._fetch_verifier_summary")
-    def test_summary_fetch_failure_adds_warning(self, mock_summary):
+    def test_success_stores_cache(self, mock_fetch, mock_get_cache, mock_set_cache):
+        summary = build_verifier_summary_display({
+            "docMismatches": {"total": 2, "byType": {}, "byNamespace": {}},
+            "nsMismatches": [],
+        })
+        mock_fetch.return_value = summary
+        mock_get_cache.side_effect = [
+            None,
+            {
+                "fetched_at": time.time(),
+                "verification_summary": summary,
+            },
+        ]
+        progress = build_verifier_progress_display({
+            **SAMPLE_MV_PROGRESS,
+            "longestDocMismatch": {"namespace": "db.coll"},
+        })
+        payload, status = build_verifier_run_summary_response(
+            "localhost:27020/api/v1/progress", progress_display=progress,
+        )
+        assert status == 200
+        mock_set_cache.assert_called_once_with(summary)
+        assert payload["display"]["verificationSummary"]["docMismatches"]["total"] == 2
+
+    @patch("lib.migration_verifier.get_verifier_summary_cache", return_value=None)
+    @patch("lib.migration_verifier._fetch_verifier_summary")
+    def test_upstream_failure_returns_502(self, mock_fetch, _mock_cache):
         from lib.live_monitoring import ProgressFetchError
 
-        mock_summary.side_effect = ProgressFetchError("timeout", kind="timeout")
-        result = build_verifier_summary_payload("localhost:27020/api/v1/progress")
-        assert any("summary" in w.lower() for w in result["warnings"])
-        assert "verificationSummary" not in result["display"]
+        mock_fetch.side_effect = ProgressFetchError("timeout", kind="timeout")
+        progress = build_verifier_progress_display({
+            **SAMPLE_MV_PROGRESS,
+            "longestDocMismatch": {"namespace": "db.coll"},
+        })
+        payload, status = build_verifier_run_summary_response(
+            "localhost:27020/api/v1/progress", progress_display=progress,
+        )
+        assert status == 502
+        assert "summary" in payload["error"].lower()
 
 
 class TestVerifierSlicePayloads:
@@ -912,21 +1094,12 @@ class TestVerifierSlicePayloads:
     def test_progress_payload(self, mock_progress):
         progress = build_verifier_progress_display(SAMPLE_MV_PROGRESS)
         mock_progress.return_value = progress
-        result = build_verifier_progress_payload("localhost:27020/api/v1/progress")
+        with patch("lib.migration_verifier.clear_verifier_summary_cache"):
+            result = build_verifier_progress_payload("localhost:27020/api/v1/progress")
         assert result["display"]["verificationProgress"]["phase"] == "recheck"
         assert result["display"]["stateBadge"]["label"] == "PASS"
         assert result["dataSources"]["badges"][0]["label"] == "Progress API"
         assert "localhost" not in str(result["dataSources"])
-
-    @patch("lib.migration_verifier._fetch_verifier_summary")
-    def test_summary_payload(self, mock_summary):
-        summary = build_verifier_summary_display({
-            "docMismatches": {"total": 1, "byType": {}, "byNamespace": {}},
-            "nsMismatches": [],
-        })
-        mock_summary.return_value = summary
-        result = build_verifier_summary_payload("localhost:27020/api/v1/progress")
-        assert result["display"]["verificationSummary"]["docMismatches"]["total"] == 1
 
     @patch("lib.migration_verifier.get_generation_history", return_value=[])
     @patch("lib.app_config.get_verifier_metadata_database")

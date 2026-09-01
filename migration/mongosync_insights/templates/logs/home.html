@@ -18,9 +18,10 @@
 <div class="form-container">
     <form id="uploadLogsForm" method="post" action="{{ url_for('logs.upload_logs') }}" enctype="multipart/form-data" autocomplete="off">
         <h2>Parse Mongosync Files</h2>
-        <input type="file" name="file" accept=".log,.json,.out,.gz,.zip,.bz2,.tar.gz,.tgz,.tar.bz2"><br><br>
+        <label for="uploadLogFile">Mongosync files</label><br>
+        <input type="file" id="uploadLogFile" name="file" accept=".log,.json,.out,.gz,.zip,.bz2,.tar.gz,.tgz,.tar.bz2"><br><br>
         <input type="submit" value="Upload">
-        <p>Click the "Upload" button after selecting your Mongosync log file to generate migration progress plots.</p>
+        <p>Click the "Upload" button after selecting your Mongosync files to generate migration progress Summary and Status.</p>
         <p><small><strong>Supported formats:</strong> .log, .json, .out (uncompressed) or .gz, .zip, .bz2, .tgz, .tar.gz, .tar.bz2 (compressed)<br>
         <strong>Maximum size:</strong> {{ max_file_size_gb | round(1) }} GB</small></p>
 
@@ -34,9 +35,9 @@
     </form>
 </div>
 
-<div id="duplicateCheckOverlay" class="dup-overlay" onclick="if(event.target===this)duplicateCancel()">
-    <div class="dup-dialog">
-        <h3>Previous Analysis Found</h3>
+<div id="duplicateCheckOverlay" class="dup-overlay" aria-hidden="true" onclick="if(event.target===this)duplicateCancel()">
+    <div class="dup-dialog" role="dialog" aria-modal="true" aria-labelledby="duplicateDialogTitle">
+        <h3 id="duplicateDialogTitle">Previous Analysis Found</h3>
         <p id="duplicateCheckMsg"></p>
         <div class="dup-actions">
             <button class="dup-btn dup-btn-primary" onclick="duplicateLoadPrevious()">Load Previous</button>

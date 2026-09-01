@@ -12,7 +12,11 @@
             section_bg: 'rgba(1, 107, 248, 0.12)',
             section_border: '#016BF8',
             legend_bg: 'rgba(255, 255, 255, 0.92)',
-            legend_border: '#D9E0E3'
+            legend_border: '#D9E0E3',
+            table_header_fill: '#00684A',
+            table_header_color: '#FFFFFF',
+            table_cell_fill: '#F9FBFA',
+            table_cell_color: '#1F2937',
         },
         dark: {
             paper_bgcolor: '#132C37',
@@ -25,7 +29,11 @@
             section_bg: 'rgba(4, 152, 236, 0.18)',
             section_border: '#0498EC',
             legend_bg: 'rgba(19, 44, 55, 0.92)',
-            legend_border: '#36505B'
+            legend_border: '#36505B',
+            table_header_fill: '#00593F',
+            table_header_color: '#F9FBFA',
+            table_cell_fill: '#F9FBFA',
+            table_cell_color: '#1F2937',
         }
     };
 
@@ -134,6 +142,46 @@
         return layout;
     }
 
+    function miApplyThemeToTrace(trace, tokens) {
+        if (!trace || trace.type !== 'table') {
+            return trace;
+        }
+        var next = miClone(trace);
+        next.header = Object.assign({}, next.header || {});
+        next.header.fill = Object.assign({}, next.header.fill || {}, {
+            color: tokens.table_header_fill,
+        });
+        next.header.font = Object.assign({}, next.header.font || {}, {
+            color: tokens.table_header_color,
+            size: (next.header.font && next.header.font.size) || 12,
+        });
+        next.header.line = Object.assign({}, next.header.line || {}, {
+            color: tokens.line,
+            width: (next.header.line && next.header.line.width) || 1,
+        });
+
+        next.cells = Object.assign({}, next.cells || {});
+        next.cells.fill = Object.assign({}, next.cells.fill || {}, {
+            color: tokens.table_cell_fill,
+        });
+        next.cells.font = Object.assign({}, next.cells.font || {}, {
+            color: tokens.table_cell_color,
+            size: (next.cells.font && next.cells.font.size) || 11,
+        });
+        next.cells.line = Object.assign({}, next.cells.line || {}, {
+            color: tokens.line,
+            width: (next.cells.line && next.cells.line.width) || 1,
+        });
+        return next;
+    }
+
+    function miApplyThemeToData(data) {
+        var tokens = miPlotThemeTokens(miResolveTheme() === 'dark');
+        return (data || []).map(function(trace) {
+            return miApplyThemeToTrace(trace, tokens);
+        });
+    }
+
     window.miRenderPlot = function(elId, plotData, options) {
         options = options || {};
         var el = document.getElementById(elId);
@@ -143,6 +191,7 @@
 
         var baseLayout = plotData.layout || {};
         var layout = miApplyThemeToLayout(baseLayout);
+        var data = miApplyThemeToData(plotData.data);
         var config = miPlotConfig();
         var useReact = options.react || Boolean(el.data && el.data.length);
 
@@ -152,8 +201,8 @@
         };
 
         var plotPromise = useReact
-            ? Plotly.react(elId, plotData.data, layout, config)
-            : Plotly.newPlot(elId, plotData.data, layout, config);
+            ? Plotly.react(elId, data, layout, config)
+            : Plotly.newPlot(elId, data, layout, config);
 
         Promise.resolve(plotPromise).then(function() {
             if (typeof options.onRendered === 'function') {
@@ -162,14 +211,26 @@
         });
     };
 
+    window.miRelayoutPlot = function(elId, callback) {
+        var entry = window._miPlotRegistry[elId];
+        if (!entry || typeof Plotly === 'undefined') {
+            if (typeof callback === 'function') {
+                callback();
+            }
+            return Promise.resolve();
+        }
+        var layout = miApplyThemeToLayout(entry.baseLayout);
+        var data = miApplyThemeToData(entry.data);
+        return Plotly.react(elId, data, layout, miPlotConfig()).then(function() {
+            if (typeof callback === 'function') {
+                callback();
+            }
+        });
+    };
+
     window.miRelayoutAllPlots = function() {
         Object.keys(window._miPlotRegistry).forEach(function(elId) {
-            var entry = window._miPlotRegistry[elId];
-            if (!entry) {
-                return;
-            }
-            var layout = miApplyThemeToLayout(entry.baseLayout);
-            Plotly.react(elId, entry.data, layout, miPlotConfig());
+            window.miRelayoutPlot(elId);
         });
     };
 

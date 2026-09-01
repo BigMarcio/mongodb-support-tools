@@ -42,10 +42,20 @@
         return wrap;
     }
 
+    function applyHoverTitle(node, title) {
+        if (!node || !title) return node;
+        node.classList.add('lm-has-hover');
+        if (title.indexOf('\n') !== -1) {
+            node.classList.add('lm-has-hover-multiline');
+        }
+        node.setAttribute('data-hover-title', title);
+        return node;
+    }
+
     function metricTile(item) {
         var box = el('div', 'lm-metric');
         box.appendChild(el('div', 'lm-mlabel', item.label));
-        var valueClass = 'lm-mvalue' + (item.small ? ' small' : '');
+        var valueClass = 'lm-mvalue' + (item.small ? ' small' : '') + (item.highLag ? ' lm-lag-high' : '');
         if (item.badge) {
             var val = el('div', valueClass);
             val.appendChild(badge(item.value, item.badge, false));
@@ -53,6 +63,7 @@
         } else {
             box.appendChild(el('div', valueClass, String(item.value)));
         }
+        applyHoverTitle(box, item.title);
         return box;
     }
 
@@ -68,10 +79,40 @@
         return section;
     }
 
-    function kvRow(label, value) {
+    function cardWithTitleElement(titleEl, desc, bodyChildren, bodyClassName) {
+        var section = el('section', 'lm-card');
+        if (titleEl) section.appendChild(titleEl);
+        if (desc) section.appendChild(el('p', 'lm-card-desc', desc));
+        var body = el('div', 'lm-card-body' + (bodyClassName ? ' ' + bodyClassName : ''));
+        (bodyChildren || []).forEach(function (c) {
+            if (c) body.appendChild(c);
+        });
+        section.appendChild(body);
+        return section;
+    }
+
+    function migrationProgressTitle(sync) {
+        var title = el('h2', 'lm-card-title-row lm-migration-progress-title');
+        title.appendChild(document.createTextNode(sync.cardTitle || 'Migration Progress'));
+        if (sync.showMongosyncVersion) {
+            var versionWrap = el('span', 'lm-mongosync-version');
+            versionWrap.appendChild(document.createTextNode('Mongosync Version: '));
+            var versionValue = sync.mongosyncVersion || '—';
+            versionWrap.appendChild(el('span', 'lm-mongosync-version-value', versionValue));
+            if (!sync.mongosyncVersion && sync.mongosyncVersionMissingTitle) {
+                applyHoverTitle(versionWrap, sync.mongosyncVersionMissingTitle);
+            }
+            title.appendChild(versionWrap);
+        }
+        return title;
+    }
+
+    function kvRow(label, value, title) {
         var rowEl = el('div', 'lm-kv');
         rowEl.appendChild(el('span', 'lm-k', label));
-        rowEl.appendChild(el('span', 'lm-v', value));
+        var valueEl = el('span', 'lm-v', value);
+        applyHoverTitle(valueEl, title);
+        rowEl.appendChild(valueEl);
         return rowEl;
     }
 
@@ -95,6 +136,7 @@
 
     var copyDetailsExpanded = false;
     var phaseStartTimesExpanded = false;
+    var lagBreakdownExpanded = false;
     var naturalOrderExpanded = false;
     var inclusionFilterExpanded = false;
     var exclusionFilterExpanded = false;
@@ -231,23 +273,15 @@
         return card(data.title || 'Copy in natural order', data.description, [block]);
     }
 
-    function phaseStartTimesBlock(sync) {
+    function phaseStartTimesBlock(sync, options) {
+        options = options || {};
         var data = sync.phaseStartTimes;
         if (!data || !data.rows || data.rows.length === 0) {
             return null;
         }
 
         var block = el('div', 'lm-phase-times-block');
-        var toggle = el('button', 'lm-phase-times-toggle lm-muted');
-        toggle.type = 'button';
-        toggle.setAttribute('aria-expanded', phaseStartTimesExpanded ? 'true' : 'false');
-
         var label = data.label || 'Phase start times';
-        var chevron = el('span', 'lm-phase-times-chevron', phaseStartTimesExpanded ? '▾' : '▸');
-        toggle.appendChild(chevron);
-        toggle.appendChild(document.createTextNode(label));
-
-        var details = el('div', 'lm-phase-times-details' + (phaseStartTimesExpanded ? ' is-open' : ''));
 
         var table = el('table', 'lm-phase-times-table');
         var thead = el('thead');
@@ -265,13 +299,41 @@
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
-        details.appendChild(table);
 
-        if (data.timezoneNote) {
+        var alwaysShow = !!options.isSummaryView;
+        var details = el(
+            'div',
+            'lm-phase-times-details' + (alwaysShow || phaseStartTimesExpanded ? ' is-open' : '')
+        );
+        details.appendChild(table);
+        if (data.timezoneNote && !data.timezoneNoteBelowTitle) {
             details.appendChild(
                 el('div', 'lm-muted lm-phase-times-note', 'Times in ' + data.timezoneNote)
             );
         }
+
+        if (alwaysShow) {
+            block.appendChild(el('div', 'lm-phase-times-heading lm-muted', label));
+            if (data.timezoneNote && data.timezoneNoteBelowTitle) {
+                block.appendChild(
+                    el(
+                        'div',
+                        'lm-muted lm-phase-times-timezone lm-phase-times-timezone-below',
+                        'Times in ' + data.timezoneNote
+                    )
+                );
+            }
+            block.appendChild(details);
+            return block;
+        }
+
+        var toggle = el('button', 'lm-phase-times-toggle lm-muted');
+        toggle.type = 'button';
+        toggle.setAttribute('aria-expanded', phaseStartTimesExpanded ? 'true' : 'false');
+
+        var chevron = el('span', 'lm-phase-times-chevron', phaseStartTimesExpanded ? '▾' : '▸');
+        toggle.appendChild(chevron);
+        toggle.appendChild(document.createTextNode(label));
 
         toggle.addEventListener('click', function () {
             phaseStartTimesExpanded = !phaseStartTimesExpanded;
@@ -281,57 +343,158 @@
         });
 
         block.appendChild(toggle);
+        if (data.timezoneNote && data.timezoneNoteBelowTitle) {
+            block.appendChild(
+                el(
+                    'div',
+                    'lm-muted lm-phase-times-timezone lm-phase-times-timezone-below',
+                    'Times in ' + data.timezoneNote
+                )
+            );
+        }
         block.appendChild(details);
         return block;
     }
 
-    function copiedProgressBlock(sync) {
-        var hasDetails = !!(sync.collectionsCopiedLabel || sync.partitionsCopiedLabel);
+    function copyPercentLabel(sync) {
+        if (!sync.showCopyProgress || sync.copyPercent == null) {
+            return null;
+        }
+        return el('span', 'lm-muted', sync.copyPercent.toFixed(1) + '%');
+    }
+
+    function copiedProgressBlock(sync, options) {
+        options = options || {};
+        var alwaysShow = !!options.isSummaryView;
+        var hasDetails = !!(
+            sync.collectionsCopiedLabel ||
+            sync.partitionsCopiedLabel
+        );
         if (!sync.copiedLabel && !hasDetails) {
             return null;
         }
 
-        if (!sync.copiedLabel) {
-            var fallback = el('div', 'lm-copied-block');
+        function appendCopyDetailLines(parent, useDetailClass) {
+            var lineClass = useDetailClass ? 'lm-muted lm-copied-detail-line' : 'lm-muted lm-copied-line';
             if (sync.collectionsCopiedLabel) {
-                fallback.appendChild(el('div', 'lm-muted lm-copied-line', sync.collectionsCopiedLabel));
+                parent.appendChild(el('div', lineClass, sync.collectionsCopiedLabel));
             }
             if (sync.partitionsCopiedLabel) {
-                fallback.appendChild(el('div', 'lm-muted lm-copied-line', sync.partitionsCopiedLabel));
+                parent.appendChild(el('div', lineClass, sync.partitionsCopiedLabel));
             }
+        }
+
+        if (!sync.copiedLabel) {
+            var fallback = el('div', 'lm-copied-block');
+            appendCopyDetailLines(fallback, false);
             return fallback;
         }
 
         if (!hasDetails) {
-            return el('div', 'lm-muted lm-copied-line', sync.copiedLabel);
+            var simpleBlock = el('div', 'lm-copied-block');
+            var simpleRow = el('div', 'lm-phase-row');
+            var line = el('div', 'lm-muted lm-copied-line');
+            line.style.marginTop = '0';
+            line.appendChild(document.createTextNode(sync.copiedLabel));
+            applyHoverTitle(line, sync.copiedTitle);
+            simpleRow.appendChild(line);
+            var simplePercent = copyPercentLabel(sync);
+            if (simplePercent) {
+                simpleRow.appendChild(simplePercent);
+            }
+            simpleBlock.appendChild(simpleRow);
+            return simpleBlock;
         }
 
         var block = el('div', 'lm-copied-block');
+        var copiedRow = el('div', 'lm-phase-row');
+        var toggle = null;
+        var chevron = null;
+
+        if (alwaysShow) {
+            var heading = el('span', 'lm-copied-toggle lm-muted lm-copied-toggle-static');
+            heading.appendChild(document.createTextNode(sync.copiedLabel));
+            applyHoverTitle(heading, sync.copiedTitle);
+            copiedRow.appendChild(heading);
+        } else {
+            toggle = el('button', 'lm-copied-toggle lm-muted');
+            toggle.type = 'button';
+            toggle.setAttribute('aria-expanded', copyDetailsExpanded ? 'true' : 'false');
+
+            chevron = el('span', 'lm-copied-chevron', copyDetailsExpanded ? '▾' : '▸');
+            toggle.appendChild(chevron);
+            toggle.appendChild(document.createTextNode(sync.copiedLabel));
+            applyHoverTitle(toggle, sync.copiedTitle);
+            copiedRow.appendChild(toggle);
+        }
+
+        var copiedPercent = copyPercentLabel(sync);
+        if (copiedPercent) {
+            copiedRow.appendChild(copiedPercent);
+        }
+        block.appendChild(copiedRow);
+
+        var details = el(
+            'div',
+            'lm-copied-details' + (alwaysShow || copyDetailsExpanded ? ' is-open' : '')
+        );
+        appendCopyDetailLines(details, true);
+
+        if (toggle) {
+            toggle.addEventListener('click', function () {
+                copyDetailsExpanded = !copyDetailsExpanded;
+                toggle.setAttribute('aria-expanded', copyDetailsExpanded ? 'true' : 'false');
+                chevron.textContent = copyDetailsExpanded ? '▾' : '▸';
+                details.classList.toggle('is-open', copyDetailsExpanded);
+            });
+        }
+
+        block.appendChild(details);
+        return block;
+    }
+
+    function lagBreakdownBlock(sync) {
+        var breakdown = sync.lagBreakdown;
+        if (!breakdown || !breakdown.show) {
+            return null;
+        }
+
+        var block = el('div', 'lm-copied-block lm-lag-breakdown-block');
         var toggle = el('button', 'lm-copied-toggle lm-muted');
         toggle.type = 'button';
-        toggle.setAttribute('aria-expanded', copyDetailsExpanded ? 'true' : 'false');
+        toggle.setAttribute('aria-expanded', lagBreakdownExpanded ? 'true' : 'false');
 
-        var chevron = el('span', 'lm-copied-chevron', copyDetailsExpanded ? '▾' : '▸');
+        var label = 'Lag breakdown';
+        var chevron = el('span', 'lm-copied-chevron', lagBreakdownExpanded ? '▾' : '▸');
         toggle.appendChild(chevron);
-        toggle.appendChild(document.createTextNode(sync.copiedLabel));
+        toggle.appendChild(document.createTextNode(label));
 
-        var details = el('div', 'lm-copied-details' + (copyDetailsExpanded ? ' is-open' : ''));
-        if (sync.collectionsCopiedLabel) {
+        var details = el(
+            'div',
+            'lm-copied-details' + (lagBreakdownExpanded ? ' is-open' : '')
+        );
+
+        var crudValue = breakdown.crud != null ? breakdown.crud : '—';
+        details.appendChild(kvRow('CRUD lag', crudValue));
+
+        var ddlValue = breakdown.ddl != null ? breakdown.ddl : '—';
+        details.appendChild(kvRow('DDL lag', ddlValue));
+
+        if (breakdown.ddlUnavailable) {
             details.appendChild(
-                el('div', 'lm-muted lm-copied-detail-line', sync.collectionsCopiedLabel)
-            );
-        }
-        if (sync.partitionsCopiedLabel) {
-            details.appendChild(
-                el('div', 'lm-muted lm-copied-detail-line', sync.partitionsCopiedLabel)
+                el(
+                    'div',
+                    'lm-muted lm-copied-detail-line',
+                    'DDL applier disabled or no DDL events applied yet'
+                )
             );
         }
 
         toggle.addEventListener('click', function () {
-            copyDetailsExpanded = !copyDetailsExpanded;
-            toggle.setAttribute('aria-expanded', copyDetailsExpanded ? 'true' : 'false');
-            chevron.textContent = copyDetailsExpanded ? '▾' : '▸';
-            details.classList.toggle('is-open', copyDetailsExpanded);
+            lagBreakdownExpanded = !lagBreakdownExpanded;
+            toggle.setAttribute('aria-expanded', lagBreakdownExpanded ? 'true' : 'false');
+            chevron.textContent = lagBreakdownExpanded ? '▾' : '▸';
+            details.classList.toggle('is-open', lagBreakdownExpanded);
         });
 
         block.appendChild(toggle);
@@ -339,24 +502,24 @@
         return block;
     }
 
-    function renderSync(sync) {
+    function renderSync(sync, options) {
         if (!sync) return null;
+        options = options || {};
         var phaseRow = el('div', 'lm-phase-row');
         var phaseText = el('span');
-        phaseText.appendChild(document.createTextNode('Phase: '));
+        phaseText.appendChild(document.createTextNode('Current Phase: '));
         phaseText.appendChild(el('b', null, sync.phase));
         phaseRow.appendChild(phaseText);
-        if (sync.showCopyProgress && sync.copyPercent != null) {
-            phaseRow.appendChild(el('span', 'lm-muted', sync.copyPercent.toFixed(1) + '%'));
-        }
 
         var children = [phaseRow];
+        var copiedBlock = copiedProgressBlock(sync, options);
+        if (copiedBlock) {
+            var copiedSection = el('div', 'lm-sync-subsection');
+            copiedSection.appendChild(copiedBlock);
+            children.push(copiedSection);
+        }
         if (sync.showCopyProgress) {
             children.push(progressBar(sync.copyPercent, sync.copyIndeterminate));
-        }
-        var copiedBlock = copiedProgressBlock(sync);
-        if (copiedBlock) {
-            children.push(copiedBlock);
         }
 
         var metrics = el('div', 'lm-metrics');
@@ -364,6 +527,11 @@
             metrics.appendChild(metricTile(m));
         });
         children.push(metrics);
+
+        var lagBlock = lagBreakdownBlock(sync);
+        if (lagBlock) {
+            children.push(lagBlock);
+        }
 
         if (sync.metadataMetrics && sync.metadataMetrics.length > 0) {
             var metaMetrics = el('div', 'lm-metrics lm-metrics-secondary');
@@ -373,12 +541,12 @@
             children.push(metaMetrics);
         }
 
-        var phaseTimesBlock = phaseStartTimesBlock(sync);
+        var phaseTimesBlock = phaseStartTimesBlock(sync, options);
         if (phaseTimesBlock) {
             children.push(phaseTimesBlock);
         }
 
-        return card('Migration Progress', null, children);
+        return cardWithTitleElement(migrationProgressTitle(sync), null, children);
     }
 
     function renderIndexBuilding(idx) {
@@ -432,7 +600,7 @@
             var colEl = el('div', 'lm-ver-col');
             colEl.appendChild(el('div', 'lm-section-label', col.label));
             (col.rows || []).forEach(function (r) {
-                colEl.appendChild(kvRow(r.label, r.value));
+                colEl.appendChild(kvRow(r.label, r.value, r.title));
             });
             row.appendChild(colEl);
         });
@@ -455,12 +623,26 @@
         });
     }
 
-    function renderToolbar(display, dataSources) {
+    function appendFullViewLink(toolbar, fullViewLink) {
+        if (!fullViewLink || !fullViewLink.href) return;
+        var actions = el('div', 'lm-toolbar-actions');
+        var link = el('a', 'lm-full-view-link');
+        link.href = fullViewLink.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        if (fullViewLink.title) link.title = fullViewLink.title;
+        link.appendChild(document.createTextNode(fullViewLink.label || 'Open full dashboard'));
+        actions.appendChild(link);
+        toolbar.appendChild(actions);
+    }
+
+    function renderToolbar(display, dataSources, options) {
+        options = options || {};
         var toolbar = el('div', 'lm-toolbar');
         var textBlock = el('div', 'lm-toolbar-text');
 
-        var title = el('h1', 'lm-page-title');
-        title.appendChild(document.createTextNode('Migration Monitoring'));
+        var title = el('h2', 'lm-page-title');
+        title.appendChild(document.createTextNode(options.pageTitle || 'Migration Monitoring'));
         if (display && display.stateBadge) {
             title.appendChild(
                 badge(display.stateBadge.label, display.stateBadge.color, true)
@@ -473,18 +655,32 @@
         }
         appendDataSourceBadges(title, dataSources);
         textBlock.appendChild(title);
+        if (options.pageSubtitle) {
+            textBlock.appendChild(el('p', 'lm-page-subtitle', options.pageSubtitle));
+        }
 
         toolbar.appendChild(textBlock);
+        appendFullViewLink(toolbar, options.fullViewLink);
         return toolbar;
     }
 
-    function renderProgressMonitor(root, payload) {
+    function renderProgressMonitor(root, payload, options) {
         if (!root) return;
+        options = options || {};
+        var syncOnly = !!options.syncOnly;
         root.replaceChildren();
+        payload = payload || {};
+        var toolbarOpts = {
+            pageTitle: payload.pageTitle,
+            pageSubtitle: payload.pageSubtitle,
+        };
+        if (options.fullViewLink) {
+            toolbarOpts.fullViewLink = options.fullViewLink;
+        }
 
         if (payload.error && !payload.display) {
             var errShell = el('div', 'lm-stack');
-            errShell.appendChild(renderToolbar(null, payload.dataSources));
+            errShell.appendChild(renderToolbar(null, payload.dataSources, toolbarOpts));
             errShell.appendChild(banner('danger', payload.error));
             root.appendChild(errShell);
             return;
@@ -492,7 +688,7 @@
 
         if (!payload.display) {
             var infoShell = el('div', 'lm-stack');
-            infoShell.appendChild(renderToolbar(null, payload.dataSources));
+            infoShell.appendChild(renderToolbar(null, payload.dataSources, toolbarOpts));
             infoShell.appendChild(
                 banner(
                     'info',
@@ -506,7 +702,7 @@
 
         var display = payload.display;
 
-        root.appendChild(renderToolbar(display, payload.dataSources));
+        root.appendChild(renderToolbar(display, payload.dataSources, toolbarOpts));
 
         var stack = el('div', 'lm-stack lm-stack-after-toolbar');
         if (payload.progressWarning) {
@@ -515,8 +711,18 @@
         if (payload.metadataWarning) {
             stack.appendChild(banner('warning', payload.metadataWarning));
         }
-        var syncCard = renderSync(display.sync);
+        var syncRenderOptions = {
+            isSummaryView: !!options.isSummaryView || payload.pageTitle === 'Migration Summary',
+        };
+        var syncCard = renderSync(display.sync, syncRenderOptions);
         if (syncCard) stack.appendChild(syncCard);
+
+        if (syncOnly) {
+            var warnCardOnly = renderWarningsCard(payload.warnings);
+            if (warnCardOnly) stack.appendChild(warnCardOnly);
+            root.appendChild(stack);
+            return;
+        }
 
         var idxCard = renderIndexBuilding(display.indexBuilding);
         if (idxCard) stack.appendChild(idxCard);

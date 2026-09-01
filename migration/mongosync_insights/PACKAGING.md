@@ -26,21 +26,21 @@ Official release builds are published automatically when a **version tag** is pu
 ### Workflow
 
 - File: [`.github/workflows/mongosync-insights-release.yml`](../../.github/workflows/mongosync-insights-release.yml)
-- Trigger: push tag `MIv*` (e.g. `MIv0.9.0.16`)
+- Trigger: push tag `MIv*` (e.g. `MIv0.9.2.14`)
 - Monitor runs: GitHub **Actions** tab → **Mongosync Insights Release**
 
 ### How to publish a release
 
-1. Set `APP_VERSION` in [`lib/app_config.py`](lib/app_config.py) to the target version (e.g. `0.9.0.16`).
+1. Set `APP_VERSION` in [`lib/app_config.py`](lib/app_config.py) to the target version (e.g. `0.9.2.14`).
 2. Merge the change to the default branch.
 3. Create and push a matching tag:
    ```bash
-   git tag MIv0.9.0.16
-   git push origin MIv0.9.0.16
+   git tag MIv0.9.2.14
+   git push origin MIv0.9.2.14
    ```
 4. The workflow runs tests, builds all platforms in parallel, and creates a **GitHub Release** with assets attached.
 
-The tag **must** be `MIv` + `APP_VERSION` (e.g. `MIv0.9.0.16` when `APP_VERSION` is `0.9.0.16`). If they differ, the workflow fails before building.
+The tag **must** be `MIv` + `APP_VERSION` (e.g. `MIv0.9.2.14` when `APP_VERSION` is `0.9.2.14`). If they differ, the workflow fails before building.
 
 ### Published assets (7 files per release)
 
@@ -64,7 +64,7 @@ Local smoke test:
 
 ```bash
 cd migration/mongosync_insights
-./ci/package_source_archives.sh 0.9.1.15 /tmp/out
+./ci/package_source_archives.sh 0.9.2.14 /tmp/out
 ```
 
 ### GitHub automatic source archives (cannot remove)
@@ -271,7 +271,7 @@ MI_REFRESH_TIME=5
 MI_INDEX_BUILD_REFRESH_TIME=60
 MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS=10
 MI_VERIFIER_PROGRESS_TIMEOUT_SECS=30
-MI_VERIFIER_SUMMARY_TIMEOUT_SECS=120
+MI_VERIFIER_HEAVY_API_TIMEOUT_SECS=600
 MI_VERIFIER_METADATA_TIMEOUT_MS=120000
 MI_ERROR_PATTERNS_FILE=/etc/mongosync-insights/error_patterns.json
 MI_SSL_ENABLED=true

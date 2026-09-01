@@ -6,12 +6,12 @@ Web dashboard for **mongosync** migrations: log analysis, real-time **Migration 
 
 | Section | Description |
 |---------|-------------|
-| **Log analyzer** | Upload and parse mongosync logs, search, and review saved analysis snapshots |
-| **Migration monitoring** | Real-time mongosync migration progress via progress API and/or destination metadata; includes a second **Migration Verifier** form on the same `/live/` page for the standalone migration-verifier tool |
+| **Log analyzer** | Upload and parse mongosync logs and metrics; interactive charts, **Summary** snapshot (latest `/progress` from the log), **CEA Busiest Collections** (when CEA CRUD stats are present), search, and saved analysis snapshots |
+| **Migration monitoring** | Unified monitoring: mongosync progress endpoint, optional destination connection string, embedded verifier (default), and optional standalone Migration Verifier endpoint. Routes to Full Migration, combined Dashboard, or Full Verifier depending on inputs |
 
-See **[LOG_ANALYZER.md](LOG_ANALYZER.md)** for uploading logs, analysis tabs, snapshots, and the Log Viewer.
+See **[LOG_ANALYZER.md](LOG_ANALYZER.md)** for uploading logs, analysis tabs (including Summary and CEA Busiest Collections), snapshots, and the Log Viewer.
 
-See **[MIGRATION_MONITORING.md](MIGRATION_MONITORING.md)** for how Migration Monitoring and Migration Verifier work (inputs, data sources, polling, index-building and verifier fallbacks).
+See **[MIGRATION_MONITORING.md](MIGRATION_MONITORING.md)** for the unified setup form, routing, data sources, polling, manual mismatch summary, index-building and verifier fallbacks.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ Earlier and later mongosync versions may work where log formats and APIs (for ex
 
 ## Migration Verifier compatibility
 
-Migration Verifier monitoring in Mongosync Insights was developed and tested with **migration-verifier 0.2.2**.
+Migration Verifier monitoring in Mongosync Insights was developed and tested with **migration-verifier 0.2.4**.
 
 Earlier and later migration-verifier versions may work where metadata version and APIs (for example `/api/v1/progress` and internal metadata databases) are unchanged. Behavior with untested versions is not guaranteed. Validate the verifier dashboard against your migration-verifier version before relying on it in production.
 

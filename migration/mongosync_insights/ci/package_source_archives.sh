@@ -8,8 +8,8 @@
 # Build artifacts and local venv/cache dirs are excluded.
 #
 # Examples:
-#   ./ci/package_source_archives.sh 0.9.1.15
-#   ./ci/package_source_archives.sh 0.9.1.15 /tmp/out
+#   ./ci/package_source_archives.sh 0.9.2.14
+#   ./ci/package_source_archives.sh 0.9.2.14 /tmp/out
 set -euo pipefail
 
 usage() {

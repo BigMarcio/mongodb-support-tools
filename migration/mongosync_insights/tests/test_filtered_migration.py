@@ -12,11 +12,11 @@ from lib.live_monitoring import _build_display, _build_filtered_migration
 class TestFormatNamespaceFilterRows(unittest.TestCase):
     def test_empty_inclusion_defaults(self):
         rows = format_namespace_filter_rows(None, "inclusion")
-        self.assertEqual(rows, [{"key": "Database", "value": "All (no filter)"}])
+        self.assertEqual(rows, [{"key": "Database", "value": "All (no filter specified)"}])
 
     def test_empty_exclusion_defaults(self):
         rows = format_namespace_filter_rows(None, "exclusion")
-        self.assertEqual(rows, [{"key": "Filter", "value": "No filter"}])
+        self.assertEqual(rows, [{"key": "Filter", "value": "None (No filter specified)"}])
 
     def test_inclusion_with_database_and_collections(self):
         rows = format_namespace_filter_rows(
@@ -26,6 +26,15 @@ class TestFormatNamespaceFilterRows(unittest.TestCase):
         by_key = {r["key"]: r["value"] for r in rows}
         self.assertEqual(by_key["Database"], "mydb")
         self.assertEqual(by_key["Collections"], "c1, c2")
+
+    def test_inclusion_with_database_only(self):
+        rows = format_namespace_filter_rows(
+            [{"database": ["mydb"], "collections": None}],
+            "inclusion",
+        )
+        by_key = {r["key"]: r["value"] for r in rows}
+        self.assertEqual(by_key["Database"], "mydb")
+        self.assertEqual(by_key["Collections"], "All (no filter specified)")
 
     def test_exclusion_with_entries(self):
         rows = format_namespace_filter_rows(
@@ -64,7 +73,7 @@ class TestFilteredMigrationDisplay(unittest.TestCase):
         metadata = {
             "namespaceFilterActive": True,
             "inclusionFilterRows": [{"key": "Database", "value": "mydb"}],
-            "exclusionFilterRows": [{"key": "Filter", "value": "No filter"}],
+            "exclusionFilterRows": [{"key": "Filter", "value": "None (No filter specified)"}],
         }
         card = _build_filtered_migration(metadata)
         self.assertEqual(card["title"], "Filtered migration")
@@ -81,7 +90,7 @@ class TestFilteredMigrationDisplay(unittest.TestCase):
             "phase": "Collection copy",
             "namespaceFilterActive": True,
             "inclusionFilterRows": [{"key": "Database", "value": "mydb"}],
-            "exclusionFilterRows": [{"key": "Filter", "value": "No filter"}],
+            "exclusionFilterRows": [{"key": "Filter", "value": "None (No filter specified)"}],
         }
         display = _build_display(None, metadata, progress_available=False)
         self.assertIsNotNone(display["filteredMigration"])
@@ -95,8 +104,8 @@ class TestFilteredMigrationDisplay(unittest.TestCase):
         metadata = {
             "state": "RUNNING",
             "namespaceFilterActive": False,
-            "inclusionFilterRows": [{"key": "Database", "value": "All (no filter)"}],
-            "exclusionFilterRows": [{"key": "Filter", "value": "No filter"}],
+            "inclusionFilterRows": [{"key": "Database", "value": "All (no filter specified)"}],
+            "exclusionFilterRows": [{"key": "Filter", "value": "None (No filter specified)"}],
         }
         display = _build_display(None, metadata, progress_available=False)
         self.assertIsNone(display["filteredMigration"])

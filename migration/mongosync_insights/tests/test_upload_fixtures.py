@@ -29,6 +29,8 @@ class TestUploadFixtures:
                 "/logs/uploadLogs", data=data, content_type="multipart/form-data"
             )
         assert r.status_code == 200
+        assert b'id="tab-summary"' in r.data
+        assert b"Summary" in r.data
         snapshots = snapshot_store.list_snapshots()
         assert len(snapshots) >= 1
         assert snapshots[0]["line_count"] > 0

@@ -79,8 +79,12 @@ class LogStoreRegistry:
             if cached_store is not None:
                 try:
                     cached_store.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(
+                        "Ignoring error closing cached log store %s: %s",
+                        store_id[:8],
+                        e,
+                    )
             db_path = entry['db_path']
             try:
                 if os.path.exists(db_path):

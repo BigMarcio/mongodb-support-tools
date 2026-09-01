@@ -16,7 +16,7 @@ import logging
 import os
 import mimetypes
 from werkzeug.utils import secure_filename
-from .utils import format_byte_size, convert_bytes
+from .utils import format_byte_size, convert_bytes, resolve_replication_lag
 from .app_config import (
     MAX_FILE_SIZE, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES,
     load_error_patterns, classify_file_type, is_multi_file_archive,
@@ -29,7 +29,13 @@ from .otel_metrics import MetricsCollector, create_metrics_plots
 from .plot_theme import apply_mi_theme, section_label_style
 from .log_store import LogStore
 from .log_store_registry import log_store_registry
+from .log_summary import SummaryMigrationState, build_log_summary_payload, extract_latest_progress
 from .snapshot_store import save_snapshot
+from .busiest_collections import (
+    BusiestCollectionsAccumulator,
+    build_busiest_collections_plot,
+    update_in_cea_phase,
+)
 
 _DECOMPRESS_ERRORS = (
     ValueError,
@@ -39,6 +45,24 @@ _DECOMPRESS_ERRORS = (
     zipfile.BadZipFile,
     tarfile.TarError,
 )
+
+_LOG_LINE_PROGRESS_FORMAT = (
+    "{desc}: Total {n}, Time: {elapsed}, Lines/sec: {lines_per_sec}"
+)
+
+
+class _LogLineProgress(tqdm):
+    @property
+    def format_dict(self):
+        fmt = dict(super().format_dict)
+        rate = fmt.get("rate")
+        if rate is None:
+            elapsed = fmt.get("elapsed") or 0
+            count = fmt.get("n") or 0
+            if elapsed > 0:
+                rate = count / elapsed
+        fmt["lines_per_sec"] = f"{rate:.2f}" if rate is not None else "?"
+        return fmt
 
 
 def detect_mime_type(file_sample: bytes, filename: str) -> str:
@@ -81,11 +105,34 @@ INFO_PHASE_TO_CANONICAL = {
 
 PHASES_EXCLUDED_FROM_MERGE = frozenset({"uninitialized"})
 
+_CRUD_EVENTS_RATE_LEGACY_MSG = re.compile(
+    r"Average Source CRUD events rate\.?", re.IGNORECASE,
+)
+_CRUD_EVENTS_RATE_CURRENT_MSG = re.compile(
+    r"Estimated average rate of CRUD events on the source\.?", re.IGNORECASE,
+)
+
+
+def _is_crud_events_rate_log(json_obj):
+    """True for periodic source CRUD rate stats (legacy and current mongosync messages)."""
+    if "srcCRUDEventsPerSec" not in json_obj:
+        return False
+    message = json_obj.get("message") or ""
+    return bool(
+        _CRUD_EVENTS_RATE_LEGACY_MSG.search(message)
+        or _CRUD_EVENTS_RATE_CURRENT_MSG.search(message)
+    )
+
+
+def _normalize_phase_info_message(message):
+    """Normalize info-level phase messages for lookup (strip whitespace and trailing period)."""
+    return (message or "").strip().lower().rstrip(".")
+
 
 def _phase_event_from_info(json_obj):
     """Return (time, canonical, canonical) from an info-level phase log line, or None."""
-    message = (json_obj.get("message") or "").strip()
-    canonical = INFO_PHASE_TO_CANONICAL.get(message.lower())
+    message = _normalize_phase_info_message(json_obj.get("message"))
+    canonical = INFO_PHASE_TO_CANONICAL.get(message)
     if not canonical:
         return None
     t = (json_obj.get("time") or "")[:26]
@@ -176,6 +223,18 @@ def _extract_progress_flag_events(responses):
     return events
 
 
+def _classify_partition_init_type(reason):
+    """Map mongosync single-partition creation reason to a Type label."""
+    text = (reason or '').lower()
+    if 'natural order' in text:
+        return 'Natural Order'
+    if 'capped' in text:
+        return 'Capped'
+    if 'small' in text:
+        return 'Small'
+    return 'Single partition'
+
+
 def upload_file():
     # Use the centralized logging configuration
     logger = logging.getLogger(__name__)
@@ -255,14 +314,16 @@ def upload_file():
             'phase_in_memory': re.compile(r"Updating the in-memory phase from", re.IGNORECASE),
             'mongosync_options': re.compile(r"Mongosync Options", re.IGNORECASE),
             'hidden_flags': re.compile(r"Mongosync HiddenFlags", re.IGNORECASE),
-            'crud_events_rate': re.compile(r"Average Source CRUD events rate", re.IGNORECASE),
             'partition_copy_progress': re.compile(r"Completed writing \d+ / \d+ partitions to destination cluster", re.IGNORECASE),
             'natural_order_collections': re.compile(r"Selected for natural order collection reads", re.IGNORECASE),
             'received_request': re.compile(r"Received request", re.IGNORECASE),
+            'start_handler': re.compile(r"Start handler called", re.IGNORECASE),
+            'state_transition': re.compile(r"Transitioning the state", re.IGNORECASE),
             'partition_single_created': re.compile(r"Creating a single partition for whole collection", re.IGNORECASE),
             'partition_multi_created': re.compile(r"Creating initial partitions for non-capped collection", re.IGNORECASE),
             'partition_sampling_info': re.compile(r"Pre-sampling information", re.IGNORECASE),
             'partition_persisted_after_sampling': re.compile(r"Persisted a new partition after sampling", re.IGNORECASE),
+            'index_creation_progress': re.compile(r"Index creation progress", re.IGNORECASE),
         }
         
         # Load error patterns from external file
@@ -290,12 +351,16 @@ def upload_file():
         matched_errors = []
         natural_order_collections = []
         mongosync_start_options = []
+        start_handler_parameters = []
+        state_transition_json = []
         partition_single_created = []
         partition_multi_created = []
         partition_sampling_info = []
         partition_persisted_after_sampling = []
         verifier_dst_lag_items = []
         verifier_src_lag_items = []
+        index_creation_progress_json = []
+        summary_state = SummaryMigrationState()
         
         # Initialize metrics collector for prometheus metrics
         metrics_collector = MetricsCollector()
@@ -305,6 +370,9 @@ def upload_file():
         store_id = str(uuid_mod.uuid4())
         db_path = logstore_path(store_id)
         log_store = LogStore(db_path)
+        
+        busiest_collections_accumulator = BusiestCollectionsAccumulator()
+        in_cea_phase = False
         
         # Single pass through the file with streaming
         line_count = 0
@@ -350,7 +418,13 @@ def upload_file():
                 file_iterator = file
                 use_classified = False
         
-            for item in tqdm(file_iterator, desc="Processing log file"):
+            print(f"Log file: {filename}", flush=True)
+            line_progress = _LogLineProgress(
+                file_iterator,
+                desc="Processing lines",
+                bar_format=_LOG_LINE_PROGRESS_FORMAT,
+            )
+            for item in line_progress:
                 line_count += 1
             
                 # Handle classified vs non-classified iterators
@@ -404,12 +478,40 @@ def upload_file():
                 
                     if patterns['sent_response'].search(message):
                         mongosync_sent_response.append(json_obj)
+                        try:
+                            progress_body = json.loads(json_obj.get("body") or "{}")
+                            response_progress = (progress_body or {}).get("progress")
+                            if isinstance(response_progress, dict):
+                                summary_state.note_progress(
+                                    response_progress, json_obj.get("time")
+                                )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                    if patterns['index_creation_progress'].search(message):
+                        index_creation_progress_json.append(json_obj)
+                        summary_state.note_index_building(
+                            json_obj.get("indexCreationProgress"),
+                            json_obj.get("time"),
+                        )
                 
                     if patterns['phase_transitions'].search(message):
                         phase_transitions_json.append(json_obj)
+                        phase_event = _phase_event_from_info(json_obj)
+                        if phase_event:
+                            in_cea_phase = update_in_cea_phase(
+                                in_cea_phase, phase_event[1],
+                            )
+                            summary_state.note_phase(phase_event[1], phase_event[0])
 
                     if patterns['phase_in_memory'].search(message):
                         phase_in_memory_json.append(json_obj)
+                        phase_event = _phase_event_from_in_memory(json_obj)
+                        if phase_event:
+                            in_cea_phase = update_in_cea_phase(
+                                in_cea_phase, phase_event[1],
+                            )
+                            summary_state.note_phase(phase_event[1], phase_event[0])
                 
                     if patterns['mongosync_options'].search(message):
                         # Filter out time and level fields for options
@@ -427,8 +529,19 @@ def upload_file():
                             mongosync_start_options.append(body)
                         except (json.JSONDecodeError, TypeError):
                             pass
+
+                    if patterns['start_handler'].search(message):
+                        params = json_obj.get("parameters")
+                        if isinstance(params, dict):
+                            start_handler_parameters.append(params)
+
+                    if patterns['state_transition'].search(message):
+                        state_transition_json.append(json_obj)
+                        new_state = (json_obj.get("newState") or "").strip().upper()
+                        if new_state:
+                            summary_state.note_state(new_state, json_obj.get("time"))
                 
-                    if patterns['crud_events_rate'].search(message):
+                    if _is_crud_events_rate_log(json_obj):
                         mongosync_crud_rate.append(json_obj)
                 
                     if patterns['partition_copy_progress'].search(message):
@@ -471,6 +584,10 @@ def upload_file():
                                 'full_log': json.dumps(json_obj, indent=2)
                             })
                             break  # Only match first pattern per message
+
+                    busiest_collections_accumulator.ingest_line(
+                        json_obj, in_cea_phase=in_cea_phase,
+                    )
                     
                 except json.JSONDecodeError as e:
                     invalid_json_count += 1
@@ -569,7 +686,7 @@ def upload_file():
                 if key not in pi_map:
                     pi_map[key] = {}
                 reason = item.get('reason', '')
-                pi_map[key]['type'] = 'Natural Order' if 'natural order' in reason.lower() else 'Capped'
+                pi_map[key]['type'] = _classify_partition_init_type(reason)
                 pi_map[key]['reason'] = reason
                 pi_map[key]['partition_count'] = 1
                 pi_map[key]['init_started'] = item.get('time', '')
@@ -678,16 +795,12 @@ def upload_file():
                     partition_init_progress_completed.append(done)
                 logger.info(f"Built partition init progress time series with {len(init_events)} events")
 
-        mongosync_sent_response_body = None
-        for response in mongosync_sent_response:
-            try:  
-                parsed_body = json.loads(response['body'])
-                # Only use this response if it contains 'progress'
-                if 'progress' in parsed_body:
-                    mongosync_sent_response_body = parsed_body  
-            except (json.JSONDecodeError, TypeError):  
-                mongosync_sent_response_body = None  # If parse fails, use None 
-                logger.warning(f"No message 'sent response' found in the logs") 
+        latest_progress, latest_progress_time = extract_latest_progress(mongosync_sent_response)
+        mongosync_sent_response_body = (
+            {"progress": latest_progress} if latest_progress else None
+        )
+        if mongosync_sent_response and latest_progress is None:
+            logger.warning("No message 'sent response' with progress found in the logs")
 
         # Create a string with all the version information
         if version_info_list and isinstance(version_info_list[0], dict):  
@@ -731,7 +844,29 @@ def upload_file():
         # Extract the data you want to plot
         times = [datetime.strptime(item['time'][:26], "%Y-%m-%dT%H:%M:%S.%f") for item in data if 'time' in item]
         totalEventsApplied = [item['totalEventsApplied'] for item in data if 'totalEventsApplied' in item]
-        lagTimeSeconds = [item['lagTimeSeconds'] for item in data if 'lagTimeSeconds' in item]
+        lag_times = []
+        lag_overall_seconds = []
+        lag_crud_times = []
+        lag_crud_seconds = []
+        lag_ddl_times = []
+        lag_ddl_seconds = []
+        for item in data:
+            if 'time' not in item:
+                continue
+            lag_resolved = resolve_replication_lag(item)
+            t = datetime.strptime(item['time'][:26], "%Y-%m-%dT%H:%M:%S.%f")
+            overall = lag_resolved.get("overall")
+            if overall is not None:
+                lag_times.append(t)
+                lag_overall_seconds.append(overall)
+            crud = lag_resolved.get("crud")
+            if crud is not None:
+                lag_crud_times.append(t)
+                lag_crud_seconds.append(crud)
+            ddl = lag_resolved.get("ddl")
+            if ddl is not None:
+                lag_ddl_times.append(t)
+                lag_ddl_seconds.append(ddl)
         # Extract estimatedCopiedBytes time series from sent response entries
         # The 'body' field is a JSON string containing progress.collectionCopy.estimatedCopiedBytes
         estimatedCopiedBytes_series = []
@@ -983,17 +1118,17 @@ def upload_file():
         
         api_phase_transitions = []
         phase_transitions = ""
+        merged_phase_events = []
         # Check that mongosync_sent_response_body is a dict before searching for 'progress'  
         if isinstance(mongosync_sent_response_body, dict):
             if 'progress' in mongosync_sent_response_body:
-                estimated_total_bytes = mongosync_sent_response_body['progress']['collectionCopy']['estimatedTotalBytes']
-                estimated_copied_bytes = mongosync_sent_response_body['progress']['collectionCopy']['estimatedCopiedBytes']
+                progress_payload = mongosync_sent_response_body.get('progress') or {}
+                collection_copy_payload = progress_payload.get('collectionCopy') or {}
+                estimated_total_bytes = collection_copy_payload.get('estimatedTotalBytes') or 0
+                estimated_copied_bytes = collection_copy_payload.get('estimatedCopiedBytes') or 0
 
-                try:  
-                    api_phase_transitions = mongosync_sent_response_body['progress']['atlasLiveMigrateMetrics']['PhaseTransitions']  
-                except KeyError as e:  
-                    logger.error(f"Key not found: {e}")  
-                    api_phase_transitions = []
+                atlas_live_metrics = progress_payload.get('atlasLiveMigrateMetrics') or {}
+                api_phase_transitions = atlas_live_metrics.get('PhaseTransitions') or []
 
             else:
                 logger.warning(f"Key 'progress' not found in mongosync_sent_response_body")
@@ -1005,6 +1140,7 @@ def upload_file():
                 api_transitions=api_phase_transitions or None,
             )
             if merged:
+                merged_phase_events = merged
                 ts_t_list_formatted = [t for t, _ in merged]
                 phase_list = [label for _, label in merged]
                 phase_transitions = True
@@ -1106,9 +1242,43 @@ def upload_file():
             ), row=1, col=2)
 
         # Row 2: Lag Time
-        if lagTimeSeconds:
-            fig.add_trace(go.Scattergl(x=times, y=lagTimeSeconds, mode='lines', name='Seconds', legendgroup="groupEventsAndLags"), row=2, col=1)
-        else:
+        if lag_overall_seconds:
+            fig.add_trace(
+                go.Scattergl(
+                    x=lag_times,
+                    y=lag_overall_seconds,
+                    mode='lines',
+                    name='Overall lag',
+                    legendgroup="groupEventsAndLags",
+                ),
+                row=2,
+                col=1,
+            )
+        if lag_crud_seconds:
+            fig.add_trace(
+                go.Scattergl(
+                    x=lag_crud_times,
+                    y=lag_crud_seconds,
+                    mode='lines',
+                    name='CRUD lag',
+                    legendgroup="groupEventsAndLags",
+                ),
+                row=2,
+                col=1,
+            )
+        if lag_ddl_seconds:
+            fig.add_trace(
+                go.Scattergl(
+                    x=lag_ddl_times,
+                    y=lag_ddl_seconds,
+                    mode='lines',
+                    name='DDL lag',
+                    legendgroup="groupEventsAndLags",
+                ),
+                row=2,
+                col=1,
+            )
+        if not lag_overall_seconds:
             fig.add_trace(go.Scatter(x=[0], y=[0], text="NO DATA", mode='text', name='Lag Time',textfont=dict(size=30, color="black")), row=2, col=1)
             fig.update_yaxes(range=[-1, 1], row=2, col=1)
             fig.update_xaxes(range=[-1, 1], row=2, col=1)
@@ -1567,6 +1737,43 @@ def upload_file():
         has_logs_data = logs_line_count > 0 and len(data) > 0
         has_metrics_data = metrics_collector.metrics_count > 0
 
+        busiest_collections_result = busiest_collections_accumulator.finalize()
+        busiest_collections_data = busiest_collections_result["summary"]
+        busiest_collections_warnings = busiest_collections_result["warnings"]
+        busiest_collections_meta = busiest_collections_result["meta"]
+        busiest_collections_event_types = busiest_collections_result["eventTypes"]
+        busiest_collections_plot_json = ""
+        if busiest_collections_result["timeseries"]["times"]:
+            busiest_collections_plot_json = build_busiest_collections_plot(
+                busiest_collections_result["timeseries"],
+                busiest_collections_meta,
+            )
+        has_busiest_collections_data = bool(
+            busiest_collections_data
+            or busiest_collections_warnings
+            or busiest_collections_plot_json
+        )
+
+        last_partitions_copied = partitions_copied[-1] if partitions_copied else None
+        last_partitions_total = partitions_total[-1] if partitions_total else None
+        summary_payload = build_log_summary_payload(
+            progress=latest_progress,
+            progress_time=latest_progress_time or summary_state.progress_time,
+            replication_lines=data,
+            phase_events=merged_phase_events,
+            natural_order_items=natural_order_data,
+            start_options=mongosync_start_options,
+            hidden_flags=mongosync_hiddenflags,
+            start_handler_parameters=start_handler_parameters,
+            state_transitions=state_transition_json,
+            partitions_copied=last_partitions_copied,
+            partitions_total=last_partitions_total,
+            version_info_lines=version_info_list,
+            sent_responses=mongosync_sent_response,
+            index_creation_lines=index_creation_progress_json,
+            summary_state=summary_state,
+        )
+
         template_data = {
             'plot_json': plot_json,
             'metrics_plot_json': metrics_plot_json,
@@ -1577,11 +1784,19 @@ def upload_file():
             'errors_data': matched_errors,
             'partition_init_data': partition_init_data,
             'progress_data': progress_data,
+            'summary_payload': summary_payload,
             'has_logs_data': has_logs_data,
             'has_metrics_data': has_metrics_data,
             'log_viewer_lines': log_viewer_lines_out,
             'log_viewer_max_lines': LOG_VIEWER_MAX_LINES,
             'log_store_id': store_id,
+            'busiest_collections_data': busiest_collections_data,
+            'busiest_collections_warnings': busiest_collections_warnings,
+            'busiest_collections_meta': busiest_collections_meta,
+            'busiest_collections_event_types': busiest_collections_event_types,
+            'busiest_collections_plot_json': busiest_collections_plot_json,
+            'has_busiest_collections_data': has_busiest_collections_data,
+            'source_filename': filename,
         }
 
         snapshot_id = str(uuid_mod.uuid4())
