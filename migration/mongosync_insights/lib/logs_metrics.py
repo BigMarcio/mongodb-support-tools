@@ -14,6 +14,7 @@ from dateutil import parser
 import re
 import logging
 import os
+import sys
 import mimetypes
 from werkzeug.utils import secure_filename
 from .utils import format_byte_size, convert_bytes, resolve_replication_lag
@@ -418,7 +419,9 @@ def upload_file():
                 file_iterator = file
                 use_classified = False
         
-            print(f"Log file: {filename}", flush=True)
+            logger.info("Processing log file: %s", filename)
+            if sys.stderr.isatty():
+                tqdm.write(f"Log file: {filename}")
             line_progress = _LogLineProgress(
                 file_iterator,
                 desc="Processing lines",

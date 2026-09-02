@@ -789,6 +789,14 @@ class TestFormatBsonTimestamp:
         assert _format_bson_timestamp(None) is None
         assert _format_bson_timestamp({}) is None
 
+    def test_invalid_t_falls_back_to_str(self):
+        ts = {"$timestamp": {"t": "not-a-number", "i": 1}}
+        assert _format_bson_timestamp(ts) == str(ts)
+
+    def test_out_of_range_t_falls_back_to_str(self):
+        ts = {"t": 10**20, "i": 0}
+        assert _format_bson_timestamp(ts) == str(ts)
+
 
 class TestBuildVerifierProgressDisplay:
     def test_maps_core_fields(self):

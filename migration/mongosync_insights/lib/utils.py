@@ -30,7 +30,7 @@ def resolve_replication_lag(progress):
         ddl = _lag_seconds_value(ddl_raw) if ddl_raw is not None else None
         legacy = _lag_seconds_value(progress.get("lagTimeSeconds"))
         if overall is not None and legacy is not None and overall != legacy:
-            logger.warning(
+            logger.debug(
                 "lag.overallLagSeconds (%s) differs from lagTimeSeconds (%s)",
                 overall,
                 legacy,

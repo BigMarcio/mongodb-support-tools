@@ -719,9 +719,12 @@ def _format_bson_timestamp(ts):
         t_val = inner.get("t")
     if t_val is None:
         return str(ts)
-    dt_str = datetime.fromtimestamp(int(t_val), tz=timezone.utc).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    try:
+        dt_str = datetime.fromtimestamp(int(t_val), tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+    except (TypeError, ValueError, OverflowError, OSError):
+        return str(ts)
     return f"{dt_str} UTC"
 
 
