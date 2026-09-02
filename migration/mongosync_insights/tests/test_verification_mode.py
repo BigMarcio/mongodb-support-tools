@@ -102,6 +102,18 @@ class TestResolveVerificationDisplay(unittest.TestCase):
         self.assertEqual(card["mode"], "info")
         self.assertIn("CEA", card["description"])
 
+    def test_start_at_cea_in_cea_without_progress_data_returns_none(self):
+        metadata = {
+            "verificationModeRaw": "startAtCEA",
+            "syncPhase": "change event application",
+        }
+        card = _resolve_verification_display(
+            {"state": "RUNNING", "info": "change event application"},
+            metadata,
+            progress_available=True,
+        )
+        self.assertIsNone(card)
+
     def test_start_at_cea_with_progress_data(self):
         progress = {
             "verification": {

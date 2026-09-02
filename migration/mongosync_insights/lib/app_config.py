@@ -56,16 +56,12 @@ PORT = parse_env_int('MI_PORT', 3030, min_value=1, max_value=65535)
 
 # Application constants
 APP_NAME = "Mongosync Insights"
-APP_VERSION = "0.9.1.16"
+APP_VERSION = "0.9.2.14"
 
 DEVELOPER_CREDITS = {
     "copyright": "\u00a9 MongoDB Inc.",
     "year": "2025 - 2026",
     "team_name": "Migration Factory TS Team",
-    "contributors": [
-        {"name": "Marcio Ribeiro", "role": "Development"},
-        {"name": "Krishna Kattumadam", "role": "Development"},
-    ],
 }
 
 # File upload settings
@@ -175,7 +171,6 @@ SSL_KEY_PATH = os.getenv('MI_SSL_KEY', '/etc/letsencrypt/live/your-domain/privke
 REFRESH_TIME = parse_env_int('MI_REFRESH_TIME', 10, min_value=1)
 INDEX_BUILD_REFRESH_TIME = parse_env_int('MI_INDEX_BUILD_REFRESH_TIME', 60, min_value=1)
 VERIFIER_PROGRESS_REFRESH_TIME = REFRESH_TIME * 3 
-VERIFIER_SUMMARY_REFRESH_TIME = REFRESH_TIME * 12
 VERIFIER_METADATA_REFRESH_TIME = REFRESH_TIME * 6
 MONGOSYNC_PROGRESS_TIMEOUT_SECS = parse_env_int(
     'MI_MONGOSYNC_PROGRESS_TIMEOUT_SECS', REFRESH_TIME, min_value=1,
@@ -183,18 +178,40 @@ MONGOSYNC_PROGRESS_TIMEOUT_SECS = parse_env_int(
 VERIFIER_PROGRESS_TIMEOUT_SECS = parse_env_int(
     'MI_VERIFIER_PROGRESS_TIMEOUT_SECS', VERIFIER_PROGRESS_REFRESH_TIME, min_value=1,
 )
-VERIFIER_SUMMARY_TIMEOUT_SECS = parse_env_int(
-    'MI_VERIFIER_SUMMARY_TIMEOUT_SECS', VERIFIER_SUMMARY_REFRESH_TIME, min_value=1,
+VERIFIER_HEAVY_API_TIMEOUT_SECS = parse_env_int(
+    'MI_VERIFIER_HEAVY_API_TIMEOUT_SECS', 600, min_value=1,
 )
+VERIFIER_SUMMARY_COOLDOWN_SECS = VERIFIER_HEAVY_API_TIMEOUT_SECS
 CONNECTION_STRING = os.getenv('MI_CONNECTION_STRING', '')
 VERIFIER_CONNECTION_STRING = os.getenv('MI_VERIFIER_CONNECTION_STRING', '') or CONNECTION_STRING
 
 PROGRESS_API_PATH = "/api/v1/progress"
 VERIFIER_SUMMARY_API_PATH = "/api/v1/summary"
+VERIFIER_DOC_MISMATCHES_API_PATH = "/api/v1/docMismatches"
+VERIFIER_NS_MISMATCHES_API_PATH = "/api/v1/nsMismatches"
+LIVE_API_PATHS = frozenset({
+    PROGRESS_API_PATH,
+    VERIFIER_SUMMARY_API_PATH,
+    VERIFIER_DOC_MISMATCHES_API_PATH,
+    VERIFIER_NS_MISMATCHES_API_PATH,
+})
 DEFAULT_PROGRESS_PORT = 27182
 DEFAULT_VERIFIER_PROGRESS_PORT = 27020
 PROGRESS_PORT_MIN = 1
 PROGRESS_PORT_MAX = 65535
+
+
+def _parse_allowed_endpoint_hosts(raw):
+    return frozenset(
+        host.strip().lower() for host in (raw or "").split(",") if host.strip()
+    )
+
+
+# Empty means any host the operator types is allowed (mongosync usually runs on a
+# private host). Set MI_ALLOWED_ENDPOINT_HOSTS to pin monitoring to known hosts.
+ALLOWED_ENDPOINT_HOSTS = _parse_allowed_endpoint_hosts(
+    os.getenv("MI_ALLOWED_ENDPOINT_HOSTS", "")
+)
 
 
 def _parse_progress_port(port_str: str) -> int:
@@ -240,18 +257,39 @@ def build_verifier_progress_endpoint_url(host, port=None):
     )
 
 
-def build_verifier_summary_endpoint_url(progress_endpoint_url):
-    """Derive migration-verifier /summary URL from a progress endpoint URL."""
+def _build_verifier_api_endpoint_url(progress_endpoint_url, api_path):
+    """Derive a migration-verifier API path from a progress endpoint URL."""
     raw = (progress_endpoint_url or "").strip().rstrip("/")
     if not raw:
         return None
     if raw.endswith(PROGRESS_API_PATH):
-        return raw[: -len(PROGRESS_API_PATH)] + VERIFIER_SUMMARY_API_PATH
+        return raw[: -len(PROGRESS_API_PATH)] + api_path
     if re.match(r"^[\w\.\-]+:\d+$", raw):
-        return f"{raw}{VERIFIER_SUMMARY_API_PATH}"
-    if raw.endswith(VERIFIER_SUMMARY_API_PATH):
+        return f"{raw}{api_path}"
+    if raw.endswith(api_path):
         return raw
     return raw
+
+
+def build_verifier_summary_endpoint_url(progress_endpoint_url):
+    """Derive migration-verifier /summary URL from a progress endpoint URL."""
+    return _build_verifier_api_endpoint_url(
+        progress_endpoint_url, VERIFIER_SUMMARY_API_PATH,
+    )
+
+
+def build_verifier_doc_mismatches_endpoint_url(progress_endpoint_url):
+    """Derive migration-verifier /docMismatches URL from a progress endpoint URL."""
+    return _build_verifier_api_endpoint_url(
+        progress_endpoint_url, VERIFIER_DOC_MISMATCHES_API_PATH,
+    )
+
+
+def build_verifier_ns_mismatches_endpoint_url(progress_endpoint_url):
+    """Derive migration-verifier /nsMismatches URL from a progress endpoint URL."""
+    return _build_verifier_api_endpoint_url(
+        progress_endpoint_url, VERIFIER_NS_MISMATCHES_API_PATH,
+    )
 
 
 def normalize_progress_endpoint_url(raw):
@@ -401,27 +439,57 @@ def validate_config():
 
     return True
 
-def validate_progress_endpoint_url(url):
+
+def _match_api_endpoint_url(url, api_path):
+    """Match host:port + exact API path, returning the host or None."""
+    if not url or api_path not in LIVE_API_PATHS:
+        return None
+    pattern = r'^([\w\.\-]+):(\d+)' + re.escape(api_path) + r'$'
+    match = re.match(pattern, url)
+    if not match:
+        return None
+    try:
+        _parse_progress_port(match.group(2))
+    except ValueError:
+        return None
+    return match.group(1)
+
+
+def validate_api_endpoint_url(url, api_path=PROGRESS_API_PATH):
     """
-    Validate Mongosync Progress Endpoint URL format.
-    
+    Validate a mongosync/verifier API endpoint URL.
+
     Args:
-        url (str): URL to validate in format host:port/api/v1/progress
-        
+        url (str): URL to validate in format host:port/<api_path>
+        api_path (str): expected API path; must be one of LIVE_API_PATHS
+
     Returns:
         bool: True if URL matches the expected format and port is 1-65535
     """
-    if not url:
+    return _match_api_endpoint_url(url, api_path) is not None
+
+
+def validate_progress_endpoint_url(url):
+    """
+    Validate Mongosync Progress Endpoint URL format.
+
+    Args:
+        url (str): URL to validate in format host:port/api/v1/progress
+
+    Returns:
+        bool: True if URL matches the expected format and port is 1-65535
+    """
+    return validate_api_endpoint_url(url, PROGRESS_API_PATH)
+
+
+def endpoint_host_allowed(url, api_path=PROGRESS_API_PATH):
+    """Check a validated endpoint URL against MI_ALLOWED_ENDPOINT_HOSTS."""
+    if not ALLOWED_ENDPOINT_HOSTS:
+        return True
+    host = _match_api_endpoint_url(url, api_path)
+    if host is None:
         return False
-    pattern = r'^[\w\.\-]+:(\d+)' + re.escape(PROGRESS_API_PATH) + r'$'
-    match = re.match(pattern, url)
-    if not match:
-        return False
-    try:
-        _parse_progress_port(match.group(1))
-    except ValueError:
-        return False
-    return True
+    return host.lower() in ALLOWED_ENDPOINT_HOSTS
 
 # Database Connection Management
 # Connection pool settings
@@ -538,6 +606,25 @@ def get_verifier_metadata_database(connection_string, database_name):
 
 _resolved_internal_db_cache = {}
 _resolved_internal_db_lock = threading.Lock()
+
+def probe_metadata_databases(connection_string):
+    """
+    Probe the destination cluster for mongosync and verifier metadata databases.
+
+    Returns:
+        dict: mongosync_metadata_available, verifier_metadata_available booleans
+    """
+    client = get_mongo_client(connection_string)
+    db_names = set(client.list_database_names())
+    mongosync_available = (
+        MI_MONGOSYNC_DB_NAME_NEW in db_names or MI_MONGOSYNC_DB_NAME in db_names
+    )
+    verifier_available = MI_MIGRATION_VERIFIER_DB_NAME in db_names
+    return {
+        "mongosync_metadata_available": mongosync_available,
+        "verifier_metadata_available": verifier_available,
+    }
+
 
 def resolve_mongosync_db_name(connection_string):
     """

@@ -8,6 +8,8 @@ from lib.utils import (
     format_count,
     format_lag_time_seconds,
     format_ratio,
+    resolve_replication_lag,
+    format_seconds_title,
 )
 
 
@@ -45,6 +47,91 @@ class TestFormatLagTimeSeconds:
     )
     def test_format_lag_time_seconds(self, seconds, expected):
         assert format_lag_time_seconds(seconds) == expected
+
+
+class TestResolveReplicationLag:
+    def test_new_lag_object(self):
+        progress = {
+            "lag": {
+                "overallLagSeconds": 30,
+                "crudLagSeconds": 10,
+                "ddlLagSeconds": 30,
+            },
+        }
+        result = resolve_replication_lag(progress)
+        assert result == {
+            "overall": 30,
+            "crud": 10,
+            "ddl": 30,
+            "has_breakdown": True,
+        }
+
+    def test_legacy_lag_time_seconds(self):
+        result = resolve_replication_lag({"lagTimeSeconds": 45})
+        assert result == {
+            "overall": 45,
+            "crud": None,
+            "ddl": None,
+            "has_breakdown": False,
+        }
+
+    def test_idle_no_lag(self):
+        result = resolve_replication_lag({"state": "IDLE"})
+        assert result == {
+            "overall": None,
+            "crud": None,
+            "ddl": None,
+            "has_breakdown": False,
+        }
+
+    def test_ddl_null_in_lag_object(self):
+        progress = {
+            "lag": {
+                "overallLagSeconds": 20,
+                "crudLagSeconds": 20,
+                "ddlLagSeconds": None,
+            },
+        }
+        result = resolve_replication_lag(progress)
+        assert result["overall"] == 20
+        assert result["crud"] == 20
+        assert result["ddl"] is None
+        assert result["has_breakdown"] is True
+
+    def test_empty_progress(self):
+        assert resolve_replication_lag(None)["has_breakdown"] is False
+        assert resolve_replication_lag({})["has_breakdown"] is False
+
+    def test_log_entry_top_level_fields(self):
+        entry = {
+            "lagTimeSeconds": 12,
+            "lag": {
+                "overallLagSeconds": 12,
+                "crudLagSeconds": 5,
+                "ddlLagSeconds": None,
+            },
+        }
+        result = resolve_replication_lag(entry)
+        assert result["overall"] == 12
+        assert result["crud"] == 5
+        assert result["ddl"] is None
+
+
+class TestFormatSecondsTitle:
+    @pytest.mark.parametrize(
+        "seconds,expected",
+        [
+            (None, None),
+            (-5, None),
+            (0, "0 seconds"),
+            (1, "1 second"),
+            (45, "45 seconds"),
+            (90, "90 seconds"),
+            (1582, "1,582 seconds"),
+        ],
+    )
+    def test_format_seconds_title(self, seconds, expected):
+        assert format_seconds_title(seconds) == expected
 
 
 class TestFormatCount:

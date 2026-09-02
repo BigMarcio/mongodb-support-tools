@@ -213,13 +213,21 @@
     window.openUploadDialog = function () {
         var overlay = document.getElementById('uploadDialogOverlay');
         if (!overlay) return;
-        overlay.classList.add('active');
+        if (typeof window.miOpenModal === 'function') {
+            window.miOpenModal('uploadDialogOverlay', document.getElementById('uploadBtn'));
+        } else {
+            overlay.classList.add('active');
+        }
         miRefreshUploadDialogSnapshots();
     };
 
     window.closeUploadDialog = function () {
-        var overlay = document.getElementById('uploadDialogOverlay');
-        if (overlay) overlay.classList.remove('active');
+        if (typeof window.miCloseModal === 'function') {
+            window.miCloseModal('uploadDialogOverlay');
+        } else {
+            var overlay = document.getElementById('uploadDialogOverlay');
+            if (overlay) overlay.classList.remove('active');
+        }
     };
 
     window.triggerNewUpload = function () {
@@ -282,24 +290,37 @@
                 duplicateCheckMsg.appendChild(document.createTextNode(' deletes the saved session and uploads the file again.'));
 
                 var dupOverlay = document.getElementById('duplicateCheckOverlay');
-                if (dupOverlay) dupOverlay.classList.add('active');
+                if (dupOverlay) {
+                    if (typeof window.miOpenModal === 'function') {
+                        window.miOpenModal('duplicateCheckOverlay');
+                    } else {
+                        dupOverlay.classList.add('active');
+                    }
+                }
             })
             .catch(function () {
                 _dupProceedUpload();
             });
     };
 
+    function _dupCloseOverlay() {
+        if (typeof window.miCloseModal === 'function') {
+            window.miCloseModal('duplicateCheckOverlay');
+        } else {
+            var dupOverlay = document.getElementById('duplicateCheckOverlay');
+            if (dupOverlay) dupOverlay.classList.remove('active');
+        }
+    }
+
     function _dupProceedUpload() {
-        var dupOverlay = document.getElementById('duplicateCheckOverlay');
-        if (dupOverlay) dupOverlay.classList.remove('active');
+        _dupCloseOverlay();
         var loading = document.getElementById('uploadLoadingOverlay');
         if (loading) loading.classList.add('active');
         if (_dupState.form) _dupState.form.submit();
     }
 
     window.duplicateLoadPrevious = function () {
-        var dupOverlay = document.getElementById('duplicateCheckOverlay');
-        if (dupOverlay) dupOverlay.classList.remove('active');
+        _dupCloseOverlay();
         if (_dupState.matches.length > 0) {
             var loading = document.getElementById('uploadLoadingOverlay');
             if (loading) loading.classList.add('active');
@@ -308,8 +329,7 @@
     };
 
     window.duplicateReplace = function () {
-        var dupOverlay = document.getElementById('duplicateCheckOverlay');
-        if (dupOverlay) dupOverlay.classList.remove('active');
+        _dupCloseOverlay();
         var loading = document.getElementById('uploadLoadingOverlay');
         if (loading) loading.classList.add('active');
         var delPromises = _dupState.matches.map(function (s) {
@@ -321,8 +341,7 @@
     };
 
     window.duplicateCancel = function () {
-        var dupOverlay = document.getElementById('duplicateCheckOverlay');
-        if (dupOverlay) dupOverlay.classList.remove('active');
+        _dupCloseOverlay();
         if (_dupState.fileInput) {
             _dupState.fileInput.value = '';
         }
@@ -330,6 +349,12 @@
         _dupState.form = null;
         _dupState.fileInput = null;
     };
+
+    function registerSnapshotModals() {
+        if (typeof window.miRegisterModal !== 'function') return;
+        window.miRegisterModal('uploadDialogOverlay', closeUploadDialog, { labelledBy: 'uploadDialogTitle' });
+        window.miRegisterModal('duplicateCheckOverlay', duplicateCancel, { labelledBy: 'duplicateDialogTitle' });
+    }
 
     function wireSidebarUploadIfPresent() {
         var sidebarInput = document.getElementById('sidebarFileInput');
@@ -345,8 +370,12 @@
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', wireSidebarUploadIfPresent);
+        document.addEventListener('DOMContentLoaded', function () {
+            registerSnapshotModals();
+            wireSidebarUploadIfPresent();
+        });
     } else {
+        registerSnapshotModals();
         wireSidebarUploadIfPresent();
     }
 })();

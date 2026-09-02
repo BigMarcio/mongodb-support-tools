@@ -43,7 +43,9 @@ export MI_CONNECTION_STRING="mongodb+srv://user:pass@cluster.mongodb.net/"
 python3 mongosync_insights.py
 ```
 
-For **Migration Verifier** metadata (when it uses a different cluster than Migration Monitoring):
+The unified `/live/` setup form uses a **single shared destination connection string** for mongosync metadata and standalone verifier metadata when `__mdb_internal_migration_verifier` is found on that cluster.
+
+For **Migration Verifier** metadata on a **different** cluster than mongosync (env-only override; no separate field in the UI):
 
 ```bash
 export MI_VERIFIER_CONNECTION_STRING="mongodb+srv://user:pass@verifier-cluster.mongodb.net/"
@@ -55,9 +57,10 @@ See [CONFIGURATION.md](CONFIGURATION.md) for all available connection-related en
 
 ## Security Considerations
 
-- **Credentials are never displayed:** Live monitoring dashboards show data-source toolbar badges (Progress API / Metadata) without hostnames, ports, or database names. The migration monitoring home page still shows sanitized connection details when env vars are pre-configured.
+- **Credentials are never displayed on live dashboards:** Monitoring and verifier pages show **Progress API** / **Metadata** toolbar badges only — no hostnames, ports, connection strings, or database names. The migration monitoring home page shows **sanitized** connection details (credentials stripped) when env vars are pre-configured.
 - **Credentials are never logged:** Connection strings with passwords are not written to log files
 - **Generic API errors:** Verifier metadata connection failures return generic messages in the browser (for example, `Could not connect to verifier database.`). Check `insights.log` for driver-level details
+- **Endpoint host allowlist:** On shared networks, set `MI_ALLOWED_ENDPOINT_HOSTS` so operators can only point progress/verifier endpoints at known hosts. See [CONFIGURATION.md](CONFIGURATION.md#deployment-trust-model)
 - **HTTPS recommended:** For production deployments, always use HTTPS to protect connection strings in transit. See [HTTPS_SETUP.md](HTTPS_SETUP.md)
 - **Secure cookies:** Enable `MI_SECURE_COOKIES=true` when using HTTPS to ensure session cookies are only transmitted over encrypted connections
 

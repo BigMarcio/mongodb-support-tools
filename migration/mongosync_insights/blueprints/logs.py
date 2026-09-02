@@ -125,6 +125,17 @@ def load_snapshot_view(snapshot_id):
             log_store_registry.register(store_id, db_path)
 
     template_data = data.get("template_data", {})
+    template_data.setdefault("busiest_collections_data", [])
+    template_data.setdefault("busiest_collections_warnings", [])
+    template_data.setdefault("busiest_collections_meta", {
+        "intervalSecs": 10,
+        "topNPerInterval": 20,
+    })
+    template_data.setdefault("busiest_collections_event_types", [])
+    template_data.setdefault("busiest_collections_plot_json", "")
+    template_data.setdefault("has_busiest_collections_data", False)
+    if not template_data.get("source_filename"):
+        template_data["source_filename"] = data.get("source_filename", "")
     return render_template("upload_results.html", **template_data)
 
 

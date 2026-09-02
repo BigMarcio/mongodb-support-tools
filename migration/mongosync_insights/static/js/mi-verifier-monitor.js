@@ -4,6 +4,11 @@
 (function (global) {
     'use strict';
 
+    var downloadUrls = {
+        docMismatches: null,
+        nsMismatches: null,
+    };
+
     var BANNER_ICONS = {
         info: 'i',
         warning: '!',
@@ -42,10 +47,20 @@
         return wrap;
     }
 
+    function applyHoverTitle(node, title) {
+        if (!node || !title) return node;
+        node.classList.add('lm-has-hover');
+        if (title.indexOf('\n') !== -1) {
+            node.classList.add('lm-has-hover-multiline');
+        }
+        node.setAttribute('data-hover-title', title);
+        return node;
+    }
+
     function metricTile(item) {
         var box = el('div', 'lm-metric');
         box.appendChild(el('div', 'lm-mlabel', item.label));
-        var valueClass = 'lm-mvalue' + (item.small ? ' small' : '');
+        var valueClass = 'lm-mvalue' + (item.small ? ' small' : '') + (item.highLag ? ' lm-lag-high' : '');
         if (item.badge) {
             var val = el('div', valueClass);
             val.appendChild(badge(item.value, item.badge, false));
@@ -53,6 +68,7 @@
         } else {
             box.appendChild(el('div', valueClass, String(item.value)));
         }
+        applyHoverTitle(box, item.title);
         return box;
     }
 
@@ -80,10 +96,28 @@
         return section;
     }
 
-    function kvRow(label, value) {
+    function mismatchDownloadLink(href, label) {
+        var link = el('a', 'lm-download-link', label);
+        link.href = href;
+        link.setAttribute('download', '');
+        return link;
+    }
+
+    function mismatchCardTitle(titleText, downloadHref, downloadLabel) {
+        var title = el('h2', 'lm-card-title-row');
+        title.appendChild(document.createTextNode(titleText));
+        if (downloadHref) {
+            title.appendChild(mismatchDownloadLink(downloadHref, downloadLabel));
+        }
+        return title;
+    }
+
+    function kvRow(label, value, title) {
         var rowEl = el('div', 'lm-kv');
         rowEl.appendChild(el('span', 'lm-k', label));
-        rowEl.appendChild(el('span', 'lm-v', value));
+        var valueEl = el('span', 'lm-v', value);
+        applyHoverTitle(valueEl, title);
+        rowEl.appendChild(valueEl);
         return rowEl;
     }
 
@@ -123,11 +157,25 @@
         });
     }
 
-    function renderToolbar(display, dataSources) {
+    function appendFullViewLink(toolbar, fullViewLink) {
+        if (!fullViewLink || !fullViewLink.href) return;
+        var actions = el('div', 'lm-toolbar-actions');
+        var link = el('a', 'lm-full-view-link');
+        link.href = fullViewLink.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        if (fullViewLink.title) link.title = fullViewLink.title;
+        link.appendChild(document.createTextNode(fullViewLink.label || 'Open full dashboard'));
+        actions.appendChild(link);
+        toolbar.appendChild(actions);
+    }
+
+    function renderToolbar(display, dataSources, options) {
+        options = options || {};
         var toolbar = el('div', 'lm-toolbar');
         var textBlock = el('div', 'lm-toolbar-text');
 
-        var title = el('h1', 'lm-page-title');
+        var title = el('h2', 'lm-page-title');
         title.appendChild(document.createTextNode('Migration Verifier Monitoring'));
         if (display && display.verificationProgress && display.verificationProgress.phaseBadge) {
             title.appendChild(
@@ -147,6 +195,7 @@
         textBlock.appendChild(title);
 
         toolbar.appendChild(textBlock);
+        appendFullViewLink(toolbar, options.fullViewLink);
         return toolbar;
     }
 
@@ -164,6 +213,14 @@
         } catch (e) {
             return String(value);
         }
+    }
+
+    function formatSecondsTitle(seconds) {
+        if (seconds == null || seconds === '') return null;
+        var n = Number(seconds);
+        if (!isFinite(n) || n < 0) return null;
+        var total = Math.floor(n);
+        return total.toLocaleString('en-US') + (total === 1 ? ' second' : ' seconds');
     }
 
     function formatLagSecs(seconds) {
@@ -193,7 +250,7 @@
 
         var metrics = el('div', 'lm-metrics lm-verifier-metrics');
         [
-            { label: 'Lag', value: formatLagSecs(changeStats.lagSecs) },
+            { label: 'Lag', value: formatLagSecs(changeStats.lagSecs), title: formatSecondsTitle(changeStats.lagSecs) },
             { label: 'Events/sec', value: formatRate(changeStats.eventsPerSecond) },
             {
                 label: 'Buffer saturation',
@@ -275,7 +332,10 @@
         if (progress.estCheckSecsRemaining != null) {
             var etaText = formatCheckEta(progress.estCheckSecsRemaining);
             if (etaText) {
-                body.appendChild(kvRow('Initial check ETA', etaText));
+                var etaTitle = etaText === 'Complete'
+                    ? null
+                    : formatSecondsTitle(progress.estCheckSecsRemaining);
+                body.appendChild(kvRow('Initial check ETA', etaText, etaTitle));
             }
         }
 
@@ -739,7 +799,16 @@
             body.appendChild(table);
         }
 
-        return card('Document Mismatch Summary', desc, [body]);
+        var docDownloadHref = (docMm.total || 0) > 0 ? downloadUrls.docMismatches : null;
+        return cardWithTitleElement(
+            mismatchCardTitle(
+                'Document Mismatches Summary',
+                docDownloadHref,
+                'Download document mismatches'
+            ),
+            desc,
+            [body]
+        );
     }
 
     function renderEndpointNsMismatches(summary) {
@@ -781,7 +850,15 @@
         });
         table.appendChild(tbody);
 
-        return card('Namespace Mismatches Summary', desc, [table]);
+        return cardWithTitleElement(
+            mismatchCardTitle(
+                'Namespace Mismatches Summary',
+                downloadUrls.nsMismatches,
+                'Download namespace mismatches'
+            ),
+            desc,
+            [table]
+        );
     }
 
     function renderWarningsCard(warnings) {
@@ -804,6 +881,102 @@
             value: active ? 'Yes' : 'No',
             badge: active ? 'yellow' : 'black',
         };
+    }
+
+    function formatAgeSeconds(seconds) {
+        if (seconds == null || seconds < 0) return '—';
+        var total = Math.floor(seconds);
+        if (total < 60) return total + 's ago';
+        var minutes = Math.floor(total / 60);
+        var secs = total % 60;
+        if (minutes < 60) return minutes + 'm ' + secs + 's ago';
+        var hours = Math.floor(minutes / 60);
+        minutes = minutes % 60;
+        if (hours < 24) return hours + 'h ' + minutes + 'm ago';
+        var days = Math.floor(hours / 24);
+        hours = hours % 24;
+        return days + 'd ' + hours + 'h ago';
+    }
+
+    function formatDurationSeconds(seconds) {
+        if (seconds == null || seconds <= 0) return '—';
+        var total = Math.floor(seconds);
+        if (total < 60) return total + 's';
+        var minutes = Math.floor(total / 60);
+        var secs = total % 60;
+        if (minutes < 60) return minutes + 'm ' + secs + 's';
+        var hours = Math.floor(minutes / 60);
+        minutes = minutes % 60;
+        return hours + 'h ' + minutes + 'm';
+    }
+
+    function renderSummaryActions(summaryCache, progress, runState) {
+        var wrap = el('section', 'lm-card lm-verifier-summary-actions');
+        var title = el('h2', 'lm-card-title-row');
+        title.appendChild(document.createTextNode('Mismatch Summary'));
+        wrap.appendChild(title);
+
+        var desc = el(
+            'p',
+            'lm-card-desc',
+            'Detailed mismatch counts are expensive to compute. Run manually when Verification Progress reports mismatches.'
+        );
+        wrap.appendChild(desc);
+
+        var body = el('div', 'lm-card-body lm-stack-tight');
+        var eligible = summaryCache && summaryCache.eligible;
+        var generation = progress && progress.generation != null ? progress.generation : 0;
+        var cooldown = (summaryCache && summaryCache.cooldownRemainingSecs) || 0;
+        var runInFlight = runState && runState.runInFlight;
+        var canRun = eligible && cooldown <= 0 && !runInFlight;
+
+        var actions = el('div', 'lm-summary-actions');
+        var button = el('button', 'lm-summary-run-btn', 'Run mismatch summary');
+        button.type = 'button';
+        button.disabled = !canRun;
+        button.addEventListener('click', function () {
+            if (typeof global.miRunVerifierSummary === 'function') {
+                global.miRunVerifierSummary();
+            }
+        });
+        actions.appendChild(button);
+
+        if (runInFlight) {
+            actions.appendChild(el('span', 'lm-muted lm-summary-meta', 'Running mismatch summary…'));
+        } else if (!eligible) {
+            var hint;
+            if (generation === 0) {
+                hint = 'Not available during initial verification (generation 0).';
+            } else {
+                hint = 'Available when Verification Progress reports document or metadata mismatches.';
+            }
+            actions.appendChild(el('span', 'lm-muted lm-summary-meta', hint));
+        } else if (cooldown > 0) {
+            actions.appendChild(el(
+                'span',
+                'lm-muted lm-summary-meta',
+                'Available in ' + formatDurationSeconds(cooldown)
+            ));
+        }
+
+        body.appendChild(actions);
+
+        if (summaryCache && summaryCache.lastFetchedAgeSecs != null) {
+            body.appendChild(el(
+                'div',
+                'lm-summary-last-updated',
+                'Last updated: ' + formatAgeSeconds(summaryCache.lastFetchedAgeSecs)
+            ));
+        } else if (eligible && !runInFlight) {
+            body.appendChild(el(
+                'div',
+                'lm-muted lm-summary-last-updated',
+                'No mismatch summary has been run yet.'
+            ));
+        }
+
+        wrap.appendChild(body);
+        return wrap;
     }
 
     function buildToolbarDisplay(progress, summary, metadataDisplay, stateBadge) {
@@ -843,11 +1016,11 @@
         };
     }
 
-    function miUpdateVerifierToolbar(slots, progress, summary, metadataDisplay, stateBadge, dataSources) {
+    function miUpdateVerifierToolbar(slots, progress, summary, metadataDisplay, stateBadge, dataSources, options) {
         if (!slots || !slots.toolbar) return;
         var display = buildToolbarDisplay(progress, summary, metadataDisplay, stateBadge);
         slots.toolbar.replaceChildren();
-        slots.toolbar.appendChild(renderToolbar(display, dataSources));
+        slots.toolbar.appendChild(renderToolbar(display, dataSources, options));
     }
 
     function miUpdateVerifierProgressSection(slots, progress) {
@@ -857,9 +1030,15 @@
         if (card) slots.progress.appendChild(card);
     }
 
-    function miUpdateVerifierSummarySection(slots, summary) {
+    function miUpdateVerifierSummarySection(slots, summary, summaryCache, progress, runState) {
         if (!slots || !slots.summary) return;
         slots.summary.replaceChildren();
+
+        var showSection = (summaryCache && summaryCache.eligible) || summary;
+        if (!showSection) return;
+
+        slots.summary.appendChild(renderSummaryActions(summaryCache, progress, runState));
+
         var docCard = renderDocMismatchSummary(summary);
         if (docCard) slots.summary.appendChild(docCard);
         var nsCard = renderEndpointNsMismatches(summary);
@@ -911,6 +1090,10 @@
     }
 
     global.miInitVerifierMonitorShell = miInitVerifierMonitorShell;
+    global.miConfigureVerifierDownloads = function (urls) {
+        downloadUrls.docMismatches = (urls && urls.docMismatches) || null;
+        downloadUrls.nsMismatches = (urls && urls.nsMismatches) || null;
+    };
     global.miUpdateVerifierToolbar = miUpdateVerifierToolbar;
     global.miUpdateVerifierProgressSection = miUpdateVerifierProgressSection;
     global.miUpdateVerifierSummarySection = miUpdateVerifierSummarySection;

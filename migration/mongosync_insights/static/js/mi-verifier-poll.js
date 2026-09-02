@@ -1,5 +1,6 @@
 /**
- * Independent polling for Migration Verifier progress, summary, and metadata.
+ * Independent polling for Migration Verifier progress and metadata.
+ * Mismatch summary (/summary) is manual-only via run_verifier_summary.
  */
 (function (global) {
     'use strict';
@@ -12,7 +13,7 @@
 
     function rebuildWarnings(warningsBySource) {
         var merged = [];
-        ['progress', 'summary', 'metadata'].forEach(function (source) {
+        ['progress', 'metadata', 'summaryRun'].forEach(function (source) {
             warningsForSource(warningsBySource[source]).forEach(function (w) {
                 if (merged.indexOf(w) === -1) merged.push(w);
             });
@@ -41,33 +42,57 @@
         return { mode: mode, badges: badges };
     }
 
+    function applySummaryFromCache(state, summaryCache) {
+        state.summaryCache = summaryCache || null;
+        if (!summaryCache || !summaryCache.eligible) {
+            state.verificationSummary = null;
+            return;
+        }
+        state.verificationSummary = summaryCache.verificationSummary || null;
+        if (
+            state.verificationSummary &&
+            state.verificationSummary.estCheckSecsRemaining != null &&
+            state.verificationProgress
+        ) {
+            state.verificationProgress.estCheckSecsRemaining =
+                state.verificationSummary.estCheckSecsRemaining;
+        }
+    }
+
     function miInitVerifierPolling(config) {
         var root = document.getElementById('verifier-monitor-root');
         var loading = document.getElementById('verifier-monitor-loading');
         if (!root || !config || !config.urls) return;
 
+        if (typeof global.miConfigureVerifierDownloads === 'function') {
+            global.miConfigureVerifierDownloads({
+                docMismatches: config.urls.docMismatchesDownload,
+                nsMismatches: config.urls.nsMismatchesDownload,
+            });
+        }
+
         var slots = global.miInitVerifierMonitorShell(root);
         var state = {
             verificationProgress: null,
             verificationSummary: null,
+            summaryCache: null,
+            summaryRunInFlight: false,
             metadataDisplay: null,
             stateBadge: null,
             warnings: [],
-            warningsBySource: { progress: [], summary: [], metadata: [] },
+            warningsBySource: { progress: [], metadata: [], summaryRun: [] },
             dataSourcesById: {},
         };
 
-        var inflight = { progress: false, summary: false, metadata: false };
-        var enabled = { progress: true, summary: true, metadata: true };
-        var intervalIds = { progress: null, summary: null, metadata: null };
+        var inflight = { progress: false, metadata: false };
+        var enabled = { progress: true, metadata: true };
+        var intervalIds = { progress: null, metadata: null };
         var firstResponse = false;
 
         var baseRefreshSec = config.baseRefreshSec || 10;
         var progressMs = config.progressRefreshMs || 10000;
-        var summaryMs = config.summaryRefreshMs || 120000;
         var metadataMs = config.metadataRefreshMs || 60000;
         var progressRatio = (progressMs / 1000) / baseRefreshSec;
-        var summaryRatio = (summaryMs / 1000) / baseRefreshSec;
         var metadataRatio = (metadataMs / 1000) / baseRefreshSec;
 
         function stopPoller(source) {
@@ -81,6 +106,16 @@
             return buildMergedDataSources(state.dataSourcesById);
         }
 
+        function updateSummarySection() {
+            global.miUpdateVerifierSummarySection(
+                slots,
+                state.verificationSummary,
+                state.summaryCache,
+                state.verificationProgress,
+                { runInFlight: state.summaryRunInFlight }
+            );
+        }
+
         function refreshAllSections() {
             global.miUpdateVerifierToolbar(
                 slots,
@@ -91,7 +126,7 @@
                 mergedDataSources()
             );
             global.miUpdateVerifierProgressSection(slots, state.verificationProgress);
-            global.miUpdateVerifierSummarySection(slots, state.verificationSummary);
+            updateSummarySection();
             global.miUpdateVerifierMetadataSection(slots, state.metadataDisplay);
             global.miUpdateVerifierWarnings(slots, state.warnings);
         }
@@ -158,18 +193,9 @@
                     if (source === 'progress') {
                         state.verificationProgress = display.verificationProgress || null;
                         applyStateBadge(source, display.stateBadge);
+                        applySummaryFromCache(state, display.summaryCache);
                         global.miUpdateVerifierProgressSection(slots, state.verificationProgress);
-                    } else if (source === 'summary') {
-                        state.verificationSummary = display.verificationSummary || null;
-                        if (
-                            state.verificationSummary &&
-                            state.verificationSummary.estCheckSecsRemaining != null &&
-                            state.verificationProgress
-                        ) {
-                            state.verificationProgress.estCheckSecsRemaining =
-                                state.verificationSummary.estCheckSecsRemaining;
-                        }
-                        global.miUpdateVerifierSummarySection(slots, state.verificationSummary);
+                        updateSummarySection();
                     } else if (source === 'metadata') {
                         state.metadataDisplay = payload.display || null;
                         applyStateBadge(source, (state.metadataDisplay || {}).stateBadge);
@@ -200,6 +226,73 @@
                 });
         }
 
+        function runVerifierSummary() {
+            var runUrl = config.urls.runSummary;
+            if (!runUrl || state.summaryRunInFlight) return Promise.resolve();
+
+            state.summaryRunInFlight = true;
+            updateSummarySection();
+
+            return fetch(runUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+            })
+                .then(function (response) {
+                    return response.json().then(function (payload) {
+                        return { response: response, payload: payload };
+                    });
+                })
+                .then(function (result) {
+                    var payload = result.payload;
+                    var display = payload.display || {};
+
+                    if (result.response.status === 429) {
+                        setSourceWarnings('summaryRun', [payload.error || 'Summary cooldown active.']);
+                        if (display.summaryCache) {
+                            applySummaryFromCache(state, display.summaryCache);
+                        }
+                    } else if (result.response.status === 403) {
+                        setSourceWarnings('summaryRun', [payload.error || 'Summary not available.']);
+                    } else if (!result.response.ok) {
+                        setSourceWarnings(
+                            'summaryRun',
+                            [payload.error || 'Failed to run mismatch summary.']
+                        );
+                        if (display.summaryCache) {
+                            applySummaryFromCache(state, display.summaryCache);
+                        }
+                    } else {
+                        setSourceWarnings('summaryRun', []);
+                        applySummaryFromCache(state, display.summaryCache);
+                    }
+
+                    updateSummarySection();
+                    global.miUpdateVerifierToolbar(
+                        slots,
+                        state.verificationProgress,
+                        state.verificationSummary,
+                        state.metadataDisplay,
+                        state.stateBadge,
+                        mergedDataSources()
+                    );
+                    global.miUpdateVerifierWarnings(slots, state.warnings);
+                })
+                .catch(function (err) {
+                    console.error('Verifier summary run failed:', err);
+                    setSourceWarnings(
+                        'summaryRun',
+                        ['Error running mismatch summary: ' + err.message]
+                    );
+                    global.miUpdateVerifierWarnings(slots, state.warnings);
+                })
+                .finally(function () {
+                    state.summaryRunInFlight = false;
+                    updateSummarySection();
+                });
+        }
+
+        global.miRunVerifierSummary = runVerifierSummary;
+
         function startPoller(source, url, intervalMs) {
             if (!url) {
                 enabled[source] = false;
@@ -215,15 +308,11 @@
 
         function restartTimers(newBaseSec) {
             progressMs = newBaseSec * progressRatio * 1000;
-            summaryMs = newBaseSec * summaryRatio * 1000;
             metadataMs = newBaseSec * metadataRatio * 1000;
             if (enabled.progress) startPoller('progress', config.urls.progress, progressMs);
-            if (enabled.summary) startPoller('summary', config.urls.summary, summaryMs);
             if (enabled.metadata) startPoller('metadata', config.urls.metadata, metadataMs);
             if (typeof config.onRefreshLabelUpdate === 'function') {
-                config.onRefreshLabelUpdate(
-                    progressMs / 1000, summaryMs / 1000, metadataMs / 1000,
-                );
+                config.onRefreshLabelUpdate(progressMs / 1000, metadataMs / 1000);
             }
         }
 
@@ -233,19 +322,19 @@
         }
 
         function teardown() {
-            ['progress', 'summary', 'metadata'].forEach(stopPoller);
+            ['progress', 'metadata'].forEach(stopPoller);
+            global.miRunVerifierSummary = null;
             window.removeEventListener('mi-refresh-changed', onRefreshChanged);
             window.removeEventListener('pagehide', teardown);
         }
 
         startPoller('progress', config.urls.progress, progressMs);
-        startPoller('summary', config.urls.summary, summaryMs);
         startPoller('metadata', config.urls.metadata, metadataMs);
 
         window.addEventListener('mi-refresh-changed', onRefreshChanged);
         window.addEventListener('pagehide', teardown);
 
-        return { refreshAllSections: refreshAllSections, teardown: teardown };
+        return { refreshAllSections: refreshAllSections, teardown: teardown, runVerifierSummary: runVerifierSummary };
     }
 
     global.miInitVerifierPolling = miInitVerifierPolling;

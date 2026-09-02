@@ -6,13 +6,16 @@ import pytest
 
 from lib.logs_metrics import (
     INFO_PHASE_TO_CANONICAL,
+    _classify_partition_init_type,
     _extract_progress_flag_events,
+    _is_crud_events_rate_log,
     _merge_phase_events,
     _phase_event_from_in_memory,
     _phase_event_from_info,
     _phase_events_from_api,
     detect_mime_type,
 )
+from lib.utils import resolve_replication_lag
 
 
 class TestDetectMimeType:
@@ -48,6 +51,20 @@ class TestPhaseEventFromInfo:
 
     def test_unknown_message_returns_none(self):
         assert _phase_event_from_info({"time": "2026-01-01T12:00:00Z", "message": "other"}) is None
+
+    @pytest.mark.parametrize(
+        "message,canonical",
+        [
+            ("Starting collection copy phase.", "collection copy"),
+            ("Starting change event application phase.", "change event application"),
+            ("Starting initializing partitions phase.", "initializing partitions"),
+        ],
+    )
+    def test_maps_info_messages_with_trailing_period(self, message, canonical):
+        obj = {"time": "2026-01-01T12:00:00.123456Z", "message": message}
+        event = _phase_event_from_info(obj)
+        assert event is not None
+        assert event[1] == canonical
 
 
 class TestPhaseEventFromInMemory:
@@ -103,6 +120,23 @@ class TestMergePhaseEvents:
         merged = _merge_phase_events([], [], api_transitions=api)
         assert merged[0][1] == "change event application"
 
+    def test_info_messages_with_trailing_period(self):
+        info = [
+            {
+                "time": "2026-07-20T17:53:11.775615Z",
+                "message": "Starting collection copy phase.",
+            },
+            {
+                "time": "2026-07-21T03:49:22.808282Z",
+                "message": "Starting change event application phase.",
+            },
+        ]
+        merged = _merge_phase_events(info, [])
+        by_phase = {label: ts for ts, label in merged}
+        assert "collection copy" in by_phase
+        assert "change event application" in by_phase
+        assert by_phase["change event application"].startswith("2026-07-21T03:49:22")
+
 
 class TestExtractProgressFlagEvents:
     def test_tracks_commit_and_write_transitions(self):
@@ -124,3 +158,99 @@ class TestExtractProgressFlagEvents:
     def test_skips_invalid_json_body(self):
         responses = [{"time": "2026-01-01T12:00:00Z", "body": "not-json"}]
         assert _extract_progress_flag_events(responses) == []
+
+
+class TestReplicationLagFromLogEntry:
+    def test_legacy_log_entry(self):
+        result = resolve_replication_lag({"lagTimeSeconds": 42})
+        assert result["overall"] == 42
+        assert result["has_breakdown"] is False
+
+    def test_new_log_entry_with_breakdown(self):
+        entry = {
+            "lag": {
+                "overallLagSeconds": 10,
+                "crudLagSeconds": 5,
+                "ddlLagSeconds": 10,
+            },
+            "lagTimeSeconds": 10,
+        }
+        result = resolve_replication_lag(entry)
+        assert result["overall"] == 10
+        assert result["crud"] == 5
+        assert result["ddl"] == 10
+        assert result["has_breakdown"] is True
+
+
+class TestIsCrudEventsRateLog:
+    @pytest.mark.parametrize(
+        "json_obj,expected",
+        [
+            (
+                {
+                    "message": "Average Source CRUD events rate.",
+                    "srcCRUDEventsPerSec": "12.50",
+                },
+                True,
+            ),
+            (
+                {
+                    "message": "Average Source CRUD events rate",
+                    "srcCRUDEventsPerSec": "12.50",
+                },
+                True,
+            ),
+            (
+                {
+                    "message": "Estimated average rate of CRUD events on the source.",
+                    "srcCRUDEventsPerSec": "42.00",
+                },
+                True,
+            ),
+            (
+                {
+                    "message": "Estimated average rate of CRUD events on the source",
+                    "srcCRUDEventsPerSec": "42.00",
+                },
+                True,
+            ),
+            (
+                {
+                    "message": "Average Source CRUD events rate.",
+                },
+                False,
+            ),
+            (
+                {
+                    "message": "Replication progress.",
+                    "eventApplicationRatePerSecond": 100,
+                },
+                False,
+            ),
+            (
+                {
+                    "message": "Some other log line",
+                    "srcCRUDEventsPerSec": "1.00",
+                },
+                False,
+            ),
+        ],
+    )
+    def test_is_crud_events_rate_log(self, json_obj, expected):
+        assert _is_crud_events_rate_log(json_obj) is expected
+
+
+class TestClassifyPartitionInitType:
+    @pytest.mark.parametrize(
+        "reason,expected",
+        [
+            ("Selected for natural order collection reads.", "Natural Order"),
+            ("Capped collection.", "Capped"),
+            ("Small collection.", "Small"),
+            ("", "Single partition"),
+            (None, "Single partition"),
+            ("Something unexpected", "Single partition"),
+        ],
+    )
+    def test_classify_partition_init_type(self, reason, expected):
+        assert _classify_partition_init_type(reason) == expected

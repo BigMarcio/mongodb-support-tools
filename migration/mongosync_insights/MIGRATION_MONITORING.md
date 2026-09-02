@@ -4,9 +4,50 @@ Migration Monitoring is the real-time dashboard for ongoing **mongosync** cluste
 
 ![Migration monitoring home](images/mongosync_insights_monitoring_home.png)
 
-## What it shows
+## Unified setup form (`/live/`)
 
-The dashboard polls mongosync and/or the destination metadata database and renders cards for:
+The home page uses a **sidebar + form** layout: a left guide (**What you'll monitor**) explains the three monitoring areas, and the form panels sit on the right. On narrow screens the guide stacks above the form.
+
+The form has a single **Monitor** button:
+
+1. **Mongosync progress endpoint** (primary)
+2. **Destination MongoDB connection string** (optional) — used for mongosync and/or standalone verifier metadata when the corresponding internal databases are found on the destination cluster
+3. **Using mongosync Embedded Verifier (recommended)** — checked by default. Unchecking does not disable embedded verifier in mongosync; it only enables monitoring the standalone [migration-verifier](https://github.com/mongodb-labs/migration-verifier) tool
+4. When unchecked: **Migration Verifier progress endpoint** fields appear (optional; no second connection string)
+
+At least one of mongosync progress endpoint, connection string, or Migration Verifier progress endpoint is required.
+
+On submit, MI probes the destination cluster once (if a connection string is provided) to detect `__mdb_internal_mongosync` / legacy mongosync metadata and `__mdb_internal_migration_verifier`.
+
+### Routing after setup
+
+| Inputs | Destination | Top navigation |
+|--------|-------------|----------------|
+| Mongosync progress endpoint only | Full Migration Monitoring (`/live/migration`) | Hidden |
+| Mongosync progress endpoint + connection string | Full Migration Monitoring | Hidden |
+| Mongosync progress endpoint + standalone verifier endpoint | Dashboard (`/live/dashboard`) | Dashboard, Full Migration, Full Verifier |
+| Mongosync progress endpoint + connection string + standalone verifier endpoint | Dashboard | Dashboard, Full Migration, Full Verifier |
+| Connection string + standalone verifier endpoint (no mongosync progress endpoint) | If mongosync internal DB exists on cluster: Full Migration Monitoring. Otherwise: Full Verifier Monitoring (`/live/verifier/view`) | Full Migration + Full Verifier only when mongosync DB exists; hidden otherwise |
+| Standalone verifier endpoint only | Full Verifier Monitoring | Hidden |
+| Connection string only | Full Migration Monitoring (metadata-only) | Hidden |
+
+Uncheck **Using mongosync Embedded Verifier** to enable standalone Migration Verifier endpoint fields. When only the verifier endpoint is provided (no mongosync inputs), the form asks you to confirm before proceeding.
+
+## Monitoring screens
+
+| Screen | Route | Content |
+|--------|-------|---------|
+| **Dashboard** | `GET /live/dashboard` | Compact combined view: **Migration progress** card on top (progress endpoint only), **standalone verifier progress** card below when embedded verifier is unchecked and a verifier progress endpoint is set. Top navigation links to Full Migration and Full Verifier open in a new tab from each section toolbar |
+| **Full Migration Monitoring** | `GET /live/migration` | All cards: sync, index building, embedded verifier, filters, metadata fallbacks |
+| **Full Migration Verifier** | `GET /live/verifier/view` | Progress, metadata, mismatch summary, downloads |
+
+The top navigation bar appears only when multiple screens are relevant (see routing table above). When hidden, you stay on a single focused monitoring view. On the Dashboard, full-page links in each section toolbar open in a new tab.
+
+Each monitoring screen shows **Progress API** / **Metadata** toolbar badges when those sources are configured — not hostnames, ports, or connection strings.
+
+## What the full migration dashboard shows
+
+The full Migration Monitoring page polls mongosync and/or the destination metadata database and renders cards for:
 
 - **Migration state** — coordinator state badge (e.g. `RUNNING`, `PAUSED`, `COMMITTED`)
 - **Migration progress** — copy phase, bytes/collections/partitions, lag time, phase start times
@@ -20,15 +61,14 @@ Refresh interval defaults to **10 seconds** (`MI_REFRESH_TIME`). The browser pol
 
 ## Configuration inputs
 
-You can provide **one or both** of the following on the Migration monitoring home form (or via environment variables). The endpoint is the primary live source and the connection string is an optional complement.
+You can provide **one or both** of mongosync progress endpoint and connection string on the unified form (or via environment variables). The endpoint is the primary live source and the connection string is an optional complement.
 
 | Input | Purpose | Env variable |
 |-------|---------|--------------|
 | **Mongosync progress endpoint** | Poll mongosync's HTTP progress API (`/api/v1/progress`) | `MI_PROGRESS_ENDPOINT_URL` |
-| **MongoDB connection string** | Read mongosync internal metadata on the destination cluster (`resumeData`, `globalState`, `indexCorrection`, verifier persistence DBs) | `MI_CONNECTION_STRING` |
+| **MongoDB connection string** | Read mongosync internal metadata on the destination cluster (`resumeData`, `globalState`, `indexCorrection`, verifier persistence DBs). Also used for standalone verifier metadata when `__mdb_internal_migration_verifier` is found | `MI_CONNECTION_STRING` |
 
-
-At least one must be configured to start a session.
+When environment variables are set, the matching form fields are read-only with an info message. If any verifier env is set (`MI_VERIFIER_PROGRESS_ENDPOINT_URL` or `MI_VERIFIER_CONNECTION_STRING`), the embedded verifier checkbox is unchecked and verifier fields are shown as pre-configured.
 
 The mongosync internal metadata database name is **auto-detected** on the destination cluster: `__mdb_internal_mongosync` (new) when present, otherwise `mongosync_reserved_for_internal_use` (legacy). This is not configurable.
 
@@ -82,20 +122,18 @@ Index-building progress is suppressed when `buildIndexes` is `never`, or before 
 
 ## Embedded Verifier vs migration-verifier tool
 
-Migration Monitoring includes two separate verifier workflows:
-
 | Feature | Where | Data source |
 |---------|-------|-------------|
-| **Embedded Verifier** card | Migration Monitoring dashboard | Progress endpoint and/or mongosync verifier persistence on the destination (`MI_EMBEDDED_VERIFIER_SRC_DB_NAME` / `MI_EMBEDDED_VERIFIER_DST_DB_NAME`, default `__mdb_internal_mongosync_verifier_src` / `_dst`). Requires mongosync **verifier persistence** (`enableVerifierPersistence`). |
-| **Migration Verifier** form | Same `/live/` page, second card | External [migration-verifier](https://github.com/mongodb-labs/migration-verifier) tool HTTP `/api/v1/progress` endpoint (`MI_VERIFIER_PROGRESS_ENDPOINT_URL`) and/or metadata database (`MI_VERIFIER_CONNECTION_STRING`, `MI_MIGRATION_VERIFIER_DB_NAME`). |
+| **Embedded Verifier** card | Full Migration Monitoring page | Progress endpoint and/or mongosync verifier persistence on the destination (`MI_EMBEDDED_VERIFIER_SRC_DB_NAME` / `MI_EMBEDDED_VERIFIER_DST_DB_NAME`). Requires mongosync **verifier persistence** (`enableVerifierPersistence`). |
+| **Standalone Migration Verifier** | Dashboard (progress card) and Full Migration Verifier page | External [migration-verifier](https://github.com/mongodb-labs/migration-verifier) tool HTTP `/api/v1/progress` (`MI_VERIFIER_PROGRESS_ENDPOINT_URL`) and/or metadata (`MI_MIGRATION_VERIFIER_DB_NAME`) via the shared connection string |
 
 When metadata is used for embedded verifier progress, the card notes that progress is **approximate**.
 
 ## Migration Verifier monitoring
 
-The second form on `/live/` monitors the standalone migration-verifier tool (not mongosync embedded verifier). On the home page, the **progress endpoint** fields appear **before** the connection string on both forms; the endpoint is the primary live source and the connection string is an optional complement for metadata cards.
+Uncheck **Using mongosync Embedded Verifier** on the unified form to optionally provide a standalone Migration Verifier progress endpoint. Verifier fields are optional — the form does not error if they are left empty.
 
-Provide **one or both** of:
+Provide a verifier progress endpoint and/or rely on the shared connection string when the verifier metadata database is found:
 
 | Input | Purpose | Env variable |
 |-------|---------|--------------|
@@ -121,19 +159,20 @@ export MI_VERIFIER_PROGRESS_ENDPOINT_URL="localhost:27020"
 export MI_VERIFIER_PROGRESS_ENDPOINT_URL="localhost:27020/api/v1/progress"
 ```
 
-Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_migration_verifier`). For **migration-verifier** version compatibility, see [README.md — Migration Verifier compatibility](README.md#migration-verifier-compatibility) (tested with **0.2.2**).
+Metadata is read from `MI_MIGRATION_VERIFIER_DB_NAME` (default `__mdb_internal_migration_verifier`). For **migration-verifier** version compatibility, see [README.md — Migration Verifier compatibility](README.md#migration-verifier-compatibility) (tested with **0.2.4**).
 
 ### How the dashboard updates
 
 The dashboard JavaScript only talks to Mongosync Insights. MI's backend fetches migration-verifier's HTTP APIs and the metadata database on your behalf.
 
-The page refreshes three areas on different schedules. The footer shows the current intervals (`Progress: Xs · Summary: Ys · Metadata: Zs`). Use the sidebar **Settings** control to change the base refresh rate — all three intervals scale together. Settings stores the refresh interval in your **browser session** (`sessionStorage`). It does not change server environment variables; reload defaults to `MI_REFRESH_TIME` unless you change Settings again.
+The page refreshes two areas on different schedules. The footer shows the current intervals (`Progress: Xs · Metadata: Ys`). Use the sidebar **Settings** control to change the base refresh rate — both intervals scale together. Settings stores the refresh interval in your **browser session** (`sessionStorage`). It does not change server environment variables; reload defaults to `MI_REFRESH_TIME` unless you change Settings again.
 
 | Area | Default interval | You need | What it updates |
 |------|------------------|----------|-----------------|
-| **Progress** | 30s (`MI_REFRESH_TIME × 3`) | Progress endpoint | **Verification Progress** card and the toolbar status badge |
-| **Summary** | 120s (`× 12`) | Progress endpoint | **Document Mismatch Summary** and **Namespace Mismatches Summary** |
+| **Progress** | 30s (`MI_REFRESH_TIME × 3`) | Progress endpoint | **Verification Progress** card, toolbar status badge, and mismatch-summary eligibility state |
 | **Metadata** | 60s (`× 6`) | Connection string | **Generation overview** and related history cards |
+
+**Mismatch summary** (Document / Namespace Mismatches Summary cards) is **not** auto-polled. When Verification Progress reports mismatches (generation &gt; 0 and metadata or document mismatches present), use **Run mismatch summary** above the cards. That call hits migration-verifier `/api/v1/summary` (can take several minutes). Results are cached in your server session until mismatches clear or you log out. After a successful run, the same action is blocked for **600 seconds** (configurable via `MI_VERIFIER_HEAVY_API_TIMEOUT_SECS`); the UI shows last-updated time and cooldown remaining.
 
 If you did not configure a source, that area is not polled (for example, no connection string → no metadata cards).
 
@@ -142,7 +181,7 @@ If you did not configure a source, that area is not polled (for example, no conn
 When migration-verifier’s HTTP API is configured, the dashboard focuses on live data:
 
 1. **Verification Progress** — current phase, generation, document/byte progress, task counts, throughput, and change-stream lag.
-2. **Document Mismatch Summary** / **Namespace Mismatches Summary** — live mismatch tallies from the verifier (updated less often than progress).
+2. **Document Mismatches Summary** / **Namespace Mismatches Summary** — live mismatch tallies from the verifier after you run **Run mismatch summary** (manual; see above). When mismatches exist, each card shows a **Download** link that streams the full list as NDJSON (`doc-mismatches.ndjson` or `ns-mismatches.ndjson`) via migration-verifier `/api/v1/docMismatches` and `/api/v1/nsMismatches`.
 3. **Generation overview** (if a connection string is also set) — history table for past generations.
 
 The toolbar badge shows overall status:
@@ -153,7 +192,7 @@ The toolbar badge shows overall status:
 | **Pass** (green) | Recheck finished with no mismatches |
 | **Mismatches** (yellow) | Recheck finished but mismatches were found |
 
-When both the endpoint and connection string are set, the live **Verification Progress** and **Summary** cards are primary; some metadata-only cards are hidden because the live cards already cover that information.
+When both the endpoint and connection string are set, the live **Verification Progress** card is primary and mismatch summary cards are filled only after **Run mismatch summary**; some metadata-only cards are hidden because the live progress card already covers that information.
 
 ![Migration Verifier dashboard — progress endpoint only](images/live_verifier_endpoint_only.png)
 
@@ -174,7 +213,7 @@ If you only provide a connection string, MI reads the verifier metadata database
 | Variable | What it changes |
 |----------|-----------------|
 | `MI_REFRESH_TIME` | Base refresh rate (sidebar Settings) |
-| `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` | Ignore very short-lived mismatches in summary counts (`0` = show all) |
+| `MI_VERIFIER_SUMMARY_MIN_DURATION_SECS` | Ignore very short-lived mismatches in summary counts and document mismatch downloads (`0` = show all) |
 | `MI_VERIFIER_GENERATION_LIMIT` | How many generations appear in the overview table (default 5) |
 
 HTTP timeouts and other advanced settings: see **[CONFIGURATION.md](CONFIGURATION.md)**.

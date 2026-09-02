@@ -2,6 +2,7 @@
 import io
 import json
 import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -9,6 +10,8 @@ import pytest
 from lib import snapshot_store
 from lib.log_store import LogStore
 from lib.log_store_registry import log_store_registry
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
@@ -29,14 +32,13 @@ class TestLogsHome:
 class TestUploadLogs:
     @patch("lib.logs_metrics.create_metrics_plots", return_value="")
     def test_upload_plain_log(self, _mock_plots, app_client):
-        data = {
-            "file": (
-                io.BytesIO(b'{"time":"2026-01-01T00:00:00Z","level":"info","message":"test"}\n'),
-                "mongosync.log",
-            )
-        }
-        r = app_client.post("/logs/uploadLogs", data=data, content_type="multipart/form-data")
+        log_path = FIXTURES / "sample_mongosync.log"
+        with open(log_path, "rb") as f:
+            data = {"file": (f, "mongosync.log")}
+            r = app_client.post("/logs/uploadLogs", data=data, content_type="multipart/form-data")
         assert r.status_code == 200
+        assert b"Mongosync Insights - Log Analyzer" in r.data
+        assert b'class="header-subtitle">mongosync.log</p>' in r.data
 
     def test_upload_rejects_bad_extension(self, app_client):
         data = {"file": (io.BytesIO(b"data"), "bad.exe")}
@@ -207,6 +209,8 @@ class TestSnapshotRoutes:
         )
         r = app_client.get(f"/logs/load_snapshot/{snapshot_id}")
         assert r.status_code == 200
+        assert b"Mongosync Insights - Log Analyzer" in r.data
+        assert b'class="header-subtitle">mongosync.log</p>' in r.data
 
     def test_load_snapshot_invalid_id(self, app_client):
         r = app_client.get("/logs/load_snapshot/not-a-uuid")

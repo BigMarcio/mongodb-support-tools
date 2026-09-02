@@ -4,20 +4,108 @@ Provides monitoring for MongoDB migration-verifier tool.
 https://github.com/mongodb-labs/migration-verifier
 """
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from datetime import datetime, timezone
 
-from flask import render_template
+from bson import Timestamp
+
+from flask import render_template, request
 from pymongo.errors import PyMongoError
 
 from .data_sources import STATUS_ACTIVE, STATUS_UNAVAILABLE, build_data_sources
+from .session_support import SESSION_COOKIE_NAME
 
 logger = logging.getLogger(__name__)
+
+_VERIFIER_SUMMARY_CACHE_KEY = "verifier_summary_cache"
 
 _EXCLUDED_TASK_TYPES = ["primary"]
 _TASK_STATUSES_PENDING = ["added", "processing"]
 _TASK_STATUSES_FAILED = ["failed", "mismatch"]
 _VERIFY_DOCUMENTS = "verifyDocuments"
 _VERIFY_COLLECTION = "verifyCollection"
+
+
+def _current_session_id():
+    return request.cookies.get(SESSION_COOKIE_NAME)
+
+
+def get_verifier_summary_cache(session_id=None):
+    """Return cached manual summary payload for a session, or None."""
+    from .app_config import session_store
+
+    sid = session_id if session_id is not None else _current_session_id()
+    if not sid:
+        return None
+    data = session_store.get_session(sid)
+    cache = data.get(_VERIFIER_SUMMARY_CACHE_KEY)
+    if not cache or not isinstance(cache, dict):
+        return None
+    return cache
+
+
+def set_verifier_summary_cache(verification_summary, session_id=None):
+    """Store manual summary results in the server session."""
+    from .app_config import session_store
+
+    sid = session_id if session_id is not None else _current_session_id()
+    if not sid:
+        return
+    session_store.update_session(sid, {
+        _VERIFIER_SUMMARY_CACHE_KEY: {
+            "fetched_at": time.time(),
+            "verification_summary": verification_summary,
+        },
+    })
+
+
+def clear_verifier_summary_cache(session_id=None):
+    """Remove cached manual summary from the server session."""
+    from .app_config import session_store
+
+    sid = session_id if session_id is not None else _current_session_id()
+    if not sid:
+        return
+    session_store.update_session(sid, {_VERIFIER_SUMMARY_CACHE_KEY: None})
+
+
+def progress_allows_summary_run(progress_display):
+    """True when gen > 0 and progress reports document or metadata mismatches."""
+    if not progress_display or progress_display.get("generation", 0) == 0:
+        return False
+    tasks = progress_display.get("tasks") or {}
+    if (tasks.get("metadataMismatch") or 0) > 0:
+        return True
+    return bool(progress_display.get("longestDocMismatch"))
+
+
+def build_summary_cache_meta(cache, *, eligible):
+    """Build summaryCache object for progress/run API responses."""
+    from .app_config import VERIFIER_SUMMARY_COOLDOWN_SECS
+
+    if not eligible:
+        return None
+
+    fetched_at = None
+    verification_summary = None
+    if cache and isinstance(cache, dict):
+        fetched_at = cache.get("fetched_at")
+        verification_summary = cache.get("verification_summary")
+
+    age_secs = None
+    cooldown_remaining = 0
+    if fetched_at:
+        age_secs = max(0, int(time.time() - fetched_at))
+        cooldown_remaining = max(0, VERIFIER_SUMMARY_COOLDOWN_SECS - age_secs)
+
+    return {
+        "eligible": True,
+        "lastFetchedAt": fetched_at,
+        "lastFetchedAgeSecs": age_secs,
+        "cooldownRemainingSecs": cooldown_remaining,
+        "verificationSummary": verification_summary,
+    }
 
 
 def _base_task_match(generation):
@@ -623,15 +711,18 @@ def _unwrap_option(value):
 def _format_bson_timestamp(ts):
     if not ts:
         return None
-    if isinstance(ts, dict):
+    t_val = None
+    if isinstance(ts, Timestamp):
+        t_val = ts.time
+    elif isinstance(ts, dict):
         inner = ts.get("$timestamp") or ts
         t_val = inner.get("t")
-        i_val = inner.get("i")
-        if t_val is not None:
-            if i_val is not None:
-                return f"{{t: {t_val}, i: {i_val}}}"
-            return str(t_val)
-    return str(ts)
+    if t_val is None:
+        return str(ts)
+    dt_str = datetime.fromtimestamp(int(t_val), tz=timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    return f"{dt_str} UTC"
 
 
 def _phase_badge_from_progress(phase):
@@ -724,7 +815,7 @@ def build_verifier_progress_display(progress):
     if error_val is not None and error_val != "":
         error_str = str(error_val)
 
-    return {
+    display = {
         "phase": phase,
         "phaseLabel": phase.upper() if phase else "—",
         "phaseBadge": _phase_badge_from_progress(phase),
@@ -767,6 +858,8 @@ def build_verifier_progress_display(progress):
         ),
         "error": error_str,
     }
+    display["summaryEligible"] = progress_allows_summary_run(display)
+    return display
 
 
 def _fetch_verifier_progress(endpoint_url):
@@ -1234,6 +1327,14 @@ def build_verifier_progress_payload(
         result["display"]["stateBadge"] = _derive_state_badge_from_progress(
             progress_display,
         )
+        if progress_display and progress_allows_summary_run(progress_display):
+            cache = get_verifier_summary_cache()
+            result["display"]["summaryCache"] = build_summary_cache_meta(
+                cache, eligible=True,
+            )
+        else:
+            clear_verifier_summary_cache()
+            result["display"]["summaryCache"] = None
         progress_status = STATUS_ACTIVE
     except ProgressFetchError as e:
         logger.warning("Verifier progress endpoint fetch failed: %s", e)
@@ -1248,31 +1349,80 @@ def build_verifier_progress_payload(
     return result
 
 
-def build_verifier_summary_payload(endpoint_url):
-    """Build JSON slice for verifier /summary polling."""
+def build_verifier_run_summary_response(endpoint_url, progress_display=None):
+    """Run migration-verifier /summary manually with cooldown and session cache."""
+    from .app_config import VERIFIER_SUMMARY_COOLDOWN_SECS
     from .live_monitoring import ProgressFetchError
 
     result = {
         "error": None,
         "warnings": [],
-        "dataSources": None,
         "display": {},
     }
-    progress_status = STATUS_UNAVAILABLE
+
+    if progress_display is None:
+        try:
+            progress_display = _fetch_verifier_progress(endpoint_url)
+        except ProgressFetchError as e:
+            logger.warning("Verifier progress fetch failed before summary: %s", e)
+            result["error"] = f"Verifier progress endpoint is not responding: {e}"
+            return result, 502
+
+    if not progress_allows_summary_run(progress_display):
+        gen = (progress_display or {}).get("generation", 0)
+        if gen == 0:
+            msg = (
+                "Mismatch summary is not available during initial verification "
+                "(generation 0)."
+            )
+        else:
+            msg = (
+                "Mismatch summary is only available when Verification Progress "
+                "reports document or metadata mismatches."
+            )
+        result["error"] = msg
+        return result, 403
+
+    cache = get_verifier_summary_cache()
+    if cache and cache.get("fetched_at"):
+        age_secs = max(0, int(time.time() - cache["fetched_at"]))
+        remaining = max(0, VERIFIER_SUMMARY_COOLDOWN_SECS - age_secs)
+        if remaining > 0:
+            summary_cache = build_summary_cache_meta(cache, eligible=True)
+            result["display"]["summaryCache"] = summary_cache
+            if summary_cache.get("verificationSummary"):
+                result["display"]["verificationSummary"] = (
+                    summary_cache["verificationSummary"]
+                )
+            result["error"] = (
+                f"Mismatch summary was run recently. Try again in "
+                f"{remaining} seconds."
+            )
+            result["cooldownRemainingSecs"] = remaining
+            result["lastFetchedAt"] = cache.get("fetched_at")
+            result["lastFetchedAgeSecs"] = age_secs
+            return result, 429
+
     try:
         summary_display = _fetch_verifier_summary(endpoint_url)
-        result["display"]["verificationSummary"] = summary_display
-        progress_status = STATUS_ACTIVE
     except ProgressFetchError as e:
         logger.warning("Verifier summary endpoint fetch failed: %s", e)
-        result["warnings"].append(f"Verifier summary endpoint is not responding: {e}")
-    result["dataSources"] = build_data_sources(
-        progress_configured=bool(endpoint_url),
-        metadata_configured=False,
-        progress_status=progress_status if endpoint_url else None,
-        metadata_status=None,
+        result["error"] = f"Verifier summary endpoint is not responding: {e}"
+        if cache:
+            summary_cache = build_summary_cache_meta(cache, eligible=True)
+            result["display"]["summaryCache"] = summary_cache
+            if summary_cache.get("verificationSummary"):
+                result["display"]["verificationSummary"] = (
+                    summary_cache["verificationSummary"]
+                )
+        return result, 502
+
+    set_verifier_summary_cache(summary_display)
+    result["display"]["verificationSummary"] = summary_display
+    result["display"]["summaryCache"] = build_summary_cache_meta(
+        get_verifier_summary_cache(), eligible=True,
     )
-    return result
+    return result, 200
 
 
 def build_verifier_metadata_payload(
@@ -1465,32 +1615,33 @@ def collect_verifier_metadata_warnings(db):
     return []
 
 
-def plot_verifier_metrics(db_name=None):
+def plot_verifier_metrics(db_name=None, nav=None):
     """Render the verifier metrics template."""
     from .app_config import (
         MI_MIGRATION_VERIFIER_DB_NAME,
         REFRESH_TIME,
+        VERIFIER_HEAVY_API_TIMEOUT_SECS,
         VERIFIER_METADATA_REFRESH_TIME,
         VERIFIER_PROGRESS_REFRESH_TIME,
-        VERIFIER_SUMMARY_REFRESH_TIME,
+        VERIFIER_SUMMARY_COOLDOWN_SECS,
     )
 
     if db_name is None:
         db_name = MI_MIGRATION_VERIFIER_DB_NAME
 
     progress_refresh = VERIFIER_PROGRESS_REFRESH_TIME
-    summary_refresh = VERIFIER_SUMMARY_REFRESH_TIME
     metadata_refresh = VERIFIER_METADATA_REFRESH_TIME
 
     return render_template(
         'verifier_metrics.html',
+        nav=nav,
         refresh_time=REFRESH_TIME,
         refresh_time_ms=str(int(progress_refresh) * 1000),
         progress_refresh_sec=progress_refresh,
-        summary_refresh_sec=summary_refresh,
         metadata_refresh_sec=metadata_refresh,
         progress_refresh_ms=str(int(progress_refresh) * 1000),
-        summary_refresh_ms=str(int(summary_refresh) * 1000),
         metadata_refresh_ms=str(int(metadata_refresh) * 1000),
+        summary_cooldown_sec=VERIFIER_SUMMARY_COOLDOWN_SECS,
+        heavy_api_timeout_sec=VERIFIER_HEAVY_API_TIMEOUT_SECS,
         db_name=db_name
     )
